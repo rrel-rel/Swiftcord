@@ -121,7 +121,8 @@ public sealed class Reaction
     public bool Me { get; set; }
     public bool MeBurst { get; set; }
     public Emoji Emoji { get; set; } = new();
-    public List<int> BurstColors { get; set; } = [];
+    /// <summary>Hex colours (e.g. "#7fa5d2") for super reactions.</summary>
+    public List<string> BurstColors { get; set; } = [];
 }
 
 public sealed class Embed

@@ -45,6 +45,44 @@ public sealed class DiscordRestClientTests
     }
 
     [Fact]
+    public async Task Reads_super_reactions_with_hex_burst_colors()
+    {
+        var handler = new FakeHttpHandler((_, _) => FakeHttpHandler.Json("""
+            [{"id":"200","channel_id":"100","author":{"id":"1","username":"me"},"content":"hi",
+              "timestamp":"2024-01-01T00:00:00+00:00","type":0,
+              "reactions":[{"count":3,"me":false,"me_burst":true,"burst_colors":["#7fa5d2","#c0c0c0"],
+                            "count_details":{"burst":1,"normal":2},"emoji":{"id":null,"name":"🔥"}}]}]
+            """));
+        using var client = Client(handler);
+
+        var reaction = (await client.GetMessagesAsync(100)).Single().Reactions.Single();
+
+        Assert.Equal(["#7fa5d2", "#c0c0c0"], reaction.BurstColors);
+        Assert.True(reaction.MeBurst);
+    }
+
+    [Fact]
+    public async Task An_unreadable_message_is_simplified_instead_of_failing_the_page()
+    {
+        var handler = new FakeHttpHandler((_, _) => FakeHttpHandler.Json($$"""
+            [{{MessageJson}},
+             {"id":"199","channel_id":"100","author":{"id":"2","username":"them"},"content":"still readable",
+              "timestamp":"not a date","type":0},
+             {"id":"198","channel_id":"100","author":{"id":"2","username":"them"},"content":"fine",
+              "timestamp":"2024-01-01T00:00:00+00:00","type":0}]
+            """));
+        using var client = Client(handler);
+
+        var messages = await client.GetMessagesAsync(100);
+
+        Assert.Equal([200UL, 199, 198], messages.Select(m => m.Id.Value));
+        var simplified = messages[1];
+        Assert.Equal("still readable", simplified.Content);
+        Assert.Equal("them", simplified.Author.Username);
+        Assert.Equal(new Snowflake(199).CreatedAt, simplified.Timestamp);
+    }
+
+    [Fact]
     public async Task Sends_json_messages_in_snake_case_without_nulls()
     {
         var handler = new FakeHttpHandler((_, _) => FakeHttpHandler.Json(MessageJson));

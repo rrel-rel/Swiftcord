@@ -81,11 +81,32 @@ public sealed class DiscordRestClient : IDisposable
         if (before is { } b) query += $"&before={b}";
         if (after is { } a) query += $"&after={a}";
         if (around is { } r) query += $"&around={r}";
-        return SendAsync<List<Message>>(HttpMethod.Get, $"channels/{channelId}/messages{query}", ct: ct);
+        return SendListAsync(HttpMethod.Get, $"channels/{channelId}/messages{query}", MinimalMessage, ct);
     }
 
     public Task<List<Message>> GetPinnedMessagesAsync(Snowflake channelId, CancellationToken ct = default) =>
-        SendAsync<List<Message>>(HttpMethod.Get, $"channels/{channelId}/pins", ct: ct);
+        SendListAsync(HttpMethod.Get, $"channels/{channelId}/pins", MinimalMessage, ct);
+
+    /// <summary>
+    /// The fields every message has, for when the full model can't be read. Keeping the message
+    /// (rather than dropping it) preserves its text and keeps history pagination moving.
+    /// </summary>
+    private static Message? MinimalMessage(JsonElement element)
+    {
+        if (!element.TryGetProperty("id", out var id) || !Snowflake.TryParse(id.GetString(), out var messageId))
+            return null;
+        var message = new Message { Id = messageId, Timestamp = messageId.CreatedAt };
+        if (element.TryGetProperty("channel_id", out var channel) && Snowflake.TryParse(channel.GetString(), out var channelId))
+            message.ChannelId = channelId;
+        if (element.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.String)
+            message.Content = content.GetString()!;
+        if (element.TryGetProperty("author", out var author))
+        {
+            try { message.Author = DiscordJson.Deserialize<User>(author); }
+            catch (JsonException) { /* Keep the placeholder author. */ }
+        }
+        return message;
+    }
 
     public Task<Message> SendMessageAsync(Snowflake channelId, MessageCreateRequest message,
         IReadOnlyList<FileUpload>? files = null, CancellationToken ct = default)
@@ -154,6 +175,36 @@ public sealed class DiscordRestClient : IDisposable
         await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         return await JsonSerializer.DeserializeAsync<T>(stream, DiscordJson.Options, ct).ConfigureAwait(false)
             ?? throw new JsonException($"Empty response body for {method} {path}.");
+    }
+
+    /// <summary>
+    /// Fetches a JSON array, reading each element on its own so one unexpected shape can't make a
+    /// whole page unreadable. Elements that fail use <paramref name="fallback"/> (or are skipped) and are logged.
+    /// </summary>
+    public async Task<List<T>> SendListAsync<T>(HttpMethod method, string path, Func<JsonElement, T?>? fallback = null,
+        CancellationToken ct = default) where T : class
+    {
+        using var response = await SendCoreAsync(method, path, null, null, ct).ConfigureAwait(false);
+        await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+
+        var items = new List<T>(doc.RootElement.GetArrayLength());
+        foreach (var element in doc.RootElement.EnumerateArray())
+        {
+            try
+            {
+                items.Add(DiscordJson.Deserialize<T>(element));
+            }
+            // Converters can also throw FormatException/OverflowException for malformed values.
+            catch (Exception ex) when (ex is JsonException or FormatException or OverflowException or InvalidOperationException)
+            {
+                var id = element.TryGetProperty("id", out var idElement) ? idElement.ToString() : "?";
+                _logger.LogWarning(ex, "Couldn't read {Type} {Id} from {Path}; using a simplified copy", typeof(T).Name, id, path);
+                if (fallback?.Invoke(element) is { } simplified)
+                    items.Add(simplified);
+            }
+        }
+        return items;
     }
 
     public async Task SendAsync(HttpMethod method, string path, object? body = null, CancellationToken ct = default)
