@@ -95,6 +95,8 @@ public sealed class EmbedViewModel
     public Uri? Url { get; }
     public IReadOnlyList<MarkdownNode> Description { get; }
     public int? Color { get; }
+    /// <summary>The side-bar colour as plain RGB, 0 for none; x:Bind functions handle non-nullable args best.</summary>
+    public int AccentColor => Color ?? 0;
     public string? AuthorName { get; }
     public Uri? AuthorIconUri { get; }
     public string? ProviderName { get; }

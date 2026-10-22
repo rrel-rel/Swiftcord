@@ -82,6 +82,8 @@ public sealed partial class MessageItemViewModel : ObservableObject
 
     public Message Message { get; }
     public Snowflake Id => Message.Id;
+    /// <summary>For "Copy Message ID"; bound as a string because x:Bind mishandles struct arguments.</summary>
+    public string IdText => Message.Id.ToString();
     public Snowflake AuthorId => Message.Author.Id;
     public DateTimeOffset Timestamp => Message.Timestamp;
     public string Content => Message.Content;

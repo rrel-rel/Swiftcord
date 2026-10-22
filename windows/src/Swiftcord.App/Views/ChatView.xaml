@@ -109,7 +109,7 @@
                     MaxWidth="520"
                     Padding="12,10,12,12"
                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{x:Bind h:Ui.EmbedBorder(Color)}"
+                    BorderBrush="{x:Bind h:Ui.EmbedBorder(AccentColor)}"
                     BorderThickness="4,0,0,0"
                     ColumnSpacing="12"
                     CornerRadius="4"
@@ -318,7 +318,7 @@
                             </MenuFlyoutItem>
                             <MenuFlyoutItem
                                 Click="OnCopyText"
-                                Tag="{x:Bind h:Ui.Str(Id)}"
+                                Tag="{x:Bind IdText}"
                                 Text="Copy Message ID" />
                             <MenuFlyoutSeparator Visibility="{x:Bind CanDelete}" />
                             <MenuFlyoutItem

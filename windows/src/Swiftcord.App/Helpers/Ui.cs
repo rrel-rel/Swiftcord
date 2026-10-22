@@ -1,7 +1,6 @@
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
-using Swiftcord.Core;
 using Swiftcord.Core.Models;
 using Windows.UI;
 
@@ -27,8 +26,6 @@ public static class Ui
 
     public static bool Not(bool value) => !value;
 
-    public static string Str(Snowflake id) => id.ToString();
-
     public static SolidColorBrush Rgb(int rgb)
     {
         if (!RgbBrushes.TryGetValue(rgb, out var brush))
@@ -39,7 +36,7 @@ public static class Ui
     /// <summary>A role colour, or the default text colour for uncoloured roles.</summary>
     public static Brush RoleBrush(int rgb) => rgb == 0 ? ThemeBrush("TextFillColorPrimaryBrush") : Rgb(rgb);
 
-    public static Brush EmbedBorder(int? rgb) => rgb is > 0 ? Rgb(rgb.Value) : ThemeBrush("ControlStrongStrokeColorDefaultBrush");
+    public static Brush EmbedBorder(int rgb) => rgb > 0 ? Rgb(rgb) : ThemeBrush("ControlStrongStrokeColorDefaultBrush");
 
     // ── Server rail ──
 
