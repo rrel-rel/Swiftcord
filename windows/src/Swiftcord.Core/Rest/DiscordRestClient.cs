@@ -37,6 +37,10 @@ public sealed class DiscordRestClient : IDisposable
     public Task<User> GetUserAsync(Snowflake userId, CancellationToken ct = default) =>
         SendAsync<User>(HttpMethod.Get, $"users/{userId}", ct: ct);
 
+    /// <summary>Invalidates a user token server-side, as signing out of the official client does.</summary>
+    public Task LogoutAsync(CancellationToken ct = default) =>
+        SendAsync(HttpMethod.Post, "auth/logout", new LogoutRequest(), ct);
+
     /// <summary>Opens (or returns the existing) DM channel with a user.</summary>
     public Task<Channel> CreateDmAsync(Snowflake recipientId, CancellationToken ct = default) =>
         SendAsync<Channel>(HttpMethod.Post, "users/@me/channels", new CreateDmRequest { Recipients = [recipientId] }, ct);

@@ -7,8 +7,9 @@ A from-scratch Windows 11 Discord client in the spirit of Swiftcord: native (Win
 | Project | Target | Purpose |
 | --- | --- | --- |
 | `src/Swiftcord.Core` | `net10.0` | Platform-independent client: REST, gateway, state cache, markdown, permissions. |
-| `tests/Swiftcord.Core.Tests` | `net10.0` | Unit tests; run anywhere with `dotnet test`. |
-| `src/Swiftcord.App` | `net10.0-windows` | WinUI 3 app *(next milestone; builds on Windows only)*. |
+| `src/Swiftcord.ViewModels` | `net10.0` | All app logic (MVVM): navigation, chat, composer, login. No UI framework dependency. |
+| `src/Swiftcord.App` | `net10.0-windows` | WinUI 3 app: XAML views, markdown renderer, Windows services. Builds on Windows only. |
+| `tests/*` | `net10.0` | Unit tests for Core and ViewModels; run anywhere. |
 
 ## Core overview
 
@@ -19,15 +20,32 @@ A from-scratch Windows 11 Discord client in the spirit of Swiftcord: native (Win
 - **`Markdown/`**: Discord-flavored markdown → AST (bold/italic/underline/strike/spoiler, code, quotes, headings, subtext, lists, links, mentions, emoji, timestamps).
 - **`Permissions/`**: Discord's permission resolution (roles + overwrites).
 
+## App overview
+
+- **Login:** the real discord.com login page in WebView2 (so captcha, 2FA and passkeys work); the token is captured from its API requests, verified, and stored in Windows Credential Manager. A manual token option (user or bot) is also available.
+- **Shell:** Mica window; server rail with unread pills and mention badges; channel sidebar with collapsible categories, permission-filtered channels, and DMs with presence; user panel with log out.
+- **Chat:** virtualized message list that stays pinned to the bottom and loads history as you scroll up; grouping, date dividers, replies, mentions highlighting, embeds, attachments, stickers, reactions; context menu (react, reply, edit, copy, delete).
+- **Composer:** Enter to send, Shift+Enter for newline, Up to edit your last message, Esc to cancel; replies with mention toggle; file picker and drag-and-drop uploads; optimistic sending with retry; typing indicators.
+
 ## Roadmap
 
 1. ✅ Core library
-2. WinUI 3 shell: login (WebView2), server rail, channel list, message list, composer
+2. ✅ WinUI 3 app: login, server rail, channel list, message list, composer
 3. Polish: settings, toast notifications, `swiftcord://` protocol, auto-update (Velopack)
 4. Voice and video
 
-## Build
+## Build & run
+
+**Windows 11** (Visual Studio 2022+ with the *WinUI application development* workload, or the .NET 10 SDK):
+
+```powershell
+dotnet run --project src/Swiftcord.App          # or open Swiftcord.slnx and press F5
+```
+
+The app is unpackaged and self-contained, so it runs straight from `bin/` without installing an MSIX.
+
+**Any OS** (core and view-model tests):
 
 ```sh
-dotnet test                      # core + tests, any OS
+dotnet test Swiftcord.CrossPlatform.slnf
 ```

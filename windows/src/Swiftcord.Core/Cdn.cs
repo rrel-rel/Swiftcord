@@ -39,10 +39,10 @@ public static class Cdn
         guild.Banner is { } hash ? $"{BaseUrl}/banners/{guild.Id}/{hash}.{Ext(hash, false)}?size={size}" : null;
 
     public static string? ChannelIcon(Channel channel, int size = 128) =>
-        channel.Icon is { } hash ? $"{BaseUrl}/channel-icons/{channel.Id}/{hash}.webp?size={size}" : null;
+        channel.Icon is { } hash ? $"{BaseUrl}/channel-icons/{channel.Id}/{hash}.png?size={size}" : null;
 
     public static string Emoji(Snowflake id, bool animated, int size = 48) =>
-        $"{BaseUrl}/emojis/{id}.{(animated ? "gif" : "webp")}?size={size}&quality=lossless";
+        $"{BaseUrl}/emojis/{id}.{(animated ? "gif" : "png")}?size={size}";
 
     public static string? Sticker(StickerItem sticker) => sticker.FormatType switch
     {
@@ -52,5 +52,6 @@ public static class Cdn
         _ => $"{BaseUrl}/stickers/{sticker.Id}.png",
     };
 
-    private static string Ext(string hash, bool animate) => animate && IsAnimated(hash) ? "gif" : "webp";
+    // PNG rather than WebP: WebP decoding isn't guaranteed on every Windows edition.
+    private static string Ext(string hash, bool animate) => animate && IsAnimated(hash) ? "gif" : "png";
 }

@@ -52,7 +52,7 @@ public sealed class ModelTests
     public void Animated_avatars_use_gif_only_when_requested()
     {
         var user = new User { Id = 5, Avatar = "a_abc" };
-        Assert.Equal("https://cdn.discordapp.com/avatars/5/a_abc.webp?size=64", Cdn.Avatar(user, 64));
+        Assert.Equal("https://cdn.discordapp.com/avatars/5/a_abc.png?size=64", Cdn.Avatar(user, 64));
         Assert.Equal("https://cdn.discordapp.com/avatars/5/a_abc.gif?size=64", Cdn.Avatar(user, 64, animate: true));
     }
 }

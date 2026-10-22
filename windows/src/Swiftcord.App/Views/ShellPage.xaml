@@ -1,0 +1,339 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Swiftcord.App.Views.ShellPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:h="using:Swiftcord.App.Helpers"
+    xmlns:nav="using:Swiftcord.ViewModels.Navigation"
+    xmlns:views="using:Swiftcord.App.Views">
+
+    <UserControl.Resources>
+        <!-- Server rail icon -->
+        <DataTemplate x:Key="GuildTemplate" x:DataType="nav:GuildItemViewModel">
+            <Grid
+                Width="72"
+                Height="56"
+                Background="Transparent"
+                ToolTipService.ToolTip="{x:Bind Name, Mode=OneWay}">
+                <Border
+                    Width="4"
+                    Height="{x:Bind h:Ui.PillHeight(IsSelected, IsUnread), Mode=OneWay}"
+                    HorizontalAlignment="Left"
+                    Background="{ThemeResource TextFillColorPrimaryBrush}"
+                    CornerRadius="0,4,4,0" />
+                <Grid Width="48" Height="48">
+                    <Border
+                        Background="{ThemeResource ControlFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{x:Bind h:Ui.GuildCorner(IsSelected), Mode=OneWay}"
+                        Visibility="{x:Bind h:Ui.Collapsed(HasIcon), Mode=OneWay}">
+                        <TextBlock
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            FontWeight="SemiBold"
+                            Text="{x:Bind Acronym, Mode=OneWay}"
+                            TextTrimming="Clip" />
+                    </Border>
+                    <Border
+                        CornerRadius="{x:Bind h:Ui.GuildCorner(IsSelected), Mode=OneWay}"
+                        Visibility="{x:Bind HasIcon, Mode=OneWay}">
+                        <Border.Background>
+                            <ImageBrush Stretch="UniformToFill">
+                                <ImageBrush.ImageSource>
+                                    <BitmapImage DecodePixelWidth="96" UriSource="{x:Bind IconUri, Mode=OneWay}" />
+                                </ImageBrush.ImageSource>
+                            </ImageBrush>
+                        </Border.Background>
+                    </Border>
+                    <InfoBadge
+                        Margin="0,0,-6,-4"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Bottom"
+                        Value="{x:Bind MentionCount, Mode=OneWay}"
+                        Visibility="{x:Bind HasMentions, Mode=OneWay}" />
+                </Grid>
+            </Grid>
+        </DataTemplate>
+
+        <!-- Sidebar rows -->
+        <DataTemplate x:Key="CategoryTemplate" x:DataType="nav:ChannelItemViewModel">
+            <Grid
+                Margin="0,12,0,0"
+                Padding="4,4"
+                Background="Transparent"
+                ColumnSpacing="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <FontIcon
+                    FontSize="10"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Glyph="{x:Bind h:Ui.ChevronGlyph(IsCollapsed), Mode=OneWay}" />
+                <TextBlock
+                    Grid.Column="1"
+                    FontSize="12"
+                    FontWeight="SemiBold"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="{x:Bind Name, Mode=OneWay}"
+                    TextTrimming="CharacterEllipsis" />
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="ChannelTemplate" x:DataType="nav:ChannelItemViewModel">
+            <Grid
+                Height="34"
+                Padding="8,0"
+                Background="{x:Bind h:Ui.SelectionBrush(IsSelected), Mode=OneWay}"
+                ColumnSpacing="8"
+                CornerRadius="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="20" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock
+                    VerticalAlignment="Center"
+                    FontFamily="{x:Bind h:Ui.GlyphFont(UsesSymbolFont)}"
+                    FontSize="16"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="{x:Bind Glyph}"
+                    TextAlignment="Center" />
+                <TextBlock
+                    Grid.Column="1"
+                    VerticalAlignment="Center"
+                    FontWeight="{x:Bind h:Ui.UnreadWeight(IsUnread), Mode=OneWay}"
+                    Foreground="{x:Bind h:Ui.ChannelForeground(IsUnread, IsSelected), Mode=OneWay}"
+                    Text="{x:Bind Name, Mode=OneWay}"
+                    TextTrimming="CharacterEllipsis" />
+                <InfoBadge
+                    Grid.Column="2"
+                    VerticalAlignment="Center"
+                    Value="{x:Bind MentionCount, Mode=OneWay}"
+                    Visibility="{x:Bind HasMentions, Mode=OneWay}" />
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="DirectMessageTemplate" x:DataType="nav:ChannelItemViewModel">
+            <Grid
+                Height="44"
+                Padding="8,0"
+                Background="{x:Bind h:Ui.SelectionBrush(IsSelected), Mode=OneWay}"
+                ColumnSpacing="10"
+                CornerRadius="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="32" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid Width="32" Height="32">
+                    <Ellipse Fill="{ThemeResource ControlFillColorDefaultBrush}">
+                    </Ellipse>
+                    <Ellipse>
+                        <Ellipse.Fill>
+                            <ImageBrush Stretch="UniformToFill">
+                                <ImageBrush.ImageSource>
+                                    <BitmapImage DecodePixelWidth="64" UriSource="{x:Bind AvatarUri, Mode=OneWay}" />
+                                </ImageBrush.ImageSource>
+                            </ImageBrush>
+                        </Ellipse.Fill>
+                    </Ellipse>
+                    <Ellipse
+                        Width="12"
+                        Height="12"
+                        Margin="0,0,-2,-2"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Bottom"
+                        Fill="{x:Bind h:Ui.PresenceBrush(Presence), Mode=OneWay}"
+                        Stroke="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+                        StrokeThickness="2"
+                        Visibility="{x:Bind h:Ui.PresenceVisibility(Presence), Mode=OneWay}" />
+                </Grid>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock
+                        FontWeight="{x:Bind h:Ui.UnreadWeight(IsUnread), Mode=OneWay}"
+                        Foreground="{x:Bind h:Ui.ChannelForeground(IsUnread, IsSelected), Mode=OneWay}"
+                        Text="{x:Bind Name, Mode=OneWay}"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        Style="{StaticResource SecondaryTextStyle}"
+                        Text="{x:Bind Subtitle, Mode=OneWay}"
+                        TextTrimming="CharacterEllipsis"
+                        Visibility="{x:Bind HasSubtitle, Mode=OneWay}" />
+                </StackPanel>
+                <InfoBadge
+                    Grid.Column="2"
+                    VerticalAlignment="Center"
+                    Value="{x:Bind MentionCount, Mode=OneWay}"
+                    Visibility="{x:Bind HasMentions, Mode=OneWay}" />
+            </Grid>
+        </DataTemplate>
+
+        <views:ChannelTemplateSelector
+            x:Key="ChannelTemplateSelector"
+            Category="{StaticResource CategoryTemplate}"
+            Channel="{StaticResource ChannelTemplate}"
+            DirectMessage="{StaticResource DirectMessageTemplate}" />
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="72" />
+            <ColumnDefinition Width="248" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Server rail -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Grid
+                Width="72"
+                Height="56"
+                Background="Transparent"
+                Tapped="OnHomeTapped"
+                ToolTipService.ToolTip="Direct Messages">
+                <Border
+                    Width="4"
+                    Height="{x:Bind h:Ui.PillHeight(ViewModel.IsHomeSelected, x:False), Mode=OneWay}"
+                    HorizontalAlignment="Left"
+                    Background="{ThemeResource TextFillColorPrimaryBrush}"
+                    CornerRadius="0,4,4,0" />
+                <Border
+                    Width="48"
+                    Height="48"
+                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                    CornerRadius="{x:Bind h:Ui.GuildCorner(ViewModel.IsHomeSelected), Mode=OneWay}">
+                    <FontIcon
+                        FontSize="20"
+                        Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                        Glyph="&#xE8BD;" />
+                </Border>
+                <InfoBadge
+                    Margin="0,0,6,4"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Value="{x:Bind ViewModel.HomeMentionCount, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.HomeHasMentions, Mode=OneWay}" />
+            </Grid>
+            <Border
+                Grid.Row="1"
+                Width="32"
+                Height="2"
+                Margin="0,2,0,4"
+                Background="{ThemeResource DividerStrokeColorDefaultBrush}"
+                CornerRadius="1" />
+            <ListView
+                x:Name="GuildList"
+                Grid.Row="2"
+                IsItemClickEnabled="True"
+                ItemClick="OnGuildClick"
+                ItemContainerStyle="{StaticResource PlainListViewItemStyle}"
+                ItemTemplate="{StaticResource GuildTemplate}"
+                ItemsSource="{x:Bind ViewModel.Guilds}"
+                SelectionMode="None" />
+        </Grid>
+
+        <!-- Channel sidebar -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="48" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock
+                Margin="16,0"
+                VerticalAlignment="Center"
+                Style="{StaticResource BodyStrongTextBlockStyle}"
+                Text="{x:Bind ViewModel.Sidebar.Title, Mode=OneWay}"
+                TextTrimming="CharacterEllipsis" />
+            <ListView
+                Grid.Row="1"
+                IsItemClickEnabled="True"
+                ItemClick="OnChannelClick"
+                ItemContainerStyle="{StaticResource SidebarListViewItemStyle}"
+                ItemTemplateSelector="{StaticResource ChannelTemplateSelector}"
+                ItemsSource="{x:Bind ViewModel.Sidebar.Items}"
+                SelectionMode="None" />
+
+            <!-- Current user -->
+            <Grid
+                Grid.Row="2"
+                Margin="8"
+                Padding="8"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                ColumnSpacing="10"
+                CornerRadius="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="32" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Ellipse Width="32" Height="32">
+                    <Ellipse.Fill>
+                        <ImageBrush Stretch="UniformToFill">
+                            <ImageBrush.ImageSource>
+                                <BitmapImage DecodePixelWidth="64" UriSource="{x:Bind ViewModel.CurrentUserAvatar, Mode=OneWay}" />
+                            </ImageBrush.ImageSource>
+                        </ImageBrush>
+                    </Ellipse.Fill>
+                </Ellipse>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        Text="{x:Bind ViewModel.CurrentUserName, Mode=OneWay}"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        Style="{StaticResource SecondaryTextStyle}"
+                        Text="{x:Bind ViewModel.ConnectionStatus, Mode=OneWay}"
+                        TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+                <Button
+                    Grid.Column="2"
+                    AutomationProperties.Name="Settings"
+                    Content="&#xE713;"
+                    Style="{StaticResource IconButtonStyle}"
+                    ToolTipService.ToolTip="Settings">
+                    <Button.Flyout>
+                        <MenuFlyout Placement="TopEdgeAlignedRight">
+                            <MenuFlyoutItem Text="{x:Bind ViewModel.CurrentUserTag, Mode=OneWay}" IsEnabled="False" />
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem Command="{x:Bind ViewModel.LogoutCommand}" Text="Log out">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xF3B1;" />
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                        </MenuFlyout>
+                    </Button.Flyout>
+                </Button>
+            </Grid>
+        </Grid>
+
+        <!-- Chat -->
+        <Border
+            Grid.Column="2"
+            Background="{ThemeResource LayerFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1,1,0,0"
+            CornerRadius="8,0,0,0">
+            <Grid>
+                <views:ChatView ViewModel="{x:Bind ViewModel.Chat, Mode=OneWay}" Visibility="{x:Bind ViewModel.HasChat, Mode=OneWay}" />
+                <StackPanel
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Spacing="8"
+                    Visibility="{x:Bind h:Ui.Collapsed(ViewModel.HasChat), Mode=OneWay}">
+                    <ProgressRing IsActive="{x:Bind h:Ui.Not(ViewModel.IsReady), Mode=OneWay}" />
+                    <TextBlock
+                        HorizontalAlignment="Center"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="Pick a conversation to get started." />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

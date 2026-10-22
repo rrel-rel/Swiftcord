@@ -17,6 +17,8 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <!-- The view-model tests reuse the fake transport and HTTP handler. -->
+    <InternalsVisibleTo Include="Swiftcord.ViewModels.Tests" />
   </ItemGroup>
 
   <ItemGroup>

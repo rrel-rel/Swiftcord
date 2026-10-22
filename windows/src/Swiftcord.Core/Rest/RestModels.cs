@@ -51,3 +51,9 @@ internal sealed class AckRequest
 {
     public string? Token { get; set; }
 }
+
+internal sealed class LogoutRequest
+{
+    public string? Provider { get; set; }
+    public string? VoipProvider { get; set; }
+}

@@ -1,0 +1,734 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Swiftcord.App.Views.ChatView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:c="using:Swiftcord.App.Controls"
+    xmlns:h="using:Swiftcord.App.Helpers"
+    xmlns:m="using:Swiftcord.ViewModels.Messages"
+    AllowDrop="True"
+    DragOver="OnDragOver"
+    Drop="OnDrop">
+
+    <UserControl.Resources>
+        <!-- Attachments -->
+        <DataTemplate x:Key="AttachmentTemplate" x:DataType="m:AttachmentViewModel">
+            <Grid Margin="0,4,0,0" HorizontalAlignment="Left">
+                <!-- Image preview -->
+                <Grid Visibility="{x:Bind IsImage}">
+                    <Button
+                        Padding="0"
+                        BorderThickness="0"
+                        Click="OnOpenUri"
+                        CornerRadius="6"
+                        Tag="{x:Bind Uri}"
+                        ToolTipService.ToolTip="{x:Bind FileName}">
+                        <Image
+                            Width="{x:Bind PreviewWidth}"
+                            Height="{x:Bind PreviewHeight}"
+                            Stretch="UniformToFill">
+                            <Image.Source>
+                                <BitmapImage UriSource="{x:Bind PreviewUri}" />
+                            </Image.Source>
+                        </Image>
+                    </Button>
+                    <Border
+                        Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}"
+                        CornerRadius="6"
+                        Tapped="OnRevealSpoiler"
+                        Visibility="{x:Bind IsSpoiler}">
+                        <TextBlock
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            FontWeight="SemiBold"
+                            Text="SPOILER" />
+                    </Border>
+                </Grid>
+                <!-- File card -->
+                <Grid
+                    MinWidth="260"
+                    MaxWidth="420"
+                    Padding="12,10"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    ColumnSpacing="12"
+                    CornerRadius="6"
+                    Visibility="{x:Bind IsFile}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon FontSize="28" Glyph="&#xE8A5;" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="{x:Bind FileName}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Style="{StaticResource SecondaryTextStyle}" Text="{x:Bind SizeText}" />
+                    </StackPanel>
+                    <Button
+                        Grid.Column="2"
+                        AutomationProperties.Name="Download"
+                        Click="OnOpenUri"
+                        Content="&#xE896;"
+                        Style="{StaticResource IconButtonStyle}"
+                        Tag="{x:Bind Uri}"
+                        ToolTipService.ToolTip="Download" />
+                </Grid>
+            </Grid>
+        </DataTemplate>
+
+        <!-- Embeds -->
+        <DataTemplate x:Key="EmbedFieldTemplate" x:DataType="m:EmbedFieldViewModel">
+            <StackPanel Spacing="2">
+                <TextBlock FontWeight="SemiBold" Text="{x:Bind Name}" TextWrapping="Wrap" />
+                <c:MarkdownTextBlock MessageContext="{x:Bind Context}" Nodes="{x:Bind Value}" />
+            </StackPanel>
+        </DataTemplate>
+
+        <DataTemplate x:Key="EmbedTemplate" x:DataType="m:EmbedViewModel">
+            <Grid Margin="0,4,0,0" HorizontalAlignment="Left">
+                <!-- A bare image or GIF link -->
+                <Button
+                    Padding="0"
+                    BorderThickness="0"
+                    Click="OnOpenUri"
+                    CornerRadius="6"
+                    Tag="{x:Bind Url}"
+                    Visibility="{x:Bind IsMediaOnly}">
+                    <Image
+                        Width="{x:Bind ImageWidth}"
+                        Height="{x:Bind ImageHeight}"
+                        Stretch="UniformToFill">
+                        <Image.Source>
+                            <BitmapImage UriSource="{x:Bind ImageUri}" />
+                        </Image.Source>
+                    </Image>
+                </Button>
+                <!-- A rich embed card -->
+                <Grid
+                    MaxWidth="520"
+                    Padding="12,10,12,12"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{x:Bind h:Ui.EmbedBorder(Color)}"
+                    BorderThickness="4,0,0,0"
+                    ColumnSpacing="12"
+                    CornerRadius="4"
+                    Visibility="{x:Bind h:Ui.Collapsed(IsMediaOnly)}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="6">
+                        <TextBlock
+                            Style="{StaticResource SecondaryTextStyle}"
+                            Text="{x:Bind ProviderName}"
+                            Visibility="{x:Bind HasProvider}" />
+                        <StackPanel
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            Visibility="{x:Bind HasAuthor}">
+                            <Ellipse Width="24" Height="24">
+                                <Ellipse.Fill>
+                                    <ImageBrush>
+                                        <ImageBrush.ImageSource>
+                                            <BitmapImage DecodePixelWidth="48" UriSource="{x:Bind AuthorIconUri}" />
+                                        </ImageBrush.ImageSource>
+                                    </ImageBrush>
+                                </Ellipse.Fill>
+                            </Ellipse>
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                FontWeight="SemiBold"
+                                Text="{x:Bind AuthorName}" />
+                        </StackPanel>
+                        <HyperlinkButton
+                            Padding="0"
+                            Content="{x:Bind Title}"
+                            FontWeight="SemiBold"
+                            NavigateUri="{x:Bind Url}"
+                            Visibility="{x:Bind HasTitle}" />
+                        <c:MarkdownTextBlock
+                            MessageContext="{x:Bind Context}"
+                            Nodes="{x:Bind Description}"
+                            Visibility="{x:Bind HasDescription}" />
+                        <ItemsControl
+                            ItemTemplate="{StaticResource EmbedFieldTemplate}"
+                            ItemsSource="{x:Bind Fields}"
+                            Visibility="{x:Bind HasFields}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Spacing="8" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                        <Image
+                            MaxWidth="{x:Bind ImageWidth}"
+                            MaxHeight="{x:Bind ImageHeight}"
+                            HorizontalAlignment="Left"
+                            Stretch="Uniform"
+                            Visibility="{x:Bind HasImage}">
+                            <Image.Source>
+                                <BitmapImage UriSource="{x:Bind ImageUri}" />
+                            </Image.Source>
+                        </Image>
+                        <StackPanel
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            Visibility="{x:Bind HasFooter}">
+                            <Image Width="20" Height="20">
+                                <Image.Source>
+                                    <BitmapImage DecodePixelWidth="40" UriSource="{x:Bind FooterIconUri}" />
+                                </Image.Source>
+                            </Image>
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                Style="{StaticResource SecondaryTextStyle}"
+                                Text="{x:Bind FooterText}" />
+                        </StackPanel>
+                    </StackPanel>
+                    <Image
+                        Grid.Column="1"
+                        MaxWidth="80"
+                        MaxHeight="80"
+                        VerticalAlignment="Top"
+                        Visibility="{x:Bind HasThumbnail}">
+                        <Image.Source>
+                            <BitmapImage DecodePixelWidth="160" UriSource="{x:Bind ThumbnailUri}" />
+                        </Image.Source>
+                    </Image>
+                </Grid>
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="StickerTemplate" x:DataType="m:StickerViewModel">
+            <Grid Margin="0,4,0,0" ToolTipService.ToolTip="{x:Bind Name}">
+                <Image
+                    Width="160"
+                    Height="160"
+                    Visibility="{x:Bind HasImage}">
+                    <Image.Source>
+                        <BitmapImage DecodePixelWidth="320" UriSource="{x:Bind ImageUri}" />
+                    </Image.Source>
+                </Image>
+                <TextBlock
+                    Style="{StaticResource SecondaryTextStyle}"
+                    Text="{x:Bind Name}"
+                    Visibility="{x:Bind h:Ui.Collapsed(HasImage)}" />
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="ReactionTemplate" x:DataType="m:ReactionViewModel">
+            <ToggleButton
+                Height="28"
+                MinWidth="0"
+                Padding="6,0"
+                Command="{x:Bind ToggleCommand}"
+                CornerRadius="8"
+                IsChecked="{x:Bind Me, Mode=OneWay}"
+                ToolTipService.ToolTip="{x:Bind Name}">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Text="{x:Bind Text}"
+                        Visibility="{x:Bind h:Ui.Collapsed(IsCustom)}" />
+                    <Image
+                        Width="18"
+                        Height="18"
+                        Visibility="{x:Bind IsCustom}">
+                        <Image.Source>
+                            <BitmapImage DecodePixelWidth="36" UriSource="{x:Bind ImageUri}" />
+                        </Image.Source>
+                    </Image>
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        FontWeight="SemiBold"
+                        Text="{x:Bind Count, Mode=OneWay}" />
+                </StackPanel>
+            </ToggleButton>
+        </DataTemplate>
+
+        <!-- A message row -->
+        <DataTemplate x:Key="MessageTemplate" x:DataType="m:MessageItemViewModel">
+            <StackPanel>
+                <!-- Date divider -->
+                <Grid
+                    Margin="16,16,16,0"
+                    ColumnSpacing="8"
+                    Visibility="{x:Bind ShowDateSeparator, Mode=OneWay}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Rectangle
+                        Height="1"
+                        VerticalAlignment="Center"
+                        Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                    <TextBlock
+                        Grid.Column="1"
+                        Style="{StaticResource SecondaryTextStyle}"
+                        Text="{x:Bind DateSeparatorText, Mode=OneWay}" />
+                    <Rectangle
+                        Grid.Column="2"
+                        Height="1"
+                        VerticalAlignment="Center"
+                        Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                </Grid>
+
+                <Grid
+                    Margin="{x:Bind h:Ui.GroupMargin(IsGroupStart), Mode=OneWay}"
+                    Padding="14,2,16,2"
+                    Background="{x:Bind h:Ui.MessageBackground(MentionsMe)}"
+                    BorderBrush="#F0B232"
+                    BorderThickness="{x:Bind h:Ui.MentionBorder(MentionsMe)}"
+                    Opacity="{x:Bind h:Ui.PendingOpacity(IsPending), Mode=OneWay}">
+                    <Grid.ContextFlyout>
+                        <MenuFlyout>
+                            <MenuFlyoutSubItem Text="Add Reaction">
+                                <MenuFlyoutSubItem.Icon>
+                                    <FontIcon Glyph="&#xE76E;" />
+                                </MenuFlyoutSubItem.Icon>
+                                <MenuFlyoutItem Command="{x:Bind AddReactionCommand}" CommandParameter="👍" Text="👍" />
+                                <MenuFlyoutItem Command="{x:Bind AddReactionCommand}" CommandParameter="❤️" Text="❤️" />
+                                <MenuFlyoutItem Command="{x:Bind AddReactionCommand}" CommandParameter="😂" Text="😂" />
+                                <MenuFlyoutItem Command="{x:Bind AddReactionCommand}" CommandParameter="😮" Text="😮" />
+                                <MenuFlyoutItem Command="{x:Bind AddReactionCommand}" CommandParameter="😢" Text="😢" />
+                                <MenuFlyoutItem Command="{x:Bind AddReactionCommand}" CommandParameter="🔥" Text="🔥" />
+                            </MenuFlyoutSubItem>
+                            <MenuFlyoutItem Command="{x:Bind ReplyCommand}" Text="Reply">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE97A;" />
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem
+                                Command="{x:Bind EditCommand}"
+                                Text="Edit Message"
+                                Visibility="{x:Bind CanEdit}">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE70F;" />
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem
+                                Click="OnCopyText"
+                                Tag="{x:Bind Content}"
+                                Text="Copy Text">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE8C8;" />
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem
+                                Click="OnCopyText"
+                                Tag="{x:Bind h:Ui.Str(Id)}"
+                                Text="Copy Message ID" />
+                            <MenuFlyoutSeparator Visibility="{x:Bind CanDelete}" />
+                            <MenuFlyoutItem
+                                Command="{x:Bind DeleteCommand}"
+                                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                Text="Delete Message"
+                                Visibility="{x:Bind CanDelete}">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE74D;" />
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                        </MenuFlyout>
+                    </Grid.ContextFlyout>
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="58" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Reply preview -->
+                    <StackPanel
+                        Grid.ColumnSpan="2"
+                        Margin="58,0,0,2"
+                        Orientation="Horizontal"
+                        Spacing="6"
+                        Visibility="{x:Bind IsReply}">
+                        <FontIcon
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                            Glyph="&#xE97A;" />
+                        <Ellipse
+                            Width="16"
+                            Height="16"
+                            Visibility="{x:Bind h:Ui.HasText(ReplyAuthorName)}">
+                            <Ellipse.Fill>
+                                <ImageBrush>
+                                    <ImageBrush.ImageSource>
+                                        <BitmapImage DecodePixelWidth="32" UriSource="{x:Bind ReplyAvatarUri}" />
+                                    </ImageBrush.ImageSource>
+                                </ImageBrush>
+                            </Ellipse.Fill>
+                        </Ellipse>
+                        <TextBlock
+                            FontSize="12"
+                            FontWeight="SemiBold"
+                            Foreground="{x:Bind h:Ui.RoleBrush(ReplyAuthorColor)}"
+                            Text="{x:Bind ReplyAuthorName}" />
+                        <TextBlock
+                            MaxWidth="480"
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="{x:Bind ReplySnippet}"
+                            TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+
+                    <!-- Avatar, or a glyph for system messages -->
+                    <Ellipse
+                        Grid.Row="1"
+                        Width="40"
+                        Height="40"
+                        Margin="0,2,0,0"
+                        VerticalAlignment="Top"
+                        Visibility="{x:Bind IsGroupStart, Mode=OneWay}">
+                        <Ellipse.Fill>
+                            <ImageBrush Stretch="UniformToFill">
+                                <ImageBrush.ImageSource>
+                                    <BitmapImage DecodePixelWidth="80" UriSource="{x:Bind AvatarUri}" />
+                                </ImageBrush.ImageSource>
+                            </ImageBrush>
+                        </Ellipse.Fill>
+                    </Ellipse>
+                    <FontIcon
+                        Grid.Row="1"
+                        Margin="0,2,0,0"
+                        VerticalAlignment="Top"
+                        FontSize="16"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Glyph="&#xE76C;"
+                        Visibility="{x:Bind IsSystem}" />
+
+                    <StackPanel
+                        Grid.Row="1"
+                        Grid.Column="1"
+                        Spacing="2">
+                        <!-- Author line -->
+                        <StackPanel
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            Visibility="{x:Bind IsGroupStart, Mode=OneWay}">
+                            <TextBlock
+                                FontWeight="SemiBold"
+                                Foreground="{x:Bind h:Ui.RoleBrush(AuthorColor)}"
+                                Text="{x:Bind AuthorName}" />
+                            <Border
+                                Padding="4,0"
+                                VerticalAlignment="Center"
+                                Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                CornerRadius="3"
+                                Visibility="{x:Bind IsBot}">
+                                <TextBlock
+                                    FontSize="10"
+                                    FontWeight="SemiBold"
+                                    Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                    Text="BOT" />
+                            </Border>
+                            <TextBlock
+                                VerticalAlignment="Bottom"
+                                Style="{StaticResource SecondaryTextStyle}"
+                                Text="{x:Bind TimestampText}"
+                                ToolTipService.ToolTip="{x:Bind FullTimestamp}" />
+                        </StackPanel>
+
+                        <TextBlock
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="{x:Bind SystemText}"
+                            TextWrapping="Wrap"
+                            Visibility="{x:Bind IsSystem}" />
+
+                        <c:MarkdownTextBlock
+                            IsEdited="{x:Bind IsEdited}"
+                            IsEmojiOnly="{x:Bind IsEmojiOnly}"
+                            MessageContext="{x:Bind Context}"
+                            Nodes="{x:Bind Nodes}"
+                            Visibility="{x:Bind HasContent}" />
+
+                        <ItemsControl
+                            ItemTemplate="{StaticResource AttachmentTemplate}"
+                            ItemsSource="{x:Bind Attachments}"
+                            Visibility="{x:Bind HasAttachments}" />
+                        <ItemsControl
+                            ItemTemplate="{StaticResource EmbedTemplate}"
+                            ItemsSource="{x:Bind Embeds}"
+                            Visibility="{x:Bind HasEmbeds}" />
+                        <ItemsControl
+                            ItemTemplate="{StaticResource StickerTemplate}"
+                            ItemsSource="{x:Bind Stickers}"
+                            Visibility="{x:Bind HasStickers}" />
+
+                        <ItemsRepeater
+                            Margin="0,4,0,0"
+                            ItemTemplate="{StaticResource ReactionTemplate}"
+                            ItemsSource="{x:Bind Reactions}"
+                            Visibility="{x:Bind HasReactions, Mode=OneWay}">
+                            <ItemsRepeater.Layout>
+                                <StackLayout Orientation="Horizontal" Spacing="4" />
+                            </ItemsRepeater.Layout>
+                        </ItemsRepeater>
+
+                        <!-- Failed send -->
+                        <StackPanel
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            Visibility="{x:Bind IsFailed, Mode=OneWay}">
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="Message failed to send." />
+                            <HyperlinkButton
+                                Padding="2,0"
+                                Command="{x:Bind RetryCommand}"
+                                Content="Retry" />
+                            <HyperlinkButton
+                                Padding="2,0"
+                                Command="{x:Bind DeleteCommand}"
+                                Content="Discard" />
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </DataTemplate>
+
+        <DataTemplate x:Key="PendingAttachmentTemplate" x:DataType="m:PendingAttachment">
+            <Grid
+                Padding="10,6,4,6"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                ColumnSpacing="8"
+                CornerRadius="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <FontIcon FontSize="16" Glyph="&#xE8A5;" />
+                <StackPanel Grid.Column="1" MaxWidth="180">
+                    <TextBlock Text="{x:Bind FileName}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Style="{StaticResource SecondaryTextStyle}" Text="{x:Bind SizeText}" />
+                </StackPanel>
+                <Button
+                    Grid.Column="2"
+                    AutomationProperties.Name="Remove attachment"
+                    Command="{x:Bind RemoveCommand}"
+                    Content="&#xE711;"
+                    FontSize="12"
+                    Style="{StaticResource IconButtonStyle}" />
+            </Grid>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Grid
+            Padding="16,0"
+            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+            BorderThickness="0,0,0,1"
+            ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock
+                VerticalAlignment="Center"
+                FontSize="20"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Text="{x:Bind h:Ui.ChannelHeaderGlyph(ViewModel.IsDirectMessage), Mode=OneWay}" />
+            <TextBlock
+                Grid.Column="1"
+                VerticalAlignment="Center"
+                Style="{StaticResource BodyStrongTextBlockStyle}"
+                Text="{x:Bind ViewModel.Title, Mode=OneWay}" />
+            <TextBlock
+                Grid.Column="2"
+                Margin="8,0,0,0"
+                VerticalAlignment="Center"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Text="{x:Bind ViewModel.Topic, Mode=OneWay}"
+                TextTrimming="CharacterEllipsis"
+                ToolTipService.ToolTip="{x:Bind ViewModel.Topic, Mode=OneWay}"
+                Visibility="{x:Bind ViewModel.HasTopic, Mode=OneWay}" />
+        </Grid>
+
+        <InfoBar
+            Grid.Row="1"
+            Margin="16,8,16,0"
+            CloseButtonClick="OnErrorClosed"
+            IsOpen="{x:Bind h:Ui.HasText(ViewModel.Error), Mode=OneWay}"
+            Message="{x:Bind ViewModel.Error, Mode=OneWay}"
+            Severity="Error" />
+
+        <!-- Messages -->
+        <ListView
+            x:Name="MessageList"
+            Grid.Row="2"
+            IsItemClickEnabled="False"
+            ItemContainerStyle="{StaticResource PlainListViewItemStyle}"
+            ItemTemplate="{StaticResource MessageTemplate}"
+            ItemsSource="{x:Bind ViewModel.Messages, Mode=OneWay}"
+            Loaded="OnMessageListLoaded"
+            SelectionMode="None">
+            <ListView.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <!-- Keeps the view pinned to the bottom as messages arrive and preserves position when history loads above. -->
+                    <ItemsStackPanel VerticalAlignment="Bottom" ItemsUpdatingScrollMode="KeepLastItemInView" />
+                </ItemsPanelTemplate>
+            </ListView.ItemsPanel>
+            <ListView.Header>
+                <StackPanel Padding="16,24,16,8">
+                    <ProgressRing
+                        Width="24"
+                        Height="24"
+                        IsActive="{x:Bind ViewModel.IsLoadingOlder, Mode=OneWay}" />
+                    <StackPanel Spacing="4" Visibility="{x:Bind h:Ui.Collapsed(ViewModel.HasMoreHistory), Mode=OneWay}">
+                        <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="{x:Bind ViewModel.Title, Mode=OneWay}" />
+                        <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="This is the beginning of the conversation." />
+                    </StackPanel>
+                </StackPanel>
+            </ListView.Header>
+        </ListView>
+        <ProgressRing
+            Grid.Row="2"
+            Width="40"
+            Height="40"
+            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}" />
+
+        <!-- Composer -->
+        <Grid
+            Grid.Row="3"
+            Margin="16,4,16,0"
+            Background="{ThemeResource ControlFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Reply / edit bar -->
+            <Grid
+                Padding="12,6,4,6"
+                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                ColumnSpacing="8"
+                Visibility="{x:Bind ViewModel.IsReplying, Mode=OneWay}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}">
+                    <Run Text="Replying to" />
+                    <Run FontWeight="SemiBold" Text="{x:Bind ViewModel.ReplyingTo.AuthorName, Mode=OneWay}" />
+                </TextBlock>
+                <ToggleButton
+                    Grid.Column="1"
+                    Padding="8,2"
+                    Content="@ Mention"
+                    FontSize="12"
+                    IsChecked="{x:Bind ViewModel.MentionReplyAuthor, Mode=TwoWay}"
+                    ToolTipService.ToolTip="Notify the author of the original message" />
+                <Button
+                    Grid.Column="2"
+                    AutomationProperties.Name="Cancel reply"
+                    Command="{x:Bind ViewModel.CancelReplyOrEditCommand, Mode=OneWay}"
+                    Content="&#xE711;"
+                    FontSize="12"
+                    Style="{StaticResource IconButtonStyle}" />
+            </Grid>
+            <Grid
+                Padding="12,6,4,6"
+                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                Visibility="{x:Bind ViewModel.IsEditing, Mode=OneWay}">
+                <TextBlock
+                    VerticalAlignment="Center"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Text="Editing message · Esc to cancel · Enter to save" />
+                <Button
+                    HorizontalAlignment="Right"
+                    AutomationProperties.Name="Cancel edit"
+                    Command="{x:Bind ViewModel.CancelReplyOrEditCommand, Mode=OneWay}"
+                    Content="&#xE711;"
+                    FontSize="12"
+                    Style="{StaticResource IconButtonStyle}" />
+            </Grid>
+
+            <!-- Pending attachments -->
+            <ItemsRepeater
+                Grid.Row="1"
+                Margin="12,8,12,0"
+                ItemTemplate="{StaticResource PendingAttachmentTemplate}"
+                ItemsSource="{x:Bind ViewModel.Attachments, Mode=OneWay}">
+                <ItemsRepeater.Layout>
+                    <StackLayout Orientation="Horizontal" Spacing="8" />
+                </ItemsRepeater.Layout>
+            </ItemsRepeater>
+
+            <Grid Grid.Row="2" ColumnSpacing="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button
+                    Margin="4,0,0,0"
+                    VerticalAlignment="Bottom"
+                    AutomationProperties.Name="Attach a file"
+                    Click="OnAttachClick"
+                    Content="&#xE723;"
+                    IsEnabled="{x:Bind ViewModel.CanAttach, Mode=OneWay}"
+                    Style="{StaticResource IconButtonStyle}"
+                    ToolTipService.ToolTip="Attach a file" />
+                <TextBox
+                    x:Name="ComposerBox"
+                    Grid.Column="1"
+                    MaxHeight="240"
+                    Padding="4,10"
+                    AcceptsReturn="True"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    IsEnabled="{x:Bind ViewModel.CanSend, Mode=OneWay}"
+                    IsSpellCheckEnabled="True"
+                    PlaceholderText="{x:Bind ViewModel.ComposerPlaceholder, Mode=OneWay}"
+                    PreviewKeyDown="OnComposerKeyDown"
+                    ScrollViewer.VerticalScrollBarVisibility="Auto"
+                    Text="{x:Bind ViewModel.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                    TextWrapping="Wrap" />
+                <Button
+                    Grid.Column="2"
+                    Margin="0,0,4,0"
+                    VerticalAlignment="Bottom"
+                    AutomationProperties.Name="Send"
+                    Command="{x:Bind ViewModel.SendCommand, Mode=OneWay}"
+                    Content="&#xE724;"
+                    Style="{StaticResource IconButtonStyle}"
+                    ToolTipService.ToolTip="Send (Enter)" />
+            </Grid>
+        </Grid>
+
+        <!-- Typing indicator -->
+        <TextBlock
+            Grid.Row="4"
+            Height="22"
+            Margin="20,2,16,2"
+            Style="{StaticResource SecondaryTextStyle}"
+            Text="{x:Bind ViewModel.TypingText, Mode=OneWay}"
+            TextTrimming="CharacterEllipsis" />
+    </Grid>
+</UserControl>

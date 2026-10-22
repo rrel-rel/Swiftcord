@@ -57,14 +57,18 @@ public sealed class DiscordClient : IAsyncDisposable
         return messages;
     }
 
-    /// <summary>Sends a message with a fresh nonce so the echo from the gateway can be matched to it.</summary>
+    /// <summary>A fresh nonce for matching a sent message to its gateway echo.</summary>
+    public static string NewNonce() => Snowflake.FromTime(DateTimeOffset.UtcNow).ToString();
+
+    /// <summary>Sends a message with a nonce so the echo from the gateway can be matched to it.</summary>
     public Task<Message> SendMessageAsync(Snowflake channelId, string content, Snowflake? replyTo = null,
-        IReadOnlyList<FileUpload>? files = null, bool mentionRepliedUser = true, CancellationToken ct = default)
+        IReadOnlyList<FileUpload>? files = null, bool mentionRepliedUser = true, string? nonce = null,
+        CancellationToken ct = default)
     {
         var request = new MessageCreateRequest
         {
             Content = content,
-            Nonce = Snowflake.FromTime(DateTimeOffset.UtcNow).ToString(),
+            Nonce = nonce ?? NewNonce(),
         };
         if (replyTo is { } replyId)
         {
