@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Swiftcord.Core/Swiftcord.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Swiftcord.Core.Tests/Swiftcord.Core.Tests.csproj" />
+  </Folder>
+</Solution>
