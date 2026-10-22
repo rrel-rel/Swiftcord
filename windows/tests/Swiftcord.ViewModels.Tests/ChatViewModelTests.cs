@@ -240,8 +240,18 @@ public sealed class ChatViewModelTests : IAsyncLifetime
 
         Assert.Equal(["older", "newest"], chat.Messages.Select(m => m.Content));
         Assert.Contains("GET /api/v10/channels/100/messages?limit=50&before=41", _session.RequestLines);
-        Assert.False(chat.HasMoreHistory);
         Assert.False(chat.Messages[1].IsGroupStart);
+        // A short page isn't proof of the beginning; keep going until Discord returns nothing.
+        Assert.True(chat.HasMoreHistory);
+
+        _session.Respond = (_, _) => Json("[]");
+        await chat.LoadOlderCommand.ExecuteAsync(null);
+        Assert.Contains("GET /api/v10/channels/100/messages?limit=50&before=30", _session.RequestLines);
+        Assert.False(chat.HasMoreHistory);
+
+        var requests = _session.Http.Requests.Count;
+        await chat.LoadOlderCommand.ExecuteAsync(null);
+        Assert.Equal(requests, _session.Http.Requests.Count);
     }
 
     [Fact]

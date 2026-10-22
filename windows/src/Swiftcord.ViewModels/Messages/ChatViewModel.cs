@@ -150,7 +150,8 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
         {
             var oldest = Messages.FirstOrDefault(m => !m.IsPending)?.Id ?? Messages[0].Id;
             var older = await _client.LoadOlderMessagesAsync(ChannelId, oldest);
-            HasMoreHistory = older.Count >= PageSize;
+            // Only an empty page proves we've reached the start; a short page can happen mid-history.
+            HasMoreHistory = older.Count > 0;
             var options = CreateOptions();
             var items = older.Where(m => !_byId.ContainsKey(m.Id)).Select(m => new MessageItemViewModel(m, options)).ToList();
             for (var i = items.Count - 1; i >= 0; i--)

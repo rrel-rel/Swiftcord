@@ -22,6 +22,7 @@ public sealed partial class ChatView : UserControl
         nameof(ViewModel), typeof(ChatViewModel), typeof(ChatView), new PropertyMetadata(null, OnViewModelChanged));
 
     private ScrollViewer? _scroller;
+    private bool _loadingOlder;
 
     public ChatView()
     {
@@ -69,11 +70,31 @@ public sealed partial class ChatView : UserControl
             _scroller.ViewChanged += OnScrollViewChanged;
     }
 
-    private void OnScrollViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    private async void OnScrollViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
-        if (_scroller is { VerticalOffset: < LoadOlderThreshold } && ViewModel is { IsLoading: false } vm
-            && vm.LoadOlderCommand.CanExecute(null))
-            vm.LoadOlderCommand.Execute(null);
+        if (_loadingOlder || _scroller is not { VerticalOffset: < LoadOlderThreshold } scroller
+            || ViewModel is not { IsLoading: false, HasMoreHistory: true } vm || !vm.LoadOlderCommand.CanExecute(null))
+            return;
+
+        _loadingOlder = true;
+        try
+        {
+            // Older messages are inserted above the viewport. Restore the same distance from the bottom
+            // afterwards so the visible messages don't move; otherwise the view can stay pinned at the
+            // very top, where further scrolling raises no ViewChanged and paging stops.
+            var fromBottom = scroller.ExtentHeight - scroller.VerticalOffset;
+            await vm.LoadOlderCommand.ExecuteAsync(null);
+            if (!ReferenceEquals(ViewModel, vm))
+                return;
+            MessageList.UpdateLayout();
+            var target = scroller.ExtentHeight - fromBottom;
+            if (target > scroller.VerticalOffset + 1)
+                scroller.ChangeView(null, target, null, disableAnimation: true);
+        }
+        finally
+        {
+            _loadingOlder = false;
+        }
     }
 
     private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
