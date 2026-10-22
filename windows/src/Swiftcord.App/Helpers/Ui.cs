@@ -7,6 +7,10 @@ using Windows.UI;
 namespace Swiftcord.App.Helpers;
 
 /// <summary>Conversion functions called from x:Bind expressions.</summary>
+/// <remarks>
+/// Functions bound to Visibility must return Visibility, not bool: the XAML compiler's implicit
+/// bool→Visibility cast for function results generates code that doesn't compile (CS0103 'obj').
+/// </remarks>
 public static class Ui
 {
     private static readonly Dictionary<int, SolidColorBrush> RgbBrushes = [];

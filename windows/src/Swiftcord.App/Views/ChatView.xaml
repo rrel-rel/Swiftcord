@@ -356,7 +356,7 @@
                         <Ellipse
                             Width="16"
                             Height="16"
-                            Visibility="{x:Bind h:Ui.HasText(ReplyAuthorName)}">
+                            Visibility="{x:Bind h:Ui.VisibleIfText(ReplyAuthorName)}">
                             <Ellipse.Fill>
                                 <ImageBrush>
                                     <ImageBrush.ImageSource>
