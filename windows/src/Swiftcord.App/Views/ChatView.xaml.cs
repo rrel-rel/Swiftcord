@@ -202,8 +202,9 @@ public sealed partial class ChatView : UserControl
             while (offset < LoadOlderThreshold
                 && ViewModel is { IsLoading: false, HasMoreHistory: true } vm && vm.LoadOlderCommand.CanExecute(null))
             {
-                // Older messages are inserted above the viewport. Restore the same distance from the bottom
-                // afterwards so the visible messages don't move.
+                // Older messages are inserted above the viewport. Note the topmost visible message and where it
+                // sits, so it can be put back in the same place and the view doesn't jump.
+                var anchor = TopVisibleMessage(scroller);
                 var fromBottom = scroller.ExtentHeight - offset;
                 var before = vm.Messages.Count;
                 await vm.LoadOlderCommand.ExecuteAsync(null);
@@ -211,14 +212,7 @@ public sealed partial class ChatView : UserControl
                     before, vm.Messages.Count, vm.HasMoreHistory, vm.Error ?? "none");
                 if (!ReferenceEquals(ViewModel, vm) || vm.Error is not null || vm.Messages.Count == before)
                     break;
-                MessageList.UpdateLayout();
-                offset = scroller.VerticalOffset;
-                var target = scroller.ExtentHeight - fromBottom;
-                if (target > offset + 1)
-                {
-                    scroller.ChangeView(null, target, null, disableAnimation: true);
-                    offset = target; // ChangeView applies asynchronously; judge the next iteration by where we're going.
-                }
+                offset = await RestorePositionAsync(scroller, anchor, fromBottom);
                 _log.LogInformation("After layout: offset {Offset:F0}, extent {Extent:F0}, viewport {Viewport:F0}",
                     offset, scroller.ExtentHeight, scroller.ViewportHeight);
             }
@@ -231,6 +225,52 @@ public sealed partial class ChatView : UserControl
         {
             _loadingOlder = false;
         }
+    }
+
+    /// <summary>The first message at least partly on screen, and its top relative to the viewport.</summary>
+    private (MessageItemViewModel Item, double Top)? TopVisibleMessage(ScrollViewer scroller)
+    {
+        if (MessageList.ItemsPanelRoot is not ItemsStackPanel { FirstVisibleIndex: >= 0 } panel || ViewModel is not { } vm
+            || panel.FirstVisibleIndex >= vm.Messages.Count
+            || MessageList.ContainerFromIndex(panel.FirstVisibleIndex) is not UIElement container)
+            return null;
+        return (vm.Messages[panel.FirstVisibleIndex], container.TransformToVisual(scroller).TransformPoint(new Point(0, 0)).Y);
+    }
+
+    /// <summary>
+    /// Scrolls so the anchor message is back where it was. Rows above it are drawn with estimated heights and
+    /// then measured, so check and correct a few times. Returns the offset the view is heading to.
+    /// </summary>
+    private async Task<double> RestorePositionAsync(ScrollViewer scroller, (MessageItemViewModel Item, double Top)? anchor, double fromBottom)
+    {
+        MessageList.UpdateLayout();
+        if (anchor is not var (item, top))
+        {
+            // No anchor (nothing realised yet): fall back to keeping the distance from the bottom.
+            var target = Math.Max(0, scroller.ExtentHeight - fromBottom);
+            if (Math.Abs(target - scroller.VerticalOffset) > 1)
+                scroller.ChangeView(null, target, null, disableAnimation: true);
+            return target;
+        }
+
+        var destination = scroller.VerticalOffset;
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            if (MessageList.ContainerFromItem(item) is UIElement container)
+            {
+                var delta = container.TransformToVisual(scroller).TransformPoint(new Point(0, 0)).Y - top;
+                destination = Math.Max(0, scroller.VerticalOffset + delta);
+                if (Math.Abs(delta) > 1)
+                    scroller.ChangeView(null, destination, null, disableAnimation: true);
+            }
+            else
+            {
+                MessageList.ScrollIntoView(item, ScrollIntoViewAlignment.Leading);
+            }
+            await Task.Delay(60);
+            MessageList.UpdateLayout();
+        }
+        return destination;
     }
 
     private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
