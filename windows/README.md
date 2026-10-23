@@ -31,7 +31,7 @@ A from-scratch Windows 11 Discord client in the spirit of Swiftcord: native (Win
 
 1. ✅ Core library
 2. ✅ WinUI 3 app: login, server rail, channel list, message list, composer
-3. Polish: settings, toast notifications, `swiftcord://` protocol, auto-update (Velopack)
+3. ✅ Polish: settings, toast notifications, `swiftcord://` links, auto-update (Velopack)
 4. Voice and video
 
 ## Build & run
@@ -49,3 +49,26 @@ The app is unpackaged and self-contained, so it runs straight from `bin/` withou
 ```sh
 dotnet test Swiftcord.CrossPlatform.slnf
 ```
+
+## Links
+
+`swiftcord://channels/{server id or @me}/{channel id}` opens a conversation, as do `https://discord.com/channels/…`
+links clicked inside the app. The scheme is registered for the current user each time Swiftcord starts. Only one
+copy of the app runs; a second launch (or a link) is handed to the open window.
+
+## Releases and updates
+
+Installed copies update themselves from GitHub Releases using [Velopack](https://velopack.io). To build installers
+(`Swiftcord.Windows-win-x64-Setup.exe` and the ARM64 equivalent) and update packages:
+
+```powershell
+./build/release.ps1 -Version 0.2.0            # artifacts/releases
+./build/release.ps1 -Version 0.2.0 -Upload    # also publish to GitHub Releases (needs $env:GITHUB_TOKEN)
+```
+
+Copies run from a build folder (`dotnet run`) don't update; Settings → Updates says so.
+
+## Logs
+
+Swiftcord writes `%LOCALAPPDATA%\Swiftcord\Logs\swiftcord.log` (the previous run is kept as `swiftcord.old.log`).
+Settings → Troubleshooting → Open logs folder gets you there.

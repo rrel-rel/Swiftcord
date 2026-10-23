@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Swiftcord.App.Helpers;
 using Swiftcord.Core.Markdown;
 using Swiftcord.ViewModels.Messages;
+using Swiftcord.ViewModels.Navigation;
 
 namespace Swiftcord.App.Controls;
 
@@ -228,6 +229,15 @@ public sealed partial class MarkdownTextBlock : ContentControl
                 case LinkNode link when !Uri.TryCreate(link.Url, UriKind.Absolute, out _):
                     foreach (var child in link.Children)
                         AddInline(inlines, child, inLink);
+                    break;
+                case LinkNode link when DeepLink.TryParse(link.Url, out var channelLink):
+                    // Links to Discord channels open here rather than in the browser.
+                    var channelHyperlink = new Hyperlink();
+                    channelHyperlink.Click += (_, _) => context?.OpenChannel(channelLink.ChannelId);
+                    ToolTipService.SetToolTip(channelHyperlink, link.Url);
+                    foreach (var child in link.Children)
+                        AddInline(channelHyperlink.Inlines, child, inLink: true);
+                    inlines.Add(channelHyperlink);
                     break;
                 case LinkNode link:
                     var hyperlink = new Hyperlink { NavigateUri = new Uri(link.Url) };

@@ -295,21 +295,10 @@
                 <Button
                     Grid.Column="2"
                     AutomationProperties.Name="Settings"
+                    Command="{x:Bind ViewModel.OpenSettingsCommand}"
                     Content="&#xE713;"
                     Style="{StaticResource IconButtonStyle}"
-                    ToolTipService.ToolTip="Settings">
-                    <Button.Flyout>
-                        <MenuFlyout Placement="TopEdgeAlignedRight">
-                            <MenuFlyoutItem Text="{x:Bind ViewModel.CurrentUserTag, Mode=OneWay}" IsEnabled="False" />
-                            <MenuFlyoutSeparator />
-                            <MenuFlyoutItem Command="{x:Bind ViewModel.LogoutCommand}" Text="Log out">
-                                <MenuFlyoutItem.Icon>
-                                    <FontIcon Glyph="&#xF3B1;" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                        </MenuFlyout>
-                    </Button.Flyout>
-                </Button>
+                    ToolTipService.ToolTip="Settings" />
             </Grid>
         </Grid>
 
@@ -335,5 +324,11 @@
                 </StackPanel>
             </Grid>
         </Border>
+
+        <!-- Settings overlay -->
+        <views:SettingsView
+            Grid.ColumnSpan="3"
+            Shell="{x:Bind ViewModel}"
+            Visibility="{x:Bind ViewModel.IsSettingsOpen, Mode=OneWay}" />
     </Grid>
 </UserControl>
