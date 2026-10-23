@@ -29,6 +29,11 @@ public sealed partial class ChatView : UserControl
     public ChatView()
     {
         InitializeComponent();
+        Unloaded += (_, _) =>
+        {
+            ViewModel = null; // Unsubscribes from the view model, which outlives this view on a theme change.
+            Bindings.StopTracking();
+        };
     }
 
     public ChatViewModel? ViewModel

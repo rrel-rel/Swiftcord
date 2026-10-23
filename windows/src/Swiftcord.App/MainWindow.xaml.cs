@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Swiftcord.App.Helpers;
 using Swiftcord.App.Views;
 using Swiftcord.ViewModels.Login;
 using Swiftcord.ViewModels.Navigation;
@@ -13,6 +14,9 @@ namespace Swiftcord.App;
 
 public sealed partial class MainWindow : Window
 {
+    /// <summary>Recreates the current page; used to redraw it in a new theme.</summary>
+    private Func<UIElement>? _createContent;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -22,7 +26,8 @@ public sealed partial class MainWindow : Window
         AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
         AppWindow.TitleBar.ButtonBackgroundColor = Colors.Transparent;
         AppWindow.TitleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
-        Root.ActualThemeChanged += (_, _) => UpdateCaptionButtons();
+        Ui.Theme = Root.ActualTheme;
+        Root.ActualThemeChanged += (_, _) => OnThemeChanged();
         UpdateCaptionButtons();
     }
 
@@ -35,6 +40,19 @@ public sealed partial class MainWindow : Window
             AppTheme.Dark => ElementTheme.Dark,
             _ => ElementTheme.Default,
         };
+    }
+
+    /// <summary>
+    /// Colours set from code and x:Bind functions don't follow theme changes the way {ThemeResource} does,
+    /// so the page is rebuilt from its view model (which keeps all state) in the new theme.
+    /// </summary>
+    private void OnThemeChanged()
+    {
+        UpdateCaptionButtons();
+        if (Ui.Theme == Root.ActualTheme) return;
+        Ui.Theme = Root.ActualTheme;
+        if (_createContent is { } create)
+            RootContent.Content = create();
     }
 
     /// <summary>Caption buttons are drawn by the system and don't follow the element theme on their own.</summary>
@@ -65,7 +83,13 @@ public sealed partial class MainWindow : Window
     /// <summary>The native window handle, for WinRT pickers that need an owner.</summary>
     public nint Handle => WinRT.Interop.WindowNative.GetWindowHandle(this);
 
-    public void ShowLogin(LoginViewModel viewModel) => RootContent.Content = new LoginPage(viewModel);
+    public void ShowLogin(LoginViewModel viewModel) => Show(() => new LoginPage(viewModel));
 
-    public void ShowShell(ShellViewModel viewModel) => RootContent.Content = new ShellPage(viewModel);
+    public void ShowShell(ShellViewModel viewModel) => Show(() => new ShellPage(viewModel));
+
+    private void Show(Func<UIElement> create)
+    {
+        _createContent = create;
+        RootContent.Content = create();
+    }
 }

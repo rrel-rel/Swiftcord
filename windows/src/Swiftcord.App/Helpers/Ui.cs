@@ -18,7 +18,38 @@ public static class Ui
     public static readonly FontFamily TextFont = new("Segoe UI Variable Text,Segoe UI");
     public static readonly FontFamily MonoFont = new("Cascadia Mono,Consolas");
 
-    public static Brush ThemeBrush(string key) => (Brush)Application.Current.Resources[key];
+    /// <summary>The window content's actual theme; set by MainWindow, which rebuilds its content when it changes.</summary>
+    public static ElementTheme Theme { get; set; } = ElementTheme.Light;
+
+    /// <summary>
+    /// A theme brush for <see cref="Theme"/>. Application.Resources[key] would resolve against the app-wide
+    /// theme, which follows Windows and ignores the theme chosen in Settings.
+    /// </summary>
+    public static Brush ThemeBrush(string key)
+    {
+        // WinUI's own dictionaries key the dark theme as "Default".
+        string[] themeKeys = Theme == ElementTheme.Dark ? ["Dark", "Default"] : ["Light"];
+        foreach (var themeKey in themeKeys)
+        {
+            if (FindInThemeDictionaries(Application.Current.Resources, themeKey, key) is Brush brush)
+                return brush;
+        }
+        return (Brush)Application.Current.Resources[key];
+    }
+
+    private static object? FindInThemeDictionaries(ResourceDictionary dictionary, string themeKey, string key)
+    {
+        if (dictionary.ThemeDictionaries.TryGetValue(themeKey, out var theme) && theme is ResourceDictionary themed
+            && themed.TryGetValue(key, out var value))
+            return value;
+        // Later merged dictionaries take precedence, as in XAML lookup.
+        for (var i = dictionary.MergedDictionaries.Count - 1; i >= 0; i--)
+        {
+            if (FindInThemeDictionaries(dictionary.MergedDictionaries[i], themeKey, key) is { } found)
+                return found;
+        }
+        return null;
+    }
 
     public static Visibility Visible(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
 

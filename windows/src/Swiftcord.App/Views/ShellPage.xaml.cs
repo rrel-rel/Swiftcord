@@ -11,6 +11,8 @@ public sealed partial class ShellPage : UserControl
     {
         ViewModel = viewModel;
         InitializeComponent();
+        // The page is replaced (e.g. on a theme change) while the view model lives on; stop listening to it.
+        Unloaded += (_, _) => Bindings.StopTracking();
     }
 
     public ShellViewModel ViewModel { get; }
