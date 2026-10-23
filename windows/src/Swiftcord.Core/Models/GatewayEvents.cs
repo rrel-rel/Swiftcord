@@ -19,6 +19,10 @@ public sealed class ReadyEvent
     /// <summary>Either an array of entries or a versioned { entries: [...] } object depending on capabilities.</summary>
     public JsonElement? ReadState { get; set; }
     public JsonElement? UserGuildSettings { get; set; }
+    /// <summary>Legacy JSON settings, including guild_folders.</summary>
+    public JsonElement? UserSettings { get; set; }
+    /// <summary>Base64 protobuf settings, sent instead of <see cref="UserSettings"/> with newer capabilities.</summary>
+    public string? UserSettingsProto { get; set; }
 }
 
 public sealed class ReadStateEntry

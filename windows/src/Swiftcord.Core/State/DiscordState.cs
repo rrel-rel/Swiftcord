@@ -18,6 +18,7 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
     private readonly List<Snowflake> _guildOrder = [];
+    private List<GuildFolder>? _guildFolders;
     private readonly Dictionary<Snowflake, Guild> _guilds = [];
     private readonly Dictionary<Snowflake, Channel> _channels = [];
     private readonly Dictionary<Snowflake, User> _users = [];
@@ -33,6 +34,8 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
 
     public event Action? Ready;
     public event Action<Guild>? GuildAvailable;
+    /// <summary>The user's saved server order or folders changed.</summary>
+    public event Action? GuildFoldersChanged;
     public event Action<Guild>? GuildUpdated;
     /// <summary>The guild was left, or became unavailable when the flag is true.</summary>
     public event Action<Snowflake, bool>? GuildRemoved;
@@ -57,10 +60,52 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
 
     #region Queries
 
+    /// <summary>Servers in the user's saved order (see <see cref="GuildFolders"/>).</summary>
     public IReadOnlyList<Guild> Guilds
     {
-        get { lock (_lock) return _guildOrder.Where(_guilds.ContainsKey).Select(id => _guilds[id]).ToList(); }
+        get { lock (_lock) return OrderedGuildIdsLocked().Select(id => _guilds[id]).ToList(); }
     }
+
+    /// <summary>
+    /// The user's server folders in display order, covering every server; lone servers are folders without an ID.
+    /// Null until the settings have been received.
+    /// </summary>
+    public IReadOnlyList<GuildFolder>? GuildFolders
+    {
+        get
+        {
+            lock (_lock)
+            {
+                if (_guildFolders is null) return null;
+                var placed = _guildFolders.SelectMany(f => f.GuildIds).ToHashSet();
+                return UnplacedGuildIdsLocked(placed).Select(id => new GuildFolder { GuildIds = [id] })
+                    .Concat(_guildFolders
+                        .Select(f => new GuildFolder { Id = f.Id, Name = f.Name, Color = f.Color, GuildIds = f.GuildIds.Where(_guilds.ContainsKey).ToList() })
+                        .Where(f => f.GuildIds.Count > 0))
+                    .ToList();
+            }
+        }
+    }
+
+    /// <summary>Replaces the saved server order, e.g. from settings fetched over REST.</summary>
+    public void SetGuildFolders(List<GuildFolder> folders)
+    {
+        lock (_lock) _guildFolders = folders;
+        GuildFoldersChanged?.Invoke();
+    }
+
+    private IEnumerable<Snowflake> OrderedGuildIdsLocked()
+    {
+        if (_guildFolders is null)
+            return _guildOrder.Where(_guilds.ContainsKey);
+        var placed = _guildFolders.SelectMany(f => f.GuildIds).Where(_guilds.ContainsKey).Distinct().ToList();
+        return UnplacedGuildIdsLocked(placed.ToHashSet()).Concat(placed);
+    }
+
+    /// <summary>Servers missing from the saved order (joined since it was saved) go first, newest first, as in Discord.</summary>
+    private IEnumerable<Snowflake> UnplacedGuildIdsLocked(HashSet<Snowflake> placed) =>
+        _guildOrder.Where(id => _guilds.ContainsKey(id) && !placed.Contains(id))
+            .OrderByDescending(id => _guilds[id].JoinedAt ?? id.CreatedAt);
 
     public Guild? GetGuild(Snowflake id)
     {
@@ -298,6 +343,8 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
             case "TYPING_START": OnTypingStart(DiscordJson.Deserialize<TypingStartEvent>(data)); break;
             case "PRESENCE_UPDATE": OnPresenceUpdate(DiscordJson.Deserialize<PresenceUpdateEvent>(data)); break;
             case "USER_UPDATE": OnUserUpdate(DiscordJson.Deserialize<User>(data)); break;
+            case "USER_SETTINGS_UPDATE": OnUserSettingsUpdate(data); break;
+            case "USER_SETTINGS_PROTO_UPDATE": OnUserSettingsProtoUpdate(data); break;
         }
     }
 
@@ -337,8 +384,36 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
 
             if (ready.ReadState is { } readState)
                 LoadReadStateLocked(readState);
+
+            _guildFolders = ready.UserSettingsProto is { Length: > 0 } proto ? UserSettingsReader.ReadGuildFolders(proto)
+                : ready.UserSettings is { } settings ? ReadLegacyGuildFolders(settings)
+                : null;
         }
         Ready?.Invoke();
+    }
+
+    private static List<GuildFolder>? ReadLegacyGuildFolders(JsonElement settings) =>
+        settings.ValueKind == JsonValueKind.Object && settings.TryGetProperty("guild_folders", out var folders)
+            && folders.ValueKind == JsonValueKind.Array
+            ? DiscordJson.Deserialize<List<GuildFolder>>(folders)
+            : null;
+
+    private void OnUserSettingsUpdate(JsonElement data)
+    {
+        if (ReadLegacyGuildFolders(data) is { } folders)
+            SetGuildFolders(folders);
+    }
+
+    private void OnUserSettingsProtoUpdate(JsonElement data)
+    {
+        // { settings: { type: 1, proto: "<base64>" }, partial: bool }. Type 1 is PreloadedUserSettings.
+        if (data.TryGetProperty("settings", out var settings)
+            && settings.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.Number && type.GetInt32() == 1
+            && settings.TryGetProperty("proto", out var proto) && proto.GetString() is { } base64
+            && UserSettingsReader.ReadGuildFolders(base64) is { } folders)
+        {
+            SetGuildFolders(folders);
+        }
     }
 
     private void LoadReadStateLocked(JsonElement readState)

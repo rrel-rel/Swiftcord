@@ -36,6 +36,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var state = client.State;
         state.Ready += OnReady;
         state.GuildAvailable += OnGuildAvailable;
+        state.GuildFoldersChanged += OnGuildFoldersChanged;
         state.GuildUpdated += OnGuildUpdated;
         state.GuildRemoved += OnGuildRemoved;
         state.ChannelCreated += OnChannelChanged;
@@ -225,7 +226,26 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             existing.Update(guild);
         else
             Guilds.Add(CreateGuildItem(guild));
+        SortGuilds();
     });
+
+    private void OnGuildFoldersChanged() => _ui.Post(() =>
+    {
+        if (!_disposed) SortGuilds();
+    });
+
+    /// <summary>Moves the server items into the user's saved order, keeping the existing items (and selection).</summary>
+    private void SortGuilds()
+    {
+        var order = _client.State.Guilds.Select((g, i) => (g.Id, i)).ToDictionary(x => x.Id, x => x.i);
+        var sorted = Guilds.OrderBy(g => order.GetValueOrDefault(g.Id, int.MaxValue)).ToList();
+        for (var i = 0; i < sorted.Count; i++)
+        {
+            var from = Guilds.IndexOf(sorted[i]);
+            if (from != i)
+                Guilds.Move(from, i);
+        }
+    }
 
     private void OnGuildUpdated(Guild guild) => _ui.Post(() =>
     {
@@ -372,6 +392,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var state = _client.State;
         state.Ready -= OnReady;
         state.GuildAvailable -= OnGuildAvailable;
+        state.GuildFoldersChanged -= OnGuildFoldersChanged;
         state.GuildUpdated -= OnGuildUpdated;
         state.GuildRemoved -= OnGuildRemoved;
         state.ChannelCreated -= OnChannelChanged;

@@ -13,7 +13,10 @@ public partial class App : Application
     private const string BotTokenPrefix = "Bot ";
 
     private readonly ITokenStore _tokens = new CredentialTokenStore();
-    private readonly ILoggerFactory _loggerFactory = LoggerFactory.Create(b => b.AddDebug().SetMinimumLevel(LogLevel.Information));
+    private readonly ILoggerFactory _loggerFactory = LoggerFactory.Create(b => b
+        .AddDebug()
+        .AddProvider(new FileLoggerProvider())
+        .SetMinimumLevel(LogLevel.Information));
     private MainWindow? _window;
     private DiscordClient? _client;
     private ShellViewModel? _shell;
@@ -23,13 +26,16 @@ public partial class App : Application
         InitializeComponent();
         UnhandledException += (_, e) =>
         {
-            _loggerFactory.CreateLogger<App>().LogError(e.Exception, "Unhandled exception");
+            // e.Message often carries the XAML error detail that the exception itself lacks.
+            _loggerFactory.CreateLogger<App>().LogError(e.Exception, "Unhandled exception: {Message}", e.Message);
             // Keep running: a rendering bug in one message shouldn't close the app.
             e.Handled = true;
         };
     }
 
     public static new App Current => (App)Application.Current;
+
+    public ILogger<T> CreateLogger<T>() => _loggerFactory.CreateLogger<T>();
 
     public MainWindow Window => _window ?? throw new InvalidOperationException("The window hasn't been created yet.");
 

@@ -52,6 +52,11 @@ internal sealed class AckRequest
     public string? Token { get; set; }
 }
 
+internal sealed class UserSettingsProtoResponse
+{
+    public string Settings { get; set; } = "";
+}
+
 internal sealed class LogoutRequest
 {
     public string? Provider { get; set; }

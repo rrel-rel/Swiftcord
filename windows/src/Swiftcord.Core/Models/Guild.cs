@@ -14,6 +14,7 @@ public sealed class Guild
     public Snowflake OwnerId { get; set; }
     public bool Unavailable { get; set; }
     public int MemberCount { get; set; }
+    public DateTimeOffset? JoinedAt { get; set; }
     public int PremiumTier { get; set; }
     public Snowflake? SystemChannelId { get; set; }
     public Snowflake? RulesChannelId { get; set; }

@@ -37,6 +37,10 @@ public sealed class DiscordRestClient : IDisposable
     public Task<User> GetUserAsync(Snowflake userId, CancellationToken ct = default) =>
         SendAsync<User>(HttpMethod.Get, $"users/{userId}", ct: ct);
 
+    /// <summary>The user's protobuf-encoded PreloadedUserSettings, base64; read with <see cref="UserSettingsReader"/>. User accounts only.</summary>
+    public async Task<string> GetUserSettingsProtoAsync(CancellationToken ct = default) =>
+        (await SendAsync<UserSettingsProtoResponse>(HttpMethod.Get, "users/@me/settings-proto/1", ct: ct).ConfigureAwait(false)).Settings;
+
     /// <summary>Invalidates a user token server-side, as signing out of the official client does.</summary>
     public Task LogoutAsync(CancellationToken ct = default) =>
         SendAsync(HttpMethod.Post, "auth/logout", new LogoutRequest(), ct);

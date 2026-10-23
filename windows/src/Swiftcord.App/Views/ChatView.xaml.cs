@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Microsoft.Extensions.Logging;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -21,6 +22,7 @@ public sealed partial class ChatView : UserControl
     public static readonly DependencyProperty ViewModelProperty = DependencyProperty.Register(
         nameof(ViewModel), typeof(ChatViewModel), typeof(ChatView), new PropertyMetadata(null, OnViewModelChanged));
 
+    private readonly ILogger<ChatView> _log = App.Current.CreateLogger<ChatView>();
     private ScrollViewer? _scroller;
     private bool _loadingOlder;
 
@@ -67,7 +69,11 @@ public sealed partial class ChatView : UserControl
     {
         if (_scroller is not null) return;
         _scroller = FindDescendant<ScrollViewer>(MessageList);
-        if (_scroller is null) return;
+        if (_scroller is null)
+        {
+            _log.LogWarning("Message list has no ScrollViewer; older history won't load on scroll");
+            return;
+        }
         _scroller.ViewChanged += OnScrollViewChanged;
         // Wheeling while already at the top raises no ViewChanged, so listen for the wheel itself too.
         _scroller.AddHandler(PointerWheelChangedEvent, new PointerEventHandler(OnScrollerWheel), handledEventsToo: true);
@@ -91,6 +97,10 @@ public sealed partial class ChatView : UserControl
         try
         {
             var offset = scroller.VerticalOffset;
+            if (offset < LoadOlderThreshold && ViewModel is { } current)
+                _log.LogInformation("Near top: offset {Offset:F0}, extent {Extent:F0}, {Count} messages, loading {Loading}, more {More}, can load {CanLoad}, error {Error}",
+                    offset, scroller.ExtentHeight, current.Messages.Count, current.IsLoading, current.HasMoreHistory,
+                    current.LoadOlderCommand.CanExecute(null), current.Error ?? "none");
             while (offset < LoadOlderThreshold
                 && ViewModel is { IsLoading: false, HasMoreHistory: true } vm && vm.LoadOlderCommand.CanExecute(null))
             {
@@ -99,6 +109,8 @@ public sealed partial class ChatView : UserControl
                 var fromBottom = scroller.ExtentHeight - offset;
                 var before = vm.Messages.Count;
                 await vm.LoadOlderCommand.ExecuteAsync(null);
+                _log.LogInformation("Loaded older page: {Before} -> {After} messages, more {More}, error {Error}",
+                    before, vm.Messages.Count, vm.HasMoreHistory, vm.Error ?? "none");
                 if (!ReferenceEquals(ViewModel, vm) || vm.Error is not null || vm.Messages.Count == before)
                     break;
                 MessageList.UpdateLayout();
@@ -109,7 +121,13 @@ public sealed partial class ChatView : UserControl
                     scroller.ChangeView(null, target, null, disableAnimation: true);
                     offset = target; // ChangeView applies asynchronously; judge the next iteration by where we're going.
                 }
+                _log.LogInformation("After layout: offset {Offset:F0}, extent {Extent:F0}, viewport {Viewport:F0}",
+                    offset, scroller.ExtentHeight, scroller.ViewportHeight);
             }
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Loading older history failed");
         }
         finally
         {

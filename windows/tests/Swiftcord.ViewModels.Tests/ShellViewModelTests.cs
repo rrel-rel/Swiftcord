@@ -34,6 +34,20 @@ public sealed class ShellViewModelTests : IAsyncLifetime
     }
 
     [Fact]
+    public void The_rail_follows_the_saved_server_order_when_it_changes()
+    {
+        _session.Dispatch("GUILD_CREATE", """{"id":"20","name":"Games","joined_at":"2024-01-01T00:00:00+00:00"}""");
+        var community = _shell.Guilds.Single(g => g.Id == GuildId);
+
+        _session.Dispatch("USER_SETTINGS_UPDATE", $$"""
+            {"guild_folders":[{"guild_ids":["20"],"id":null},{"guild_ids":["{{GuildId}}"],"id":null}]}
+            """);
+
+        Assert.Equal([20UL, GuildId], _shell.Guilds.Select(g => g.Id.Value));
+        Assert.Same(community, _shell.Guilds[1]); // Items are moved, not recreated.
+    }
+
+    [Fact]
     public void Selecting_a_guild_opens_its_first_readable_channel_and_remembers_the_last_one()
     {
         var guild = _shell.Guilds[0];

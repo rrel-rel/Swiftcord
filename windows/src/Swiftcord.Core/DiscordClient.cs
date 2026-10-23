@@ -12,14 +12,18 @@ namespace Swiftcord.Core;
 /// </summary>
 public sealed class DiscordClient : IAsyncDisposable
 {
+    private readonly ILogger? _logger;
+
     public DiscordClient(DiscordClientOptions options, ILoggerFactory? loggerFactory = null,
         Func<IGatewayTransport>? transportFactory = null, HttpMessageHandler? httpHandler = null)
     {
         Options = options;
+        _logger = loggerFactory?.CreateLogger<DiscordClient>();
         Rest = new DiscordRestClient(options, httpHandler, logger: loggerFactory?.CreateLogger<DiscordRestClient>());
         Gateway = new GatewayClient(options, transportFactory, logger: loggerFactory?.CreateLogger<GatewayClient>());
         State = new DiscordState(options.MessageCacheSize);
         Gateway.Dispatch += State.HandleDispatch;
+        State.Ready += OnReady;
     }
 
     public DiscordClientOptions Options { get; }
@@ -52,6 +56,7 @@ public sealed class DiscordClient : IAsyncDisposable
     public async Task<IReadOnlyList<Message>> LoadOlderMessagesAsync(Snowflake channelId, Snowflake beforeId, CancellationToken ct = default)
     {
         var messages = await Rest.GetMessagesAsync(channelId, limit: 50, before: beforeId, ct: ct).ConfigureAwait(false);
+        _logger?.LogInformation("Fetched {Count} messages before {Before} in channel {Channel}", messages.Count, beforeId, channelId);
         State.AddMessages(channelId, messages);
         messages.Reverse(); // REST returns newest first.
         return messages;
@@ -89,8 +94,25 @@ public sealed class DiscordClient : IAsyncDisposable
             await Rest.AckMessageAsync(channelId, last, ct).ConfigureAwait(false);
     }
 
+    private async void OnReady()
+    {
+        // READY carries the saved server order with most capability sets; fetch it when it didn't.
+        if (State.GuildFolders is not null || Options.TokenType != TokenType.User)
+            return;
+        try
+        {
+            if (UserSettingsReader.ReadGuildFolders(await Rest.GetUserSettingsProtoAsync().ConfigureAwait(false)) is { } folders)
+                State.SetGuildFolders(folders);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Couldn't load the saved server order");
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
+        State.Ready -= OnReady;
         Gateway.Dispatch -= State.HandleDispatch;
         await Gateway.DisposeAsync().ConfigureAwait(false);
         Rest.Dispose();
