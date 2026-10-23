@@ -448,25 +448,56 @@
                             TextWrapping="Wrap"
                             Visibility="{x:Bind IsSystem}" />
 
-                        <c:MarkdownTextBlock
-                            IsEdited="{x:Bind IsEdited}"
-                            IsEmojiOnly="{x:Bind IsEmojiOnly}"
-                            MessageContext="{x:Bind Context}"
-                            Nodes="{x:Bind Nodes}"
-                            Visibility="{x:Bind HasContent}" />
+                        <!-- Content; a forward shows the original's inside a side bar -->
+                        <Border
+                            Padding="{x:Bind h:Ui.ForwardPadding(IsForwarded)}"
+                            BorderBrush="{ThemeResource ControlStrongStrokeColorDefaultBrush}"
+                            BorderThickness="{x:Bind h:Ui.ForwardBar(IsForwarded)}">
+                            <StackPanel>
+                                <StackPanel
+                                    Margin="0,0,0,2"
+                                    Orientation="Horizontal"
+                                    Spacing="4"
+                                    Visibility="{x:Bind IsForwarded}">
+                                    <FontIcon
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Glyph="&#xE72D;" />
+                                    <TextBlock
+                                        FontStyle="Italic"
+                                        Style="{StaticResource SecondaryTextStyle}"
+                                        Text="Forwarded" />
+                                </StackPanel>
+                                <c:MarkdownTextBlock
+                                    IsEdited="{x:Bind IsEdited}"
+                                    IsEmojiOnly="{x:Bind IsEmojiOnly}"
+                                    MessageContext="{x:Bind Context}"
+                                    Nodes="{x:Bind Nodes}"
+                                    Visibility="{x:Bind HasContent}" />
 
-                        <ItemsControl
-                            ItemTemplate="{StaticResource AttachmentTemplate}"
-                            ItemsSource="{x:Bind Attachments}"
-                            Visibility="{x:Bind HasAttachments}" />
-                        <ItemsControl
-                            ItemTemplate="{StaticResource EmbedTemplate}"
-                            ItemsSource="{x:Bind Embeds}"
-                            Visibility="{x:Bind HasEmbeds}" />
-                        <ItemsControl
-                            ItemTemplate="{StaticResource StickerTemplate}"
-                            ItemsSource="{x:Bind Stickers}"
-                            Visibility="{x:Bind HasStickers}" />
+                                <ItemsControl
+                                    ItemTemplate="{StaticResource AttachmentTemplate}"
+                                    ItemsSource="{x:Bind Attachments}"
+                                    Visibility="{x:Bind HasAttachments}" />
+                                <ItemsControl
+                                    ItemTemplate="{StaticResource EmbedTemplate}"
+                                    ItemsSource="{x:Bind Embeds}"
+                                    Visibility="{x:Bind HasEmbeds}" />
+                                <ItemsControl
+                                    ItemTemplate="{StaticResource StickerTemplate}"
+                                    ItemsSource="{x:Bind Stickers}"
+                                    Visibility="{x:Bind HasStickers}" />
+                                <HyperlinkButton
+                                    Padding="0"
+                                    Command="{x:Bind OpenForwardSourceCommand}"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    ToolTipService.ToolTip="Go to original message"
+                                    Visibility="{x:Bind IsForwarded}">
+                                    <TextBlock Text="{x:Bind ForwardedFrom}" />
+                                </HyperlinkButton>
+                            </StackPanel>
+                        </Border>
 
                         <ItemsRepeater
                             Margin="0,4,0,0"

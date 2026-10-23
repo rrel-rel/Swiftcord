@@ -41,16 +41,18 @@ public sealed record MessageNotification(
         if (Formatters.SystemMessage(message, author, id => state.GetDisplayName(id, guildId)) is { } system)
             return system;
 
-        var text = PlainText(MarkdownParser.Parse(message.Content), state, guildId).Trim();
+        var prefix = message.Forwarded is null ? "" : "Forwarded: ";
+        var body = message.Forwarded ?? message;
+        var text = PlainText(MarkdownParser.Parse(body.Content), state, guildId).Trim();
         if (text.Length > 0)
-            return text;
-        if (message.StickerItems.Count > 0)
-            return $"Sent a sticker: {message.StickerItems[0].Name}";
-        return message.Attachments.Count switch
+            return prefix + text;
+        if (body.StickerItems.Count > 0)
+            return $"{prefix}Sent a sticker: {body.StickerItems[0].Name}";
+        return prefix + body.Attachments.Count switch
         {
-            0 when message.Embeds.Count > 0 => message.Embeds[0].Title ?? message.Embeds[0].Description ?? "Sent an embed",
+            0 when body.Embeds.Count > 0 => body.Embeds[0].Title ?? body.Embeds[0].Description ?? "Sent an embed",
             0 => "New message",
-            1 => $"Sent an attachment: {message.Attachments[0].Filename}",
+            1 => $"Sent an attachment: {body.Attachments[0].Filename}",
             var n => $"Sent {n} attachments",
         };
     }

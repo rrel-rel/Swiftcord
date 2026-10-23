@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Swiftcord.ViewModels.Messages;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Foundation;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.System;
@@ -26,6 +27,7 @@ public sealed partial class ChatView : UserControl
     private ScrollViewer? _scroller;
     private bool _loadingOlder;
     private bool _loadingNewer;
+    private int _scrollToVersion;
 
     public ChatView()
     {
@@ -71,18 +73,40 @@ public sealed partial class ChatView : UserControl
             ScrollToBottom(); // A message was just sent.
     }
 
-    /// <summary>Brings a message into view a third of the way down, so the context above it shows too.</summary>
-    private void ScrollToMessage(MessageItemViewModel item)
+    /// <summary>
+    /// Brings a message into view a third of the way down, so the context above it shows too. Rows that
+    /// haven't been drawn yet are estimated, so the first scroll can land off target; measure where the row
+    /// actually is and correct, a few times while the rows around it are realised.
+    /// </summary>
+    private async void ScrollToMessage(MessageItemViewModel item)
     {
-        if (ViewModel?.Messages.Contains(item) != true) return;
-        MessageList.ScrollIntoView(item, ScrollIntoViewAlignment.Leading);
-        MessageList.UpdateLayout();
-        if (_scroller is { } scroller)
-            scroller.ChangeView(null, Math.Max(0, scroller.VerticalOffset - scroller.ViewportHeight / 3), null, disableAnimation: true);
+        var version = ++_scrollToVersion;
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            if (version != _scrollToVersion || ViewModel?.Messages.Contains(item) != true || _scroller is not { } scroller)
+                return;
+            var container = MessageList.ContainerFromItem(item) as UIElement;
+            if (container is null)
+            {
+                // Not realised yet: get it on screen first, then measure.
+                MessageList.ScrollIntoView(item, ScrollIntoViewAlignment.Leading);
+                MessageList.UpdateLayout();
+                container = MessageList.ContainerFromItem(item) as UIElement;
+            }
+            if (container is not null)
+            {
+                var top = container.TransformToVisual(scroller).TransformPoint(new Point(0, 0)).Y;
+                var target = Math.Max(0, scroller.VerticalOffset + top - scroller.ViewportHeight / 3);
+                if (Math.Abs(target - scroller.VerticalOffset) > 2)
+                    scroller.ChangeView(null, target, null, disableAnimation: true);
+            }
+            await Task.Delay(60);
+        }
     }
 
     private void ScrollToBottom()
     {
+        _scrollToVersion++; // Cancel any pending jump correction.
         if (ViewModel?.Messages.LastOrDefault() is { } last)
             MessageList.ScrollIntoView(last, ScrollIntoViewAlignment.Leading);
     }

@@ -83,6 +83,17 @@ public sealed class NotificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Forwards_preview_the_original_message()
+    {
+        _session.Dispatch("MESSAGE_CREATE", MessageJson(80, Dm, Friend, content: "", extra: """
+            ,"message_reference":{"type":1,"channel_id":"5","message_id":"6"},
+            "message_snapshots":[{"message":{"content":"hello from elsewhere","timestamp":"2024-04-30T09:00:00+00:00"}}]
+            """));
+
+        Assert.Equal("Forwarded: hello from elsewhere", Assert.Single(_notifications.Shown).Body);
+    }
+
+    [Fact]
     public void Attachments_and_spoilers_are_described_rather_than_shown()
     {
         _session.Dispatch("MESSAGE_CREATE", MessageJson(80, Dm, Friend, content: "",

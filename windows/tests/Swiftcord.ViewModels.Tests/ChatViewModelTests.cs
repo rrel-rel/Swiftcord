@@ -337,6 +337,30 @@ public sealed class ChatViewModelTests : IAsyncLifetime
         Assert.Same(chat.Messages[0], chat.Highlighted);
     }
 
+    private const string Forward = """
+        ,"message_reference":{"type":1,"channel_id":"101","message_id":"7","guild_id":"10"},
+        "message_snapshots":[{"message":{"type":0,"content":"look at **this**","timestamp":"2024-04-30T09:00:00+00:00",
+          "attachments":[],"mentions":[],"flags":0,
+          "embeds":[{"type":"article","title":"A link","url":"https://example.com","description":"preview"}]}}]
+        """;
+
+    [Fact]
+    public async Task Forwarded_messages_show_the_originals_content_and_source()
+    {
+        var chat = await OpenAsync(General, MessageJson(41, General, Me, "", extra: Forward));
+        var forward = chat.Messages.Single();
+
+        Assert.True(forward.IsForwarded);
+        Assert.Equal("look at **this**", forward.Content);
+        Assert.True(forward.HasContent);
+        Assert.Equal("A link", Assert.Single(forward.Embeds).Title);
+        Assert.StartsWith("#random • ", forward.ForwardedFrom);
+        Assert.False(forward.CanEdit);
+
+        _session.Respond = (_, _) => Json($"[{MessageJson(7, RandomChannel, Friend, "original")}]");
+        Assert.True(forward.OpenForwardSourceCommand.CanExecute(null));
+    }
+
     [Fact]
     public async Task Inaccessible_channels_show_an_error()
     {

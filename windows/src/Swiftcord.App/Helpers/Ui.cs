@@ -126,6 +126,10 @@ public static class Ui
 
     public static Thickness MentionBorder(bool mentionsMe) => new(mentionsMe ? 2 : 0, 0, 0, 0);
 
+    public static Thickness ForwardBar(bool forwarded) => new(forwarded ? 3 : 0, 0, 0, 0);
+
+    public static Thickness ForwardPadding(bool forwarded) => new(forwarded ? 10 : 0, 0, 0, 0);
+
     public static double PendingOpacity(bool pending) => pending ? 0.5 : 1;
 
     public static string ChannelHeaderGlyph(bool isDirectMessage) => isDirectMessage ? "@" : "#";

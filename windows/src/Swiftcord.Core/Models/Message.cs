@@ -67,7 +67,13 @@ public sealed class Message
     public MessageFlags Flags { get; set; }
     public MessageReference? MessageReference { get; set; }
     public Message? ReferencedMessage { get; set; }
+    /// <summary>For a forwarded message, a copy of the original (without author or ID).</summary>
+    public List<MessageSnapshot> MessageSnapshots { get; set; } = [];
     public Channel? Thread { get; set; }
+
+    /// <summary>The copy of the original message when this one is a forward.</summary>
+    [JsonIgnore]
+    public Message? Forwarded => MessageReference?.Type == MessageReference.ForwardType ? MessageSnapshots.FirstOrDefault()?.Message : null;
 
     /// <summary>Whether this message renders as a normal chat bubble rather than a system notice.</summary>
     [JsonIgnore]
@@ -75,8 +81,17 @@ public sealed class Message
         or MessageType.ChatInputCommand or MessageType.ContextMenuCommand or MessageType.ThreadStarterMessage;
 }
 
+public sealed class MessageSnapshot
+{
+    public Message? Message { get; set; }
+}
+
 public sealed class MessageReference
 {
+    public const int DefaultType = 0;
+    /// <summary>The reference points at a forwarded message, whose content is in <see cref="Message.MessageSnapshots"/>.</summary>
+    public const int ForwardType = 1;
+
     public int Type { get; set; }
     public Snowflake? MessageId { get; set; }
     public Snowflake? ChannelId { get; set; }

@@ -43,18 +43,38 @@ public sealed partial class MessageItemViewModel : ObservableObject
         IsEdited = message.EditedTimestamp is not null;
         IsOwn = message.Author.Id == options.CurrentUserId;
         CanDelete = IsOwn || options.CanManageMessages;
-        CanEdit = IsOwn && message.IsUserContent;
+        CanEdit = IsOwn && message.IsUserContent && message.Forwarded is null;
         MentionsMe = options.MentionsMe(message);
 
-        Nodes = MarkdownParser.Parse(message.Content);
-        IsEmojiOnly = MarkdownParser.IsEmojiOnly(Nodes);
+        // A forward shows the original's content under this message's author.
+        var body = message.Forwarded ?? message;
+        if (message.Forwarded is { } original)
+        {
+            IsForwarded = true;
+            var source = message.MessageReference!;
+            var channelName = source.ChannelId is { } c && source.ChannelId != message.ChannelId ? options.Context.ChannelName(c) : null;
+            var time = original.Timestamp != default ? Formatters.MessageTimestamp(original.Timestamp, options.Now) : null;
+            ForwardedFrom = string.Join(" • ", new[] { channelName is null ? null : "#" + channelName, time }.OfType<string>());
+            OpenForwardSourceCommand = new RelayCommand(() =>
+            {
+                if (source is { ChannelId: { } channel, MessageId: { } id })
+                    options.Context.OpenLink(channel, id);
+            }, () => source.MessageId is not null);
+        }
+        else
+        {
+            OpenForwardSourceCommand = new RelayCommand(() => { }, () => false);
+        }
+
+        Nodes = MarkdownParser.Parse(body.Content);
+        IsEmojiOnly = !IsForwarded && MarkdownParser.IsEmojiOnly(Nodes);
         SystemText = message.IsUserContent ? null : Formatters.SystemMessage(message, AuthorName, options.DisplayName);
 
-        Attachments = message.Attachments.Select(a => new AttachmentViewModel(a)).ToList();
-        Embeds = message.Flags.HasFlag(MessageFlags.SuppressEmbeds)
+        Attachments = body.Attachments.Select(a => new AttachmentViewModel(a)).ToList();
+        Embeds = body.Flags.HasFlag(MessageFlags.SuppressEmbeds)
             ? []
-            : message.Embeds.Select(e => new EmbedViewModel(e, options.Context)).Where(e => !e.IsEmpty).ToList();
-        Stickers = message.StickerItems.Select(s => new StickerViewModel(s)).ToList();
+            : body.Embeds.Select(e => new EmbedViewModel(e, options.Context)).Where(e => !e.IsEmpty).ToList();
+        Stickers = body.StickerItems.Select(s => new StickerViewModel(s)).ToList();
 
         if (message.ReferencedMessage is { } reply)
         {
@@ -90,7 +110,8 @@ public sealed partial class MessageItemViewModel : ObservableObject
     public string IdText => Message.Id.ToString();
     public Snowflake AuthorId => Message.Author.Id;
     public DateTimeOffset Timestamp => Message.Timestamp;
-    public string Content => Message.Content;
+    /// <summary>The text shown (and copied): the original's for a forward.</summary>
+    public string Content => (Message.Forwarded ?? Message).Content;
     public IMessageContext Context { get; }
 
     public string AuthorName { get; }
@@ -123,6 +144,12 @@ public sealed partial class MessageItemViewModel : ObservableObject
     public bool HasAttachments => Attachments.Count > 0;
     public bool HasEmbeds => Embeds.Count > 0;
     public bool HasStickers => Stickers.Count > 0;
+
+    /// <summary>A forwarded message: the content below is the original's, shown with a side bar.</summary>
+    public bool IsForwarded { get; }
+    /// <summary>Where and when the original was posted, e.g. "#general • Yesterday at 3:12 PM".</summary>
+    public string? ForwardedFrom { get; }
+    public IRelayCommand OpenForwardSourceCommand { get; }
 
     public bool IsReply => ReplySnippet is not null;
     public string? ReplyAuthorName { get; }
