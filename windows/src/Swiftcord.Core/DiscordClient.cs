@@ -52,14 +52,34 @@ public sealed class DiscordClient : IAsyncDisposable
         return State.GetMessages(channelId);
     }
 
-    /// <summary>Loads the page of messages before <paramref name="beforeId"/> and adds it to the cache.</summary>
-    public async Task<IReadOnlyList<Message>> LoadOlderMessagesAsync(Snowflake channelId, Snowflake beforeId, CancellationToken ct = default)
+    /// <summary>
+    /// Loads the page of messages before <paramref name="beforeId"/>, oldest first. Pages are cached only when
+    /// <paramref name="cache"/> is set: the cache must stay contiguous with the latest message, which history
+    /// reached by jumping to an old message isn't.
+    /// </summary>
+    public async Task<IReadOnlyList<Message>> LoadOlderMessagesAsync(Snowflake channelId, Snowflake beforeId, bool cache = true,
+        CancellationToken ct = default)
     {
         var messages = await Rest.GetMessagesAsync(channelId, limit: 50, before: beforeId, ct: ct).ConfigureAwait(false);
         _logger?.LogInformation("Fetched {Count} messages before {Before} in channel {Channel}", messages.Count, beforeId, channelId);
-        State.AddMessages(channelId, messages);
+        if (cache)
+            State.AddMessages(channelId, messages);
         messages.Reverse(); // REST returns newest first.
         return messages;
+    }
+
+    /// <summary>Loads the page of messages after <paramref name="afterId"/>, oldest first, without caching.</summary>
+    public async Task<IReadOnlyList<Message>> LoadNewerMessagesAsync(Snowflake channelId, Snowflake afterId, CancellationToken ct = default)
+    {
+        var messages = await Rest.GetMessagesAsync(channelId, limit: 50, after: afterId, ct: ct).ConfigureAwait(false);
+        return messages.OrderBy(m => m.Id).ToList();
+    }
+
+    /// <summary>Loads the messages around <paramref name="messageId"/> (including it), oldest first, without caching.</summary>
+    public async Task<IReadOnlyList<Message>> GetMessagesAroundAsync(Snowflake channelId, Snowflake messageId, CancellationToken ct = default)
+    {
+        var messages = await Rest.GetMessagesAsync(channelId, limit: 50, around: messageId, ct: ct).ConfigureAwait(false);
+        return messages.OrderBy(m => m.Id).ToList();
     }
 
     /// <summary>A fresh nonce for matching a sent message to its gateway echo.</summary>

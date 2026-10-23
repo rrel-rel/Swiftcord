@@ -255,6 +255,89 @@ public sealed class ChatViewModelTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Jumping_to_a_loaded_message_highlights_it_briefly()
+    {
+        var chat = await OpenAsync(General, MessageJson(41, General, Friend, "one"), MessageJson(42, General, Friend, "two"));
+        var requests = _session.Http.Requests.Count;
+
+        await chat.JumpToMessageAsync(new Snowflake(41));
+
+        Assert.Equal(requests, _session.Http.Requests.Count);
+        Assert.Same(chat.Messages[0], chat.Highlighted);
+        Assert.True(chat.Messages[0].IsHighlighted);
+        _time.Advance(TimeSpan.FromSeconds(3));
+        await Support.EventuallyAsync(() => !chat.Messages[0].IsHighlighted);
+    }
+
+    [Fact]
+    public async Task Jumping_to_old_history_detaches_from_the_present_until_caught_up()
+    {
+        var chat = await OpenAsync(General, MessageJson(50, General, Friend, "latest"));
+        _session.Respond = (_, _) => Json($"[{MessageJson(11, General, Friend, "after")},{MessageJson(10, General, Friend, "target")}]");
+
+        await chat.JumpToMessageAsync(new Snowflake(10));
+
+        Assert.Contains("GET /api/v10/channels/100/messages?limit=50&around=10", _session.RequestLines);
+        Assert.Equal(["target", "after"], chat.Messages.Select(m => m.Content));
+        Assert.Equal("target", chat.Highlighted!.Content);
+        Assert.True(chat.IsViewingHistory);
+        // Old pages stay out of the cache, which must remain contiguous with the latest message.
+        Assert.Null(_session.Client.State.GetMessage(new Snowflake(General), new Snowflake(10)));
+
+        // New messages don't land after unrelated history.
+        _session.Dispatch("MESSAGE_CREATE", MessageJson(60, General, Friend, "new"));
+        Assert.DoesNotContain(chat.Messages, m => m.Content == "new");
+
+        // Paging forward with a short page reaches the present.
+        _session.Respond = (_, _) => Json($"[{MessageJson(60, General, Friend, "new")},{MessageJson(50, General, Friend, "latest")}]");
+        await chat.LoadNewerCommand.ExecuteAsync(null);
+        Assert.Contains("GET /api/v10/channels/100/messages?limit=50&after=11", _session.RequestLines);
+        Assert.Equal(["target", "after", "latest", "new"], chat.Messages.Select(m => m.Content));
+        Assert.False(chat.IsViewingHistory);
+    }
+
+    [Fact]
+    public async Task Jump_to_present_reloads_the_latest_messages()
+    {
+        var chat = await OpenAsync(General, MessageJson(50, General, Friend, "latest"));
+        _session.Respond = (_, _) => Json($"[{MessageJson(10, General, Friend, "old")}]");
+        await chat.JumpToMessageAsync(new Snowflake(10));
+        Assert.True(chat.IsViewingHistory);
+
+        await chat.JumpToPresentCommand.ExecuteAsync(null);
+
+        Assert.False(chat.IsViewingHistory);
+        Assert.Equal(["latest"], chat.Messages.Select(m => m.Content));
+    }
+
+    [Fact]
+    public async Task A_missing_message_reports_an_error()
+    {
+        var chat = await OpenAsync(General, MessageJson(50, General, Friend, "latest"));
+        _session.Respond = (_, _) => Json("[]");
+
+        await chat.JumpToMessageAsync(new Snowflake(10));
+
+        Assert.StartsWith("Couldn't find that message", chat.Error);
+        Assert.Equal(["latest"], chat.Messages.Select(m => m.Content));
+    }
+
+    [Fact]
+    public async Task Clicking_a_reply_jumps_to_the_original()
+    {
+        var chat = await OpenAsync(General,
+            MessageJson(41, General, Friend, "original"),
+            MessageJson(42, General, Me, "reply", extra: """
+                ,"type":19,"message_reference":{"message_id":"41"},
+                "referenced_message":{"id":"41","channel_id":"100","author":{"id":"2","username":"u2"},"content":"original","timestamp":"2024-05-01T12:00:00+00:00","type":0}
+                """));
+
+        await chat.Messages[1].JumpToReplyCommand.ExecuteAsync(null);
+
+        Assert.Same(chat.Messages[0], chat.Highlighted);
+    }
+
+    [Fact]
     public async Task Inaccessible_channels_show_an_error()
     {
         _session.Respond = (_, _) => Json("""{"code":50001,"message":"Missing Access"}""", HttpStatusCode.Forbidden);

@@ -21,4 +21,7 @@ public interface IMessageContext
 
     /// <summary>Opens a channel the user clicked a mention of.</summary>
     void OpenChannel(Snowflake channelId);
+
+    /// <summary>Follows a link to a Discord channel or message (jumping within this channel when it's here).</summary>
+    void OpenLink(Snowflake channelId, Snowflake? messageId);
 }

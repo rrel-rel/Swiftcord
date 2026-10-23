@@ -106,6 +106,20 @@ public sealed class NotificationTests : IAsyncLifetime
         Assert.Equal(GuildId, shell.SelectedGuild!.Id.Value);
     }
 
+    [Fact]
+    public async Task A_message_link_opens_its_channel_at_that_message()
+    {
+        _session.Respond = (request, _) => Json(request.RequestUri!.Query.Contains("around=5")
+            ? $"[{MessageJson(5, RandomChannel, Friend, "target")}]"
+            : "[]");
+
+        _shell.Navigate(new DeepLink(new Snowflake(GuildId), new Snowflake(RandomChannel), new Snowflake(5)));
+
+        await Swiftcord.Core.Tests.Support.TestUtil.EventuallyAsync(() => _shell.Chat?.Highlighted is not null);
+        Assert.Equal(RandomChannel, _shell.Chat!.ChannelId.Value);
+        Assert.Equal("target", _shell.Chat.Highlighted!.Content);
+    }
+
     [Theory]
     [InlineData("swiftcord://channels/@me/200", null, 200UL, null)]
     [InlineData("swiftcord://channels/10/100/123", 10UL, 100UL, 123UL)]

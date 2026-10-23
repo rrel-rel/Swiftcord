@@ -25,6 +25,7 @@ public sealed partial class ChatView : UserControl
     private readonly ILogger<ChatView> _log = App.Current.CreateLogger<ChatView>();
     private ScrollViewer? _scroller;
     private bool _loadingOlder;
+    private bool _loadingNewer;
 
     public ChatView()
     {
@@ -56,10 +57,28 @@ public sealed partial class ChatView : UserControl
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(ChatViewModel.IsLoading) && ViewModel is { IsLoading: false })
-            ScrollToBottom();
+        if (e.PropertyName == nameof(ChatViewModel.IsLoading) && ViewModel is { IsLoading: false } loaded)
+        {
+            // After a jump, show the target rather than the newest message.
+            if (loaded.Highlighted is { IsHighlighted: true } target)
+                ScrollToMessage(target);
+            else
+                ScrollToBottom();
+        }
+        else if (e.PropertyName == nameof(ChatViewModel.Highlighted) && ViewModel?.Highlighted is { } highlighted)
+            ScrollToMessage(highlighted);
         else if (e.PropertyName == nameof(ChatViewModel.Draft) && ViewModel is { Draft.Length: 0 })
             ScrollToBottom(); // A message was just sent.
+    }
+
+    /// <summary>Brings a message into view a third of the way down, so the context above it shows too.</summary>
+    private void ScrollToMessage(MessageItemViewModel item)
+    {
+        if (ViewModel?.Messages.Contains(item) != true) return;
+        MessageList.ScrollIntoView(item, ScrollIntoViewAlignment.Leading);
+        MessageList.UpdateLayout();
+        if (_scroller is { } scroller)
+            scroller.ChangeView(null, Math.Max(0, scroller.VerticalOffset - scroller.ViewportHeight / 3), null, disableAnimation: true);
     }
 
     private void ScrollToBottom()
@@ -99,7 +118,41 @@ public sealed partial class ChatView : UserControl
         return true;
     }
 
-    private void OnScrollViewChanged(object? sender, ScrollViewerViewChangedEventArgs e) => _ = LoadOlderWhileNearTopAsync();
+    private void OnScrollViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        _ = LoadOlderWhileNearTopAsync();
+        _ = LoadNewerIfNearBottomAsync();
+    }
+
+    /// <summary>While browsing older history (after a jump), scrolling to the bottom pages towards the present.</summary>
+    private async Task LoadNewerIfNearBottomAsync()
+    {
+        if (_loadingNewer || _scroller is not { } scroller
+            || scroller.VerticalOffset < scroller.ExtentHeight - scroller.ViewportHeight - LoadOlderThreshold
+            || ViewModel is not { IsViewingHistory: true, IsLoading: false } vm || !vm.LoadNewerCommand.CanExecute(null))
+            return;
+
+        _loadingNewer = true;
+        try
+        {
+            // Messages are appended below. The list keeps the last item in view when it was visible, which would
+            // jump to the new bottom and trigger the next page in a cascade, so put the view back where it was.
+            var offset = scroller.VerticalOffset;
+            await vm.LoadNewerCommand.ExecuteAsync(null);
+            if (!ReferenceEquals(ViewModel, vm)) return;
+            MessageList.UpdateLayout();
+            if (vm.IsViewingHistory)
+                scroller.ChangeView(null, offset, null, disableAnimation: true);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Loading newer history failed");
+        }
+        finally
+        {
+            _loadingNewer = false;
+        }
+    }
 
     private void OnScrollerWheel(object sender, PointerRoutedEventArgs e) => _ = LoadOlderWhileNearTopAsync();
 

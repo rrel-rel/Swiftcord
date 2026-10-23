@@ -17,6 +17,7 @@ public interface IMessageActions
     Task ToggleReactionAsync(MessageItemViewModel message, ReactionViewModel reaction);
     Task AddReactionAsync(MessageItemViewModel message, string emoji);
     Task RetryAsync(MessageItemViewModel message);
+    Task JumpToMessageAsync(Snowflake messageId);
 }
 
 public sealed partial class MessageItemViewModel : ObservableObject
@@ -71,6 +72,9 @@ public sealed partial class MessageItemViewModel : ObservableObject
 
         _actions = options.Actions;
         ReplyCommand = new RelayCommand(() => _actions.Reply(this));
+        JumpToReplyCommand = new AsyncRelayCommand(
+            () => message.MessageReference?.MessageId is { } id ? _actions.JumpToMessageAsync(id) : Task.CompletedTask,
+            () => message.ReferencedMessage is not null);
         EditCommand = new RelayCommand(() => _actions.Edit(this), () => CanEdit);
         DeleteCommand = new AsyncRelayCommand(() => _actions.DeleteAsync(this), () => CanDelete);
         RetryCommand = new AsyncRelayCommand(() => _actions.RetryAsync(this));
@@ -127,6 +131,12 @@ public sealed partial class MessageItemViewModel : ObservableObject
     public string? ReplySnippet { get; }
 
     public IRelayCommand ReplyCommand { get; }
+    /// <summary>Scrolls to (loading if needed) the message this one replies to.</summary>
+    public IAsyncRelayCommand JumpToReplyCommand { get; }
+
+    /// <summary>Briefly set after jumping to this message, so it stands out.</summary>
+    [ObservableProperty]
+    private bool _isHighlighted;
     public IRelayCommand EditCommand { get; }
     public IAsyncRelayCommand DeleteCommand { get; }
     public IAsyncRelayCommand RetryCommand { get; }

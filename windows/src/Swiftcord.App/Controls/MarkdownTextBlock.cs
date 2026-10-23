@@ -233,7 +233,7 @@ public sealed partial class MarkdownTextBlock : ContentControl
                 case LinkNode link when DeepLink.TryParse(link.Url, out var channelLink):
                     // Links to Discord channels open here rather than in the browser.
                     var channelHyperlink = new Hyperlink();
-                    channelHyperlink.Click += (_, _) => context?.OpenChannel(channelLink.ChannelId);
+                    channelHyperlink.Click += (_, _) => context?.OpenLink(channelLink.ChannelId, channelLink.MessageId);
                     ToolTipService.SetToolTip(channelHyperlink, link.Url);
                     foreach (var child in link.Children)
                         AddInline(channelHyperlink.Inlines, child, inLink: true);

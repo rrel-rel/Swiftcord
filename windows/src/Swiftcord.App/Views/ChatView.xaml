@@ -278,7 +278,7 @@
                 <Grid
                     Margin="{x:Bind h:Ui.GroupMargin(IsGroupStart), Mode=OneWay}"
                     Padding="14,2,16,2"
-                    Background="{x:Bind h:Ui.MessageBackground(MentionsMe)}"
+                    Background="{x:Bind h:Ui.MessageBackground(MentionsMe, IsHighlighted), Mode=OneWay}"
                     BorderBrush="#F0B232"
                     BorderThickness="{x:Bind h:Ui.MentionBorder(MentionsMe)}"
                     Opacity="{x:Bind h:Ui.PendingOpacity(IsPending), Mode=OneWay}">
@@ -342,41 +342,48 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <!-- Reply preview -->
-                    <StackPanel
+                    <!-- Reply preview; clicking it jumps to the original -->
+                    <Button
                         Grid.ColumnSpan="2"
-                        Margin="58,0,0,2"
-                        Orientation="Horizontal"
-                        Spacing="6"
+                        Margin="54,0,0,2"
+                        Padding="4,1"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Command="{x:Bind JumpToReplyCommand}"
+                        ToolTipService.ToolTip="Jump to message"
                         Visibility="{x:Bind IsReply}">
-                        <FontIcon
-                            FontSize="12"
-                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                            Glyph="&#xE97A;" />
-                        <Ellipse
-                            Width="16"
-                            Height="16"
-                            Visibility="{x:Bind h:Ui.VisibleIfText(ReplyAuthorName)}">
-                            <Ellipse.Fill>
-                                <ImageBrush>
-                                    <ImageBrush.ImageSource>
-                                        <BitmapImage DecodePixelWidth="32" UriSource="{x:Bind ReplyAvatarUri}" />
-                                    </ImageBrush.ImageSource>
-                                </ImageBrush>
-                            </Ellipse.Fill>
-                        </Ellipse>
-                        <TextBlock
-                            FontSize="12"
-                            FontWeight="SemiBold"
-                            Foreground="{x:Bind h:Ui.RoleBrush(ReplyAuthorColor)}"
-                            Text="{x:Bind ReplyAuthorName}" />
-                        <TextBlock
-                            MaxWidth="480"
-                            FontSize="12"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Text="{x:Bind ReplySnippet}"
-                            TextTrimming="CharacterEllipsis" />
-                    </StackPanel>
+                        <StackPanel
+                            Orientation="Horizontal"
+                            Spacing="6">
+                            <FontIcon
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                Glyph="&#xE97A;" />
+                            <Ellipse
+                                Width="16"
+                                Height="16"
+                                Visibility="{x:Bind h:Ui.VisibleIfText(ReplyAuthorName)}">
+                                <Ellipse.Fill>
+                                    <ImageBrush>
+                                        <ImageBrush.ImageSource>
+                                            <BitmapImage DecodePixelWidth="32" UriSource="{x:Bind ReplyAvatarUri}" />
+                                        </ImageBrush.ImageSource>
+                                    </ImageBrush>
+                                </Ellipse.Fill>
+                            </Ellipse>
+                            <TextBlock
+                                FontSize="12"
+                                FontWeight="SemiBold"
+                                Foreground="{x:Bind h:Ui.RoleBrush(ReplyAuthorColor)}"
+                                Text="{x:Bind ReplyAuthorName}" />
+                            <TextBlock
+                                MaxWidth="480"
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="{x:Bind ReplySnippet}"
+                                TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                    </Button>
 
                     <!-- Avatar, or a glyph for system messages -->
                     <Ellipse
@@ -601,7 +608,41 @@
                     </StackPanel>
                 </StackPanel>
             </ListView.Header>
+            <ListView.Footer>
+                <ProgressRing
+                    Width="24"
+                    Height="24"
+                    Margin="0,8"
+                    IsActive="{x:Bind ViewModel.IsLoadingNewer, Mode=OneWay}" />
+            </ListView.Footer>
         </ListView>
+
+        <!-- Shown while browsing older messages reached by a jump -->
+        <Grid
+            Grid.Row="2"
+            Margin="16,0,16,8"
+            Padding="12,6,6,6"
+            VerticalAlignment="Bottom"
+            Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            ColumnSpacing="8"
+            CornerRadius="8"
+            Visibility="{x:Bind ViewModel.IsViewingHistory, Mode=OneWay}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock
+                VerticalAlignment="Center"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Text="You're viewing older messages" />
+            <Button
+                Grid.Column="1"
+                Command="{x:Bind ViewModel.JumpToPresentCommand, Mode=OneWay}"
+                Content="Jump to present"
+                Style="{StaticResource AccentButtonStyle}" />
+        </Grid>
         <ProgressRing
             Grid.Row="2"
             Width="40"

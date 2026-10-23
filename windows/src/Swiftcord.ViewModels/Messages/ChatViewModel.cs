@@ -15,18 +15,20 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
     public const int PageSize = 50;
     private static readonly TimeSpan TypingThrottle = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan TypingRefreshDelay = TimeSpan.FromSeconds(10.5);
+    private static readonly TimeSpan HighlightDuration = TimeSpan.FromSeconds(2);
 
     private readonly DiscordClient _client;
     private readonly IUiDispatcher _ui;
     private readonly TimeProvider _time;
-    private readonly Action<Snowflake>? _openChannel;
+    private readonly Action<Snowflake, Snowflake?>? _openChannel;
     private readonly Dictionary<Snowflake, MessageItemViewModel> _byId = [];
     private readonly Dictionary<string, MessageItemViewModel> _pendingByNonce = [];
     private ITimer? _typingTimer;
     private DateTimeOffset _lastTypingSent = DateTimeOffset.MinValue;
     private bool _disposed;
 
-    public ChatViewModel(DiscordClient client, IUiDispatcher ui, Channel channel, Action<Snowflake>? openChannel = null,
+    /// <param name="openChannel">Opens another channel, optionally at a message.</param>
+    public ChatViewModel(DiscordClient client, IUiDispatcher ui, Channel channel, Action<Snowflake, Snowflake?>? openChannel = null,
         TimeProvider? time = null)
     {
         _client = client;
@@ -68,6 +70,20 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
 
     [ObservableProperty]
     private bool _hasMoreHistory = true;
+
+    /// <summary>
+    /// Showing older messages reached by a jump, not connected to the latest ones. New messages aren't
+    /// added while this is set; scrolling down pages forward, and <see cref="JumpToPresentCommand"/> returns.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isViewingHistory;
+
+    [ObservableProperty]
+    private bool _isLoadingNewer;
+
+    /// <summary>The message just jumped to, for the view to scroll to.</summary>
+    [ObservableProperty]
+    private MessageItemViewModel? _highlighted;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsReplying))]
@@ -114,7 +130,8 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
 
     #region Loading
 
-    public async Task InitializeAsync()
+    /// <param name="jumpTo">A message to show (and highlight) instead of the latest ones.</param>
+    public async Task InitializeAsync(Snowflake? jumpTo = null)
     {
         IsLoading = true;
         Error = null;
@@ -123,7 +140,11 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
             var messages = await _client.GetLatestMessagesAsync(ChannelId);
             ResetMessages(messages);
             HasMoreHistory = true;
-            await MarkReadAsync();
+            IsViewingHistory = false;
+            if (jumpTo is { } id)
+                await JumpCoreAsync(id);
+            if (!IsViewingHistory)
+                await MarkReadAsync();
         }
         catch (DiscordApiException ex) when (ex.Code is 50001 or 50013)
         {
@@ -149,7 +170,7 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
         try
         {
             var oldest = Messages.FirstOrDefault(m => !m.IsPending)?.Id ?? Messages[0].Id;
-            var older = await _client.LoadOlderMessagesAsync(ChannelId, oldest);
+            var older = await _client.LoadOlderMessagesAsync(ChannelId, oldest, cache: !IsViewingHistory);
             // Only an empty page proves we've reached the start; a short page can happen mid-history.
             HasMoreHistory = older.Count > 0;
             var options = CreateOptions();
@@ -171,6 +192,95 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
             IsLoadingOlder = false;
         }
     }
+
+    [RelayCommand]
+    private async Task LoadNewerAsync()
+    {
+        if (!IsViewingHistory || IsLoadingNewer || Messages.Count == 0)
+            return;
+        IsLoadingNewer = true;
+        try
+        {
+            var newest = Messages.Last(m => !m.IsPending && !m.IsFailed).Id;
+            var newer = await _client.LoadNewerMessagesAsync(ChannelId, newest);
+            var options = CreateOptions();
+            foreach (var message in newer.Where(m => !_byId.ContainsKey(m.Id)))
+                Insert(new MessageItemViewModel(message, options));
+            // A short page means we've caught up; from here new messages can be appended again.
+            if (newer.Count < PageSize)
+            {
+                IsViewingHistory = false;
+                await MarkReadAsync();
+            }
+        }
+        catch (Exception)
+        {
+            Error = "Couldn't load newer messages.";
+        }
+        finally
+        {
+            IsLoadingNewer = false;
+        }
+    }
+
+    [RelayCommand]
+    private Task JumpToPresentAsync() => InitializeAsync();
+
+    /// <summary>Shows and highlights a message in this channel, loading the history around it if needed.</summary>
+    public async Task JumpToMessageAsync(Snowflake messageId)
+    {
+        if (_byId.TryGetValue(messageId, out var loaded))
+        {
+            Highlight(loaded);
+            return;
+        }
+        IsLoading = true;
+        Error = null;
+        try
+        {
+            await JumpCoreAsync(messageId);
+        }
+        catch (Exception)
+        {
+            Error = "Couldn't load that message.";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task JumpCoreAsync(Snowflake messageId)
+    {
+        if (!_byId.ContainsKey(messageId))
+        {
+            var page = await _client.GetMessagesAroundAsync(ChannelId, messageId);
+            if (page.Count == 0)
+            {
+                Error = "Couldn't find that message. It may have been deleted.";
+                return;
+            }
+            ResetMessages(page);
+            HasMoreHistory = true;
+            // Unless the page reaches the newest message, it isn't connected to the present.
+            IsViewingHistory = Channel.LastMessageId is not { } last || page[^1].Id < last;
+        }
+        if (_byId.TryGetValue(messageId, out var item))
+            Highlight(item);
+        else
+            Error = "Couldn't find that message. It may have been deleted.";
+    }
+
+    private async void Highlight(MessageItemViewModel item)
+    {
+        if (Highlighted is { } previous) previous.IsHighlighted = false;
+        item.IsHighlighted = true;
+        Highlighted = item;
+        await Task.Delay(HighlightDuration, _time);
+        item.IsHighlighted = false;
+    }
+
+    Task IMessageActions.JumpToMessageAsync(Snowflake messageId) => JumpToMessageAsync(messageId);
 
     private void ResetMessages(IEnumerable<Message> messages)
     {
@@ -201,6 +311,9 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
     [RelayCommand(CanExecute = nameof(CanSendDraft))]
     private async Task SendAsync()
     {
+        // A sent message belongs after the latest ones, so return to the present first.
+        if (IsViewingHistory && Editing is null)
+            await InitializeAsync();
         var text = Draft.Trim();
         if (Editing is { } editing)
         {
@@ -452,7 +565,15 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
 
     public string FormatTimestamp(DateTimeOffset time, char style) => Formatters.MarkdownTimestamp(time, style, _time.GetUtcNow());
 
-    public void OpenChannel(Snowflake channelId) => _openChannel?.Invoke(channelId);
+    public void OpenChannel(Snowflake channelId) => _openChannel?.Invoke(channelId, null);
+
+    public void OpenLink(Snowflake channelId, Snowflake? messageId)
+    {
+        if (channelId == ChannelId && messageId is { } id)
+            _ = JumpToMessageAsync(id);
+        else if (channelId != ChannelId)
+            _openChannel?.Invoke(channelId, messageId);
+    }
 
     #endregion
 
@@ -466,7 +587,7 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
             if (_disposed) return;
             if (message.Nonce is { } nonce && _pendingByNonce.ContainsKey(nonce))
                 ConfirmPending(nonce, message);
-            else if (!_byId.ContainsKey(message.Id))
+            else if (!_byId.ContainsKey(message.Id) && !IsViewingHistory)
                 Insert(new MessageItemViewModel(message, CreateOptions()));
             RefreshTyping();
             if (IsActive && message.Author.Id != _client.State.CurrentUser?.Id)

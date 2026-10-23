@@ -28,6 +28,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private bool _windowActive = true;
     private bool _disposed;
     private DeepLink? _pendingLink;
+    /// <summary>A message to show once its channel opens (switching servers first goes through SelectGuild).</summary>
+    private (Snowflake Channel, Snowflake Message)? _pendingJump;
     private readonly HashSet<long> _expandedFolders = [];
 
     public ShellViewModel(DiscordClient client, IUiDispatcher ui, TimeProvider? time = null)
@@ -213,13 +215,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             _pendingLink = link;
             return;
         }
-        // Jumping to a specific message isn't supported yet; open its channel.
-        OpenChannel(link.ChannelId);
+        OpenChannel(link.ChannelId, link.MessageId);
     }
 
     /// <summary>Opens a channel by ID, switching guilds if needed (e.g. from a #channel mention).</summary>
-    public void OpenChannel(Snowflake channelId)
+    public void OpenChannel(Snowflake channelId) => OpenChannel(channelId, null);
+
+    /// <summary>Opens a channel, scrolled to <paramref name="messageId"/> when given.</summary>
+    public void OpenChannel(Snowflake channelId, Snowflake? messageId)
     {
+        if (messageId is { } target) _pendingJump = (channelId, target);
         var channel = _client.State.GetChannel(channelId);
         if (channel is null || !channel.IsTextBased) return;
 
@@ -238,14 +243,20 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
 
         Notifications?.Clear(channelId);
-        if (Chat?.ChannelId == channelId) return;
+        Snowflake? jumpTo = _pendingJump is { } jump && jump.Channel == channelId ? jump.Message : null;
+        _pendingJump = null;
+        if (Chat?.ChannelId == channelId)
+        {
+            if (jumpTo is { } id) _ = Chat.JumpToMessageAsync(id);
+            return;
+        }
         _lastChannelByGuild[channel.GuildId ?? HomeKey] = channelId;
         Sidebar.SelectedChannelId = channelId;
 
         Chat?.Dispose();
         var chat = new ChatViewModel(_client, _ui, channel, OpenChannel, _time) { IsActive = _windowActive };
         Chat = chat;
-        _ = chat.InitializeAsync();
+        _ = chat.InitializeAsync(jumpTo);
     }
 
     #endregion
