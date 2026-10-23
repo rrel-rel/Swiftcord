@@ -8,6 +8,87 @@
     xmlns:views="using:Swiftcord.App.Views">
 
     <UserControl.Resources>
+        <!-- Tiny server icon in a collapsed folder's 2x2 preview -->
+        <DataTemplate x:Key="FolderPreviewTemplate" x:DataType="nav:GuildItemViewModel">
+            <Grid Width="18" Height="18">
+                <Border
+                    Background="{ThemeResource ControlFillColorDefaultBrush}"
+                    CornerRadius="9"
+                    Visibility="{x:Bind h:Ui.Collapsed(HasIcon), Mode=OneWay}">
+                    <TextBlock
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        FontSize="7"
+                        Text="{x:Bind Acronym, Mode=OneWay}"
+                        TextTrimming="Clip" />
+                </Border>
+                <Ellipse Visibility="{x:Bind HasIcon, Mode=OneWay}">
+                    <Ellipse.Fill>
+                        <ImageBrush Stretch="UniformToFill">
+                            <ImageBrush.ImageSource>
+                                <BitmapImage DecodePixelWidth="36" UriSource="{x:Bind IconUri, Mode=OneWay}" />
+                            </ImageBrush.ImageSource>
+                        </ImageBrush>
+                    </Ellipse.Fill>
+                </Ellipse>
+            </Grid>
+        </DataTemplate>
+
+        <!-- Server folder in the rail -->
+        <DataTemplate x:Key="FolderTemplate" x:DataType="nav:GuildFolderViewModel">
+            <Grid
+                Width="72"
+                Height="56"
+                Background="Transparent"
+                ToolTipService.ToolTip="{x:Bind Name}">
+                <Border
+                    Width="56"
+                    Background="{x:Bind h:Ui.FolderTint(Color)}"
+                    CornerRadius="16,16,0,0"
+                    Visibility="{x:Bind IsExpanded, Mode=OneWay}" />
+                <Border
+                    Width="4"
+                    Height="{x:Bind h:Ui.PillHeight(ShowsSelection, ShowsUnread), Mode=OneWay}"
+                    HorizontalAlignment="Left"
+                    Background="{ThemeResource TextFillColorPrimaryBrush}"
+                    CornerRadius="0,4,4,0" />
+                <Grid Width="48" Height="48">
+                    <Border
+                        Background="{x:Bind h:Ui.FolderTint(Color)}"
+                        CornerRadius="16"
+                        Visibility="{x:Bind h:Ui.Collapsed(IsExpanded), Mode=OneWay}">
+                        <ItemsControl
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            IsTabStop="False"
+                            ItemTemplate="{StaticResource FolderPreviewTemplate}"
+                            ItemsSource="{x:Bind Previews}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <VariableSizedWrapGrid
+                                        ItemHeight="20"
+                                        ItemWidth="20"
+                                        MaximumRowsOrColumns="2"
+                                        Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </Border>
+                    <FontIcon
+                        FontSize="22"
+                        Foreground="{x:Bind h:Ui.Rgb(Color)}"
+                        Glyph="&#xE8B7;"
+                        Visibility="{x:Bind IsExpanded, Mode=OneWay}" />
+                    <InfoBadge
+                        Margin="0,0,-6,-4"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Bottom"
+                        Value="{x:Bind MentionCount, Mode=OneWay}"
+                        Visibility="{x:Bind ShowsMentions, Mode=OneWay}" />
+                </Grid>
+            </Grid>
+        </DataTemplate>
+
         <!-- Server rail icon -->
         <DataTemplate x:Key="GuildTemplate" x:DataType="nav:GuildItemViewModel">
             <Grid
@@ -15,6 +96,11 @@
                 Height="56"
                 Background="Transparent"
                 ToolTipService.ToolTip="{x:Bind Name, Mode=OneWay}">
+                <!-- Background of an expanded folder this server is in -->
+                <Border
+                    Width="56"
+                    Background="{x:Bind h:Ui.FolderTint(FolderColor), Mode=OneWay}"
+                    CornerRadius="{x:Bind h:Ui.FolderBottom(IsLastInFolder), Mode=OneWay}" />
                 <Border
                     Width="4"
                     Height="{x:Bind h:Ui.PillHeight(IsSelected, IsUnread), Mode=OneWay}"
@@ -55,6 +141,11 @@
                 </Grid>
             </Grid>
         </DataTemplate>
+
+        <views:RailTemplateSelector
+            x:Key="RailTemplateSelector"
+            Folder="{StaticResource FolderTemplate}"
+            Guild="{StaticResource GuildTemplate}" />
 
         <!-- Sidebar rows -->
         <DataTemplate x:Key="CategoryTemplate" x:DataType="nav:ChannelItemViewModel">
@@ -233,8 +324,8 @@
                 IsItemClickEnabled="True"
                 ItemClick="OnGuildClick"
                 ItemContainerStyle="{StaticResource PlainListViewItemStyle}"
-                ItemTemplate="{StaticResource GuildTemplate}"
-                ItemsSource="{x:Bind ViewModel.Guilds}"
+                ItemTemplateSelector="{StaticResource RailTemplateSelector}"
+                ItemsSource="{x:Bind ViewModel.RailItems}"
                 SelectionMode="None" />
         </Grid>
 

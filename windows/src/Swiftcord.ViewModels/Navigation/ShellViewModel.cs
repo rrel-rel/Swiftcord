@@ -28,6 +28,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private bool _windowActive = true;
     private bool _disposed;
     private DeepLink? _pendingLink;
+    private readonly HashSet<long> _expandedFolders = [];
 
     public ShellViewModel(DiscordClient client, IUiDispatcher ui, TimeProvider? time = null)
     {
@@ -64,7 +65,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     /// <summary>App preferences, shown in the settings overlay.</summary>
     public SettingsViewModel? Settings { get; init; }
 
+    /// <summary>Every server, in the user's saved order.</summary>
     public ObservableCollection<GuildItemViewModel> Guilds { get; } = [];
+
+    /// <summary>What the rail shows: lone servers and folders, with an expanded folder followed by its servers.</summary>
+    public ObservableCollection<object> RailItems { get; } = [];
     public ChannelListViewModel Sidebar { get; }
 
     [ObservableProperty]
@@ -153,6 +158,32 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
+    private void ToggleFolder(GuildFolderViewModel folder)
+    {
+        var index = RailItems.IndexOf(folder);
+        if (index < 0) return;
+        folder.IsExpanded = !folder.IsExpanded;
+        if (folder.IsExpanded)
+        {
+            _expandedFolders.Add(folder.Id);
+            for (var i = 0; i < folder.Guilds.Count; i++)
+            {
+                PlaceInFolder(folder.Guilds[i], folder, i);
+                RailItems.Insert(index + 1 + i, folder.Guilds[i]);
+            }
+        }
+        else
+        {
+            _expandedFolders.Remove(folder.Id);
+            foreach (var guild in folder.Guilds)
+            {
+                RailItems.Remove(guild);
+                PlaceInFolder(guild, null, 0);
+            }
+        }
+    }
+
+    [RelayCommand]
     private void ActivateChannel(ChannelItemViewModel item)
     {
         if (item.IsCategory)
@@ -234,6 +265,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         Guilds.Clear();
         foreach (var guild in state.Guilds)
             Guilds.Add(CreateGuildItem(guild));
+        RebuildRail();
         RefreshHomeBadge();
 
         // After a reconnect the cache is rebuilt from scratch, so reopen what was showing.
@@ -268,11 +300,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         else
             Guilds.Add(CreateGuildItem(guild));
         SortGuilds();
+        RebuildRail();
     });
 
     private void OnGuildFoldersChanged() => _ui.Post(() =>
     {
-        if (!_disposed) SortGuilds();
+        if (_disposed) return;
+        SortGuilds();
+        RebuildRail();
     });
 
     /// <summary>Moves the server items into the user's saved order, keeping the existing items (and selection).</summary>
@@ -304,6 +339,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             return;
         }
         Guilds.Remove(item);
+        RebuildRail();
         _lastChannelByGuild.Remove(guildId);
         if (SelectedGuild?.Id == guildId) SelectHome();
     });
@@ -389,6 +425,55 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     #region Helpers
 
+    /// <summary>Lays out <see cref="RailItems"/> from the saved folders, keeping the existing item view models.</summary>
+    private void RebuildRail()
+    {
+        foreach (var old in RailItems.OfType<GuildFolderViewModel>())
+            old.Dispose();
+        RailItems.Clear();
+
+        var byId = Guilds.ToDictionary(g => g.Id);
+        var placed = new HashSet<Snowflake>();
+        foreach (var folder in _client.State.GuildFolders ?? [])
+        {
+            var guilds = folder.GuildIds.Select(id => byId.GetValueOrDefault(id)).OfType<GuildItemViewModel>()
+                .Where(g => placed.Add(g.Id)).ToList();
+            if (guilds.Count == 0) continue;
+
+            if (folder.Id is not { } folderId)
+            {
+                // Lone servers are stored as folders without an ID.
+                foreach (var guild in guilds)
+                {
+                    PlaceInFolder(guild, null, 0);
+                    RailItems.Add(guild);
+                }
+                continue;
+            }
+
+            var item = new GuildFolderViewModel(folderId, folder.Name, folder.Color, guilds, _expandedFolders.Contains(folderId));
+            RailItems.Add(item);
+            for (var i = 0; i < guilds.Count; i++)
+            {
+                PlaceInFolder(guilds[i], item.IsExpanded ? item : null, i);
+                if (item.IsExpanded) RailItems.Add(guilds[i]);
+            }
+        }
+
+        // Servers the saved order doesn't cover (or all of them, before the settings arrive).
+        foreach (var guild in Guilds.Where(g => !placed.Contains(g.Id)))
+        {
+            PlaceInFolder(guild, null, 0);
+            RailItems.Add(guild);
+        }
+    }
+
+    private static void PlaceInFolder(GuildItemViewModel guild, GuildFolderViewModel? folder, int index)
+    {
+        guild.FolderColor = folder?.Color ?? -1;
+        guild.IsLastInFolder = folder is not null && index == folder.Guilds.Count - 1;
+    }
+
     private GuildItemViewModel CreateGuildItem(Guild guild)
     {
         var item = new GuildItemViewModel(guild) { IsSelected = guild.Id == SelectedGuild?.Id };
@@ -453,6 +538,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         state.CurrentUserUpdated -= OnCurrentUserUpdated;
         _client.Gateway.StateChanged -= OnGatewayStateChanged;
         _client.Gateway.FatalClose -= OnFatalClose;
+        foreach (var folder in RailItems.OfType<GuildFolderViewModel>())
+            folder.Dispose();
         Chat?.Dispose();
     }
 }

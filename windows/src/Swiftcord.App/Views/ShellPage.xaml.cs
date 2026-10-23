@@ -19,11 +19,27 @@ public sealed partial class ShellPage : UserControl
 
     private void OnHomeTapped(object sender, TappedRoutedEventArgs e) => ViewModel.SelectHomeCommand.Execute(null);
 
-    private void OnGuildClick(object sender, ItemClickEventArgs e) =>
-        ViewModel.SelectGuildCommand.Execute((GuildItemViewModel)e.ClickedItem);
+    private void OnGuildClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is GuildFolderViewModel folder)
+            ViewModel.ToggleFolderCommand.Execute(folder);
+        else
+            ViewModel.SelectGuildCommand.Execute((GuildItemViewModel)e.ClickedItem);
+    }
 
     private void OnChannelClick(object sender, ItemClickEventArgs e) =>
         ViewModel.ActivateChannelCommand.Execute((ChannelItemViewModel)e.ClickedItem);
+}
+
+/// <summary>Chooses the rail template for servers and folders.</summary>
+public sealed partial class RailTemplateSelector : DataTemplateSelector
+{
+    public DataTemplate? Guild { get; set; }
+    public DataTemplate? Folder { get; set; }
+
+    protected override DataTemplate? SelectTemplateCore(object item) => item is GuildFolderViewModel ? Folder : Guild;
+
+    protected override DataTemplate? SelectTemplateCore(object item, DependencyObject container) => SelectTemplateCore(item);
 }
 
 /// <summary>Chooses the sidebar row template for categories, guild channels and DMs.</summary>

@@ -48,6 +48,44 @@ public sealed class ShellViewModelTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Folders_collapse_into_one_rail_item_and_expand_in_place()
+    {
+        _session.Dispatch("GUILD_CREATE", """{"id":"20","name":"Games"}""");
+        _session.Dispatch("GUILD_CREATE", """{"id":"30","name":"Music"}""");
+        _session.Dispatch("USER_SETTINGS_UPDATE", $$"""
+            {"guild_folders":[
+              {"guild_ids":["20","30"],"id":7,"name":null,"color":null},
+              {"guild_ids":["{{GuildId}}"],"id":null}
+            ]}
+            """);
+
+        var folder = Assert.IsType<GuildFolderViewModel>(_shell.RailItems[0]);
+        Assert.Equal(2, _shell.RailItems.Count);
+        Assert.Equal("Games, Music", folder.Name);
+        Assert.Equal(GuildFolderViewModel.DefaultColor, folder.Color);
+
+        _shell.ToggleFolderCommand.Execute(folder);
+        Assert.Equal(["folder", "20", "30", $"{GuildId}"],
+            _shell.RailItems.Select(i => i is GuildItemViewModel g ? g.Id.ToString() : "folder"));
+        var music = (GuildItemViewModel)_shell.RailItems[2];
+        Assert.True(music.IsLastInFolder);
+        Assert.Equal(folder.Color, music.FolderColor);
+
+        // Expanded state survives a re-layout, and a collapsed folder shows its servers' state.
+        _session.Dispatch("USER_SETTINGS_UPDATE", $$"""
+            {"guild_folders":[{"guild_ids":["20","30"],"id":7},{"guild_ids":["{{GuildId}}"],"id":null}]}
+            """);
+        folder = Assert.IsType<GuildFolderViewModel>(_shell.RailItems[0]);
+        Assert.True(folder.IsExpanded);
+        _shell.SelectGuildCommand.Execute(_shell.Guilds.Single(g => g.Id.Value == 20));
+        Assert.False(folder.ShowsSelection);
+        _shell.ToggleFolderCommand.Execute(folder);
+        Assert.True(folder.ShowsSelection);
+        Assert.Equal(-1, music.FolderColor);
+        Assert.Equal(2, _shell.RailItems.Count);
+    }
+
+    [Fact]
     public void Selecting_a_guild_opens_its_first_readable_channel_and_remembers_the_last_one()
     {
         var guild = _shell.Guilds[0];

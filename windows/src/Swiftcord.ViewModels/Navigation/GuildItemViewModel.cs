@@ -33,6 +33,14 @@ public sealed partial class GuildItemViewModel(Guild guild) : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasMentions))]
     private int _mentionCount;
 
+    /// <summary>The colour of the expanded folder this server is shown in, or -1 when it isn't in one.</summary>
+    [ObservableProperty]
+    private int _folderColor = -1;
+
+    /// <summary>The last server in an expanded folder, where the folder's background ends.</summary>
+    [ObservableProperty]
+    private bool _isLastInFolder;
+
     public bool HasIcon => IconUri is not null;
     public bool HasMentions => MentionCount > 0;
 

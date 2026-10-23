@@ -80,6 +80,14 @@ public static class Ui
 
     public static double PillHeight(bool selected, bool unread) => selected ? 36 : unread ? 8 : 0;
 
+    /// <summary>The translucent folder colour behind a folder and its servers; transparent outside folders (-1).</summary>
+    public static Brush FolderTint(int rgb) => rgb < 0
+        ? new SolidColorBrush(Colors.Transparent)
+        : new SolidColorBrush(Color.FromArgb(0x40, (byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb));
+
+    /// <summary>The folder background is rounded at the bottom under its last server.</summary>
+    public static CornerRadius FolderBottom(bool last) => last ? new CornerRadius(0, 0, 16, 16) : new CornerRadius(0);
+
     // ── Channel sidebar ──
 
     public static Brush SelectionBrush(bool selected) =>
