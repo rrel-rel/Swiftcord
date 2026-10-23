@@ -93,8 +93,21 @@ public sealed class DiscordRestClient : IDisposable
         return SendListAsync(HttpMethod.Get, $"channels/{channelId}/messages{query}", MinimalMessage, ct);
     }
 
-    public Task<List<Message>> GetPinnedMessagesAsync(Snowflake channelId, CancellationToken ct = default) =>
-        SendListAsync(HttpMethod.Get, $"channels/{channelId}/pins", MinimalMessage, ct);
+    /// <summary>Pinned messages, most recently pinned first (the first 50).</summary>
+    public async Task<List<Message>> GetPinnedMessagesAsync(Snowflake channelId, CancellationToken ct = default)
+    {
+        try
+        {
+            // The current endpoint wraps each message as { pinned_at, message }.
+            var page = await SendAsync<PinnedMessagesPage>(HttpMethod.Get, $"channels/{channelId}/messages/pins?limit=50", ct: ct).ConfigureAwait(false);
+            return page.Items.Select(i => i.Message).OfType<Message>().ToList();
+        }
+        catch (DiscordApiException ex) when (ex.Status == HttpStatusCode.NotFound && ex.Code == 0)
+        {
+            // Older API surface: a bare array.
+            return await SendListAsync(HttpMethod.Get, $"channels/{channelId}/pins", MinimalMessage, ct).ConfigureAwait(false);
+        }
+    }
 
     /// <summary>
     /// The fields every message has, for when the full model can't be read. Keeping the message

@@ -362,6 +362,47 @@ public sealed class ChatViewModelTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Pinned_messages_load_from_the_current_endpoint_or_fall_back()
+    {
+        var chat = await OpenAsync(General, MessageJson(41, General, Friend));
+        _session.Respond = (_, _) => Json($$"""{"items":[{"pinned_at":"2024-05-01T12:00:00+00:00","message":{{MessageJson(30, General, Friend, "pinned!")}}}],"has_more":false}""");
+
+        await chat.LoadPinsCommand.ExecuteAsync(null);
+
+        Assert.Contains("GET /api/v10/channels/100/messages/pins?limit=50", _session.RequestLines);
+        Assert.Equal("pinned!", Assert.Single(chat.PinnedMessages).Content);
+        Assert.False(chat.HasNoPins);
+
+        _session.Respond = (request, _) => request.RequestUri!.AbsolutePath.EndsWith("/messages/pins")
+            ? Json("""{"message":"404: Not Found","code":0}""", HttpStatusCode.NotFound)
+            : Json("[]");
+        await chat.LoadPinsCommand.ExecuteAsync(null);
+        Assert.Contains("GET /api/v10/channels/100/pins", _session.RequestLines);
+        Assert.True(chat.HasNoPins);
+    }
+
+    [Fact]
+    public async Task Anyone_can_pin_in_a_dm_but_not_delete_the_other_persons_messages()
+    {
+        var chat = await OpenAsync(Dm, MessageJson(61, Dm, Friend, "theirs"));
+        var theirs = chat.Messages.Single();
+        Assert.True(theirs.CanPin);
+        Assert.False(theirs.CanDelete);
+
+        await theirs.TogglePinCommand.ExecuteAsync(null);
+        Assert.Contains($"PUT /api/v10/channels/{Dm}/pins/61", _session.RequestLines);
+        Assert.True(theirs.IsPinned);
+        Assert.Equal("Unpin Message", theirs.PinMenuText);
+    }
+
+    [Fact]
+    public async Task Pinning_in_a_server_needs_permission()
+    {
+        var chat = await OpenAsync(General, MessageJson(41, General, Friend));
+        Assert.False(chat.Messages.Single().CanPin); // @everyone here can't manage or pin messages.
+    }
+
+    [Fact]
     public async Task Inaccessible_channels_show_an_error()
     {
         _session.Respond = (_, _) => Json("""{"code":50001,"message":"Missing Access"}""", HttpStatusCode.Forbidden);

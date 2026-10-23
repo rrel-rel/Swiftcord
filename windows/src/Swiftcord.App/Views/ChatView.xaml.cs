@@ -343,6 +343,17 @@ public sealed partial class ChatView : UserControl
         }
     }
 
+    private void OnPinsOpening(object? sender, object e) => ViewModel?.LoadPinsCommand.Execute(null);
+
+    private async void OnJumpToPinClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: MessageItemViewModel pin } && ViewModel is { } vm)
+        {
+            PinsFlyout.Hide();
+            await vm.JumpToMessageAsync(pin.Id);
+        }
+    }
+
     private void OnErrorClosed(InfoBar sender, object args)
     {
         if (ViewModel is { } vm)

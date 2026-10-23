@@ -49,6 +49,8 @@ public enum Permission : ulong
     ModerateMembers = 1UL << 40,
     SendVoiceMessages = 1UL << 46,
     SendPolls = 1UL << 49,
+    /// <summary>Pin and unpin messages (split out of Manage Messages in 2025).</summary>
+    PinMessages = 1UL << 51,
     All = ulong.MaxValue,
 }
 

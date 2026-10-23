@@ -492,6 +492,68 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
         Draft = message.Content;
     }
 
+    public async Task TogglePinAsync(MessageItemViewModel message)
+    {
+        var pin = !message.IsPinned;
+        try
+        {
+            if (pin)
+                await _client.Rest.PinMessageAsync(ChannelId, message.Id);
+            else
+                await _client.Rest.UnpinMessageAsync(ChannelId, message.Id);
+            message.IsPinned = pin;
+            if (!pin && PinnedMessages.FirstOrDefault(m => m.Id == message.Id) is { } listed)
+            {
+                PinnedMessages.Remove(listed);
+                OnPropertyChanged(nameof(HasNoPins));
+            }
+        }
+        catch (Exception)
+        {
+            Error = pin ? "Couldn't pin the message." : "Couldn't unpin the message.";
+        }
+    }
+
+    #region Pins
+
+    /// <summary>Pinned messages, newest pin first; loaded when the pins list is opened.</summary>
+    public ObservableCollection<MessageItemViewModel> PinnedMessages { get; } = [];
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasNoPins))]
+    private bool _isLoadingPins;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasNoPins))]
+    private string? _pinsError;
+
+    public bool HasNoPins => !IsLoadingPins && PinsError is null && PinnedMessages.Count == 0;
+
+    [RelayCommand]
+    private async Task LoadPinsAsync()
+    {
+        IsLoadingPins = true;
+        PinsError = null;
+        try
+        {
+            var pins = await _client.Rest.GetPinnedMessagesAsync(ChannelId);
+            PinnedMessages.Clear();
+            var options = CreateOptions();
+            foreach (var message in pins)
+                PinnedMessages.Add(new MessageItemViewModel(message, options));
+        }
+        catch (Exception)
+        {
+            PinsError = "Couldn't load pinned messages.";
+        }
+        finally
+        {
+            IsLoadingPins = false;
+        }
+    }
+
+    #endregion
+
     public async Task DeleteAsync(MessageItemViewModel message)
     {
         if (message.IsFailed)
@@ -692,7 +754,9 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
             Actions = this,
             GuildId = guildId,
             CurrentUserId = me?.Id ?? default,
-            CanManageMessages = state.GetPermissions(ChannelId).HasFlag(Permission.ManageMessages),
+            // DMs report every permission, but you can't moderate other people's DMs; anyone can pin there though.
+            CanManageMessages = !Channel.IsPrivate && state.GetPermissions(ChannelId).HasFlag(Permission.ManageMessages),
+            CanPin = Channel.IsPrivate || (state.GetPermissions(ChannelId) & (Permission.ManageMessages | Permission.PinMessages)) != 0,
             DisplayName = id => state.GetDisplayName(id, guildId),
             RoleColor = id => guildId is { } gid ? state.GetRoleColor(gid, id) : null,
             MentionsMe = m => me is not null && (m.MentionEveryone

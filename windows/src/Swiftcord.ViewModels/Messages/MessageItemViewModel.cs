@@ -18,6 +18,7 @@ public interface IMessageActions
     Task AddReactionAsync(MessageItemViewModel message, string emoji);
     Task RetryAsync(MessageItemViewModel message);
     Task JumpToMessageAsync(Snowflake messageId);
+    Task TogglePinAsync(MessageItemViewModel message);
 }
 
 public sealed partial class MessageItemViewModel : ObservableObject
@@ -97,6 +98,9 @@ public sealed partial class MessageItemViewModel : ObservableObject
             () => message.ReferencedMessage is not null);
         EditCommand = new RelayCommand(() => _actions.Edit(this), () => CanEdit);
         DeleteCommand = new AsyncRelayCommand(() => _actions.DeleteAsync(this), () => CanDelete);
+        CanPin = options.CanPin && message.IsUserContent;
+        _isPinned = message.Pinned;
+        TogglePinCommand = new AsyncRelayCommand(() => _actions.TogglePinAsync(this), () => CanPin);
         RetryCommand = new AsyncRelayCommand(() => _actions.RetryAsync(this));
         AddReactionCommand = new AsyncRelayCommand<string>(emoji => _actions.AddReactionAsync(this, emoji!));
         SetReactions(message.Reactions);
@@ -142,6 +146,14 @@ public sealed partial class MessageItemViewModel : ObservableObject
     public IReadOnlyList<StickerViewModel> Stickers { get; }
     public ObservableCollection<ReactionViewModel> Reactions { get; } = [];
     public bool HasAttachments => Attachments.Count > 0;
+
+    /// <summary>A one-line stand-in for attachments in compact lists such as pins.</summary>
+    public string? AttachmentSummary => Attachments.Count switch
+    {
+        0 => null,
+        1 => Attachments[0].FileName,
+        var n => $"{n} attachments",
+    };
     public bool HasEmbeds => Embeds.Count > 0;
     public bool HasStickers => Stickers.Count > 0;
 
@@ -166,6 +178,14 @@ public sealed partial class MessageItemViewModel : ObservableObject
     private bool _isHighlighted;
     public IRelayCommand EditCommand { get; }
     public IAsyncRelayCommand DeleteCommand { get; }
+    public IAsyncRelayCommand TogglePinCommand { get; }
+    public bool CanPin { get; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PinMenuText))]
+    private bool _isPinned;
+
+    public string PinMenuText => IsPinned ? "Unpin Message" : "Pin Message";
     public IAsyncRelayCommand RetryCommand { get; }
     public IAsyncRelayCommand<string> AddReactionCommand { get; }
 
@@ -234,5 +254,6 @@ public sealed class MessageItemOptions
     public Snowflake? GuildId { get; init; }
     public Snowflake CurrentUserId { get; init; }
     public bool CanManageMessages { get; init; }
+    public bool CanPin { get; init; }
     public DateTimeOffset Now { get; init; } = DateTimeOffset.Now;
 }

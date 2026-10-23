@@ -326,6 +326,14 @@
                                 </MenuFlyoutItem.Icon>
                             </MenuFlyoutItem>
                             <MenuFlyoutItem
+                                Command="{x:Bind TogglePinCommand}"
+                                Text="{x:Bind PinMenuText, Mode=OneWay}"
+                                Visibility="{x:Bind CanPin}">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE718;" />
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem
                                 Command="{x:Bind EditCommand}"
                                 Text="Edit Message"
                                 Visibility="{x:Bind CanEdit}">
@@ -587,6 +595,65 @@
                     Style="{StaticResource IconButtonStyle}" />
             </Grid>
         </DataTemplate>
+        <!-- A message in the pinned messages list -->
+        <DataTemplate x:Key="PinnedMessageTemplate" x:DataType="m:MessageItemViewModel">
+            <Grid
+                Margin="0,0,0,8"
+                Padding="10,8"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                ColumnSpacing="10"
+                CornerRadius="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="32" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Ellipse
+                    Width="32"
+                    Height="32"
+                    VerticalAlignment="Top">
+                    <Ellipse.Fill>
+                        <ImageBrush Stretch="UniformToFill">
+                            <ImageBrush.ImageSource>
+                                <BitmapImage DecodePixelWidth="64" UriSource="{x:Bind AvatarUri}" />
+                            </ImageBrush.ImageSource>
+                        </ImageBrush>
+                    </Ellipse.Fill>
+                </Ellipse>
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            FontWeight="SemiBold"
+                            Foreground="{x:Bind h:Ui.RoleBrush(AuthorColor)}"
+                            Text="{x:Bind AuthorName}" />
+                        <TextBlock
+                            Grid.Column="1"
+                            VerticalAlignment="Bottom"
+                            Style="{StaticResource SecondaryTextStyle}"
+                            Text="{x:Bind TimestampText}" />
+                        <HyperlinkButton
+                            Grid.Column="2"
+                            Padding="4,0"
+                            Click="OnJumpToPinClick"
+                            Content="Jump" />
+                    </Grid>
+                    <c:MarkdownTextBlock
+                        MessageContext="{x:Bind Context}"
+                        Nodes="{x:Bind Nodes}"
+                        Visibility="{x:Bind HasContent}" />
+                    <TextBlock
+                        Style="{StaticResource SecondaryTextStyle}"
+                        Text="{x:Bind AttachmentSummary}"
+                        Visibility="{x:Bind h:Ui.VisibleIfText(AttachmentSummary)}" />
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
     </UserControl.Resources>
 
     <Grid>
@@ -608,7 +675,53 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
+            <Button
+                x:Name="PinsButton"
+                Grid.Column="3"
+                VerticalAlignment="Center"
+                AutomationProperties.Name="Pinned messages"
+                Content="&#xE718;"
+                Style="{StaticResource IconButtonStyle}"
+                ToolTipService.ToolTip="Pinned messages">
+                <Button.Flyout>
+                    <Flyout x:Name="PinsFlyout" Opening="OnPinsOpening" Placement="BottomEdgeAlignedRight">
+                        <Grid Width="420" MaxHeight="560">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock
+                                Margin="0,0,0,8"
+                                Style="{StaticResource BodyStrongTextBlockStyle}"
+                                Text="Pinned messages" />
+                            <ProgressRing
+                                Grid.Row="1"
+                                Width="32"
+                                Height="32"
+                                IsActive="{x:Bind ViewModel.IsLoadingPins, Mode=OneWay}" />
+                            <TextBlock
+                                Grid.Row="1"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="This channel doesn't have any pinned messages yet."
+                                TextWrapping="Wrap"
+                                Visibility="{x:Bind ViewModel.HasNoPins, Mode=OneWay}" />
+                            <TextBlock
+                                Grid.Row="1"
+                                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                Text="{x:Bind ViewModel.PinsError, Mode=OneWay}"
+                                Visibility="{x:Bind h:Ui.VisibleIfText(ViewModel.PinsError), Mode=OneWay}" />
+                            <ListView
+                                Grid.Row="1"
+                                ItemContainerStyle="{StaticResource PlainListViewItemStyle}"
+                                ItemTemplate="{StaticResource PinnedMessageTemplate}"
+                                ItemsSource="{x:Bind ViewModel.PinnedMessages, Mode=OneWay}"
+                                SelectionMode="None" />
+                        </Grid>
+                    </Flyout>
+                </Button.Flyout>
+            </Button>
             <TextBlock
                 VerticalAlignment="Center"
                 FontSize="20"

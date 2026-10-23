@@ -52,6 +52,18 @@ internal sealed class AckRequest
     public string? Token { get; set; }
 }
 
+internal sealed class PinnedMessagesPage
+{
+    public List<PinnedMessage> Items { get; set; } = [];
+    public bool HasMore { get; set; }
+}
+
+internal sealed class PinnedMessage
+{
+    public DateTimeOffset PinnedAt { get; set; }
+    public Message? Message { get; set; }
+}
+
 internal sealed class UserSettingsProtoResponse
 {
     public string Settings { get; set; } = "";
