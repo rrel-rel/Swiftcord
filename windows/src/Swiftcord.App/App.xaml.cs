@@ -33,6 +33,18 @@ public partial class App : Application
     {
         InitializeComponent();
         Instance = this;
+        var log = _loggerFactory.CreateLogger<App>();
+        log.LogInformation("Swiftcord {Version} starting ({Arch}, Windows {OS})",
+            typeof(App).Assembly.GetName().Version?.ToString(3), System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture,
+            Environment.OSVersion.Version);
+        // Exceptions on other threads end the process without reaching the XAML handler below; record them first.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            log.LogCritical(e.ExceptionObject as Exception, "Fatal unhandled exception (terminating: {Terminating})", e.IsTerminating);
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            log.LogError(e.Exception, "Unobserved task exception");
+            e.SetObserved();
+        };
         UnhandledException += (_, e) =>
         {
             // e.Message often carries the XAML error detail that the exception itself lacks.
@@ -69,6 +81,8 @@ public partial class App : Application
             _shell?.SetWindowActive(e.WindowActivationState != WindowActivationState.Deactivated);
         _window.Closed += async (_, _) =>
         {
+            // Marks a normal exit, so a log that just stops points to a crash.
+            _loggerFactory.CreateLogger<App>().LogInformation("Window closed");
             _notifications?.Dispose();
             await EndSessionAsync(logout: false);
         };
