@@ -124,9 +124,10 @@ public static class Ui
 
     public static Thickness GroupMargin(bool groupStart) => new(0, groupStart ? 12 : 0, 0, 0);
 
-    public static Brush MessageBackground(bool mentionsMe, bool highlighted) =>
+    public static Brush MessageBackground(bool mentionsMe, bool highlighted, bool hovered) =>
         highlighted ? new SolidColorBrush(Color.FromArgb(0x33, 0x58, 0x65, 0xF2))
-        : mentionsMe ? new SolidColorBrush(Color.FromArgb(0x1A, 0xF0, 0xB2, 0x32))
+        : mentionsMe ? new SolidColorBrush(Color.FromArgb(hovered ? (byte)0x26 : (byte)0x1A, 0xF0, 0xB2, 0x32))
+        : hovered ? ThemeBrush("SubtleFillColorSecondaryBrush")
         : new SolidColorBrush(Colors.Transparent);
 
     public static Thickness MentionBorder(bool mentionsMe) => new(mentionsMe ? 2 : 0, 0, 0, 0);

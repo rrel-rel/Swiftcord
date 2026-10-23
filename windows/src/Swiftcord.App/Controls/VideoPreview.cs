@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -28,7 +29,11 @@ public sealed partial class VideoPreview : ContentControl
     public static readonly DependencyProperty IsGifProperty = DependencyProperty.Register(
         nameof(IsGif), typeof(bool), typeof(VideoPreview), new PropertyMetadata(false, OnChanged));
 
+    /// <summary>GIFs only start once on screen this long, so fast scrolling doesn't churn through players.</summary>
+    private static readonly TimeSpan GifStartDelay = TimeSpan.FromMilliseconds(400);
+
     private MediaPlayer? _player;
+    private int _version;
 
     public VideoPreview()
     {
@@ -38,7 +43,11 @@ public sealed partial class VideoPreview : ContentControl
         CornerRadius = new CornerRadius(6);
         Loaded += (_, _) => Rebuild();
         // Leaving the screen (or the list recycling this row) stops and releases the player.
-        Unloaded += (_, _) => ReleasePlayer();
+        Unloaded += (_, _) =>
+        {
+            _version++; // Cancels a pending GIF start.
+            ReleasePlayer();
+        };
     }
 
     public Uri? Source
@@ -67,13 +76,15 @@ public sealed partial class VideoPreview : ContentControl
 
     private static void OnChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) => ((VideoPreview)d).Rebuild();
 
-    private void Rebuild()
+    private async void Rebuild()
     {
+        var version = ++_version;
         ReleasePlayer();
-        if (IsGif && Source is not null)
+        ShowPoster();
+        if (!IsGif || Source is null) return;
+        await Task.Delay(GifStartDelay);
+        if (version == _version && IsLoaded)
             Play(muted: true, loop: true, controls: false);
-        else
-            ShowPoster();
     }
 
     private void ShowPoster()
@@ -120,6 +131,8 @@ public sealed partial class VideoPreview : ContentControl
             AreTransportControlsEnabled = controls,
             Stretch = Stretch.Uniform,
         };
+        _player.MediaFailed += (_, e) =>
+            App.Instance?.CreateLogger<VideoPreview>().LogWarning("Video failed ({Error}): {Message} {Source}", e.Error, e.ErrorMessage, source);
         element.SetMediaPlayer(_player);
         Content = element;
     }

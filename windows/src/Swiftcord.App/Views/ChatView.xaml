@@ -305,7 +305,10 @@
                 <Grid
                     Margin="{x:Bind h:Ui.GroupMargin(IsGroupStart), Mode=OneWay}"
                     Padding="14,2,16,2"
-                    Background="{x:Bind h:Ui.MessageBackground(MentionsMe, IsHighlighted), Mode=OneWay}"
+                    Background="{x:Bind h:Ui.MessageBackground(MentionsMe, IsHighlighted, IsHovered), Mode=OneWay}"
+                    PointerCanceled="OnMessagePointerExited"
+                    PointerEntered="OnMessagePointerEntered"
+                    PointerExited="OnMessagePointerExited"
                     BorderBrush="#F0B232"
                     BorderThickness="{x:Bind h:Ui.MentionBorder(MentionsMe)}"
                     Opacity="{x:Bind h:Ui.PendingOpacity(IsPending), Mode=OneWay}">
@@ -568,6 +571,48 @@
                                 Content="Discard" />
                         </StackPanel>
                     </StackPanel>
+
+                    <!-- Hover toolbar -->
+                    <Border
+                        Grid.RowSpan="2"
+                        Grid.ColumnSpan="2"
+                        Margin="0,-6,4,0"
+                        Padding="2"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Background="{ThemeResource SolidBackgroundFillColorTertiaryBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Visibility="{x:Bind h:Ui.Visible2(IsHovered, HasActions), Mode=OneWay}">
+                        <StackPanel Orientation="Horizontal">
+                            <Button
+                                AutomationProperties.Name="Add Reaction"
+                                Command="{x:Bind PickReactionCommand}"
+                                Content="&#xE76E;"
+                                Style="{StaticResource IconButtonStyle}"
+                                ToolTipService.ToolTip="Add Reaction" />
+                            <Button
+                                AutomationProperties.Name="Reply"
+                                Command="{x:Bind ReplyCommand}"
+                                Content="&#xE97A;"
+                                Style="{StaticResource IconButtonStyle}"
+                                ToolTipService.ToolTip="Reply" />
+                            <Button
+                                AutomationProperties.Name="Edit"
+                                Command="{x:Bind EditCommand}"
+                                Content="&#xE70F;"
+                                Style="{StaticResource IconButtonStyle}"
+                                ToolTipService.ToolTip="Edit"
+                                Visibility="{x:Bind CanEdit}" />
+                            <Button
+                                AutomationProperties.Name="More"
+                                Click="OnMoreClick"
+                                Content="&#xE712;"
+                                Style="{StaticResource IconButtonStyle}"
+                                ToolTipService.ToolTip="More" />
+                        </StackPanel>
+                    </Border>
                 </Grid>
             </StackPanel>
         </DataTemplate>

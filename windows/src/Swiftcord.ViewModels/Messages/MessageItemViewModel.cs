@@ -176,6 +176,13 @@ public sealed partial class MessageItemViewModel : ObservableObject
     /// <summary>Scrolls to (loading if needed) the message this one replies to.</summary>
     public IAsyncRelayCommand JumpToReplyCommand { get; }
 
+    /// <summary>The pointer is over this message: tint it and show the action toolbar.</summary>
+    [ObservableProperty]
+    private bool _isHovered;
+
+    /// <summary>Pending, failed and system messages get no action toolbar.</summary>
+    public bool HasActions => !IsPending && !IsFailed && !IsSystem;
+
     /// <summary>Briefly set after jumping to this message, so it stands out.</summary>
     [ObservableProperty]
     private bool _isHighlighted;
@@ -208,9 +215,11 @@ public sealed partial class MessageItemViewModel : ObservableObject
 
     /// <summary>Sent locally and awaiting the server's confirmation.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasActions))]
     private bool _isPending;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasActions))]
     private bool _isFailed;
 
     public bool HasReactions => Reactions.Count > 0;

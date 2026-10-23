@@ -199,7 +199,7 @@ public sealed partial class ChatView : UserControl
         try
         {
             var offset = scroller.VerticalOffset;
-            if (offset < LoadOlderThreshold && ViewModel is { } current)
+            if (offset < LoadOlderThreshold && ViewModel is { IsLoading: false, HasMoreHistory: true } current)
                 _log.LogInformation("Near top: offset {Offset:F0}, extent {Extent:F0}, {Count} messages, loading {Loading}, more {More}, can load {CanLoad}, error {Error}",
                     offset, scroller.ExtentHeight, current.Messages.Count, current.IsLoading, current.HasMoreHistory,
                     current.LoadOlderCommand.CanExecute(null), current.Error ?? "none");
@@ -375,6 +375,31 @@ public sealed partial class ChatView : UserControl
             var package = new DataPackage();
             package.SetText(text);
             Clipboard.SetContent(package);
+        }
+    }
+
+    private void OnMessagePointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: MessageItemViewModel message })
+            message.IsHovered = true;
+    }
+
+    private void OnMessagePointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: MessageItemViewModel message })
+            message.IsHovered = false;
+    }
+
+    /// <summary>The toolbar's "…" opens the same menu as right-clicking the message.</summary>
+    private void OnMoreClick(object sender, RoutedEventArgs e)
+    {
+        for (DependencyObject? node = (DependencyObject)sender; node is not null; node = VisualTreeHelper.GetParent(node))
+        {
+            if (node is FrameworkElement { ContextFlyout: { } menu })
+            {
+                menu.ShowAt((FrameworkElement)sender);
+                return;
+            }
         }
     }
 
