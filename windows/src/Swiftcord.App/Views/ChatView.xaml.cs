@@ -67,16 +67,31 @@ public sealed partial class ChatView : UserControl
 
     private void OnMessageListLoaded(object sender, RoutedEventArgs e)
     {
-        if (_scroller is not null) return;
+        if (!TryAttachScroller())
+            MessageList.LayoutUpdated += OnMessageListLayoutUpdated;
+    }
+
+    /// <summary>
+    /// The view starts collapsed until a channel opens, and a collapsed ListView hasn't built its template yet,
+    /// so the ScrollViewer may only appear after a later layout pass.
+    /// </summary>
+    private void OnMessageListLayoutUpdated(object? sender, object e)
+    {
+        if (TryAttachScroller())
+            MessageList.LayoutUpdated -= OnMessageListLayoutUpdated;
+    }
+
+    private bool TryAttachScroller()
+    {
+        if (_scroller is not null) return true;
         _scroller = FindDescendant<ScrollViewer>(MessageList);
-        if (_scroller is null)
-        {
-            _log.LogWarning("Message list has no ScrollViewer; older history won't load on scroll");
-            return;
-        }
+        if (_scroller is null) return false;
+
+        _log.LogInformation("Attached to the message list's ScrollViewer");
         _scroller.ViewChanged += OnScrollViewChanged;
         // Wheeling while already at the top raises no ViewChanged, so listen for the wheel itself too.
         _scroller.AddHandler(PointerWheelChangedEvent, new PointerEventHandler(OnScrollerWheel), handledEventsToo: true);
+        return true;
     }
 
     private void OnScrollViewChanged(object? sender, ScrollViewerViewChangedEventArgs e) => _ = LoadOlderWhileNearTopAsync();
