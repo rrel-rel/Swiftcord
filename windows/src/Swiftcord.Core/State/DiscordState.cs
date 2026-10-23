@@ -26,6 +26,8 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
     private readonly Dictionary<Snowflake, SortedList<Snowflake, Message>> _messages = [];
     private readonly Dictionary<Snowflake, ReadStateEntry> _readStates = [];
     private readonly Dictionary<Snowflake, PresenceStatus> _presences = [];
+    /// <summary>Notification settings by server ID; DM settings are under the default ID.</summary>
+    private readonly Dictionary<Snowflake, UserGuildSettings> _guildSettings = [];
     private readonly Dictionary<Snowflake, Dictionary<Snowflake, DateTimeOffset>> _typing = [];
 
     public User? CurrentUser { get; private set; }
@@ -158,6 +160,60 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
     public bool IsUnread(Snowflake channelId)
     {
         lock (_lock) return IsUnreadLocked(channelId);
+    }
+
+    /// <summary>
+    /// Whether a new message should raise a desktop notification under the user's Discord notification
+    /// settings: per-channel (then category, then server) level and mutes, @everyone and role suppression,
+    /// and @silent messages. A mute still lets direct @mentions through, as in Discord.
+    /// </summary>
+    public bool ShouldNotify(Message message)
+    {
+        lock (_lock)
+        {
+            if (CurrentUser is not { } me || message.Author.Id == me.Id || message.Flags.HasFlag(MessageFlags.SuppressNotifications))
+                return false;
+            if (!_channels.TryGetValue(message.ChannelId, out var channel))
+                return false;
+
+            var now = _time.GetUtcNow();
+            var settings = _guildSettings.GetValueOrDefault(channel.GuildId ?? default);
+            var overrides = ChannelAndParentsLocked(channel)
+                .Select(c => settings?.ChannelOverrides.Find(o => o.ChannelId == c.Id))
+                .OfType<ChannelNotificationOverride>()
+                .ToList();
+            var directMention = message.Mentions.Any(u => u.Id == me.Id);
+            var muted = overrides.Any(o => o.IsMuted(now)) || settings?.IsMuted(now) == true;
+            if (muted)
+                return directMention;
+            if (channel.IsPrivate)
+                return true;
+
+            var level = overrides.Select(o => o.MessageNotifications).FirstOrDefault(l => l != MessageNotificationLevel.Inherit, MessageNotificationLevel.Inherit);
+            if (level == MessageNotificationLevel.Inherit)
+                level = settings?.MessageNotifications ?? MessageNotificationLevel.Inherit;
+            if (level == MessageNotificationLevel.Inherit && channel.GuildId is { } guildId)
+                level = _guilds.GetValueOrDefault(guildId)?.DefaultMessageNotifications ?? MessageNotificationLevel.AllMessages;
+
+            return level switch
+            {
+                MessageNotificationLevel.AllMessages => true,
+                MessageNotificationLevel.OnlyMentions => directMention
+                    || (message.MentionEveryone && settings?.SuppressEveryone != true)
+                    || (settings?.SuppressRoles != true && channel.GuildId is { } g
+                        && _members.GetValueOrDefault(g)?.GetValueOrDefault(me.Id)?.Roles is { } roles
+                        && message.MentionRoles.Any(roles.Contains)),
+                _ => false,
+            };
+        }
+    }
+
+    /// <summary>A channel followed by its parents: a thread's channel, then the category.</summary>
+    private IEnumerable<Channel> ChannelAndParentsLocked(Channel channel)
+    {
+        for (var current = channel; current is not null;
+             current = current.ParentId is { } parent ? _channels.GetValueOrDefault(parent) : null)
+            yield return current;
     }
 
     public int GetMentionCount(Snowflake channelId)
@@ -344,6 +400,7 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
             case "PRESENCE_UPDATE": OnPresenceUpdate(DiscordJson.Deserialize<PresenceUpdateEvent>(data)); break;
             case "USER_UPDATE": OnUserUpdate(DiscordJson.Deserialize<User>(data)); break;
             case "USER_SETTINGS_UPDATE": OnUserSettingsUpdate(data); break;
+            case "USER_GUILD_SETTINGS_UPDATE": OnUserGuildSettingsUpdate(DiscordJson.Deserialize<UserGuildSettings>(data)); break;
             case "USER_SETTINGS_PROTO_UPDATE": OnUserSettingsProtoUpdate(data); break;
         }
     }
@@ -384,6 +441,9 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
 
             if (ready.ReadState is { } readState)
                 LoadReadStateLocked(readState);
+            _guildSettings.Clear();
+            if (ready.UserGuildSettings is { } guildSettings)
+                LoadUserGuildSettingsLocked(guildSettings);
 
             _guildFolders = ready.UserSettingsProto is { Length: > 0 } proto ? UserSettingsReader.ReadGuildFolders(proto)
                 : ready.UserSettings is { } settings ? ReadLegacyGuildFolders(settings)
@@ -430,6 +490,24 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
             var entry = DiscordJson.Deserialize<ReadStateEntry>(element);
             _readStates[entry.Id] = entry;
         }
+    }
+
+    private void LoadUserGuildSettingsLocked(JsonElement settings)
+    {
+        // Like read states: a bare array, or { version, partial, entries } with newer capabilities.
+        var entries = settings.ValueKind == JsonValueKind.Object && settings.TryGetProperty("entries", out var e) ? e : settings;
+        if (entries.ValueKind != JsonValueKind.Array)
+            return;
+        foreach (var element in entries.EnumerateArray())
+        {
+            var entry = DiscordJson.Deserialize<UserGuildSettings>(element);
+            _guildSettings[entry.GuildId ?? default] = entry;
+        }
+    }
+
+    private void OnUserGuildSettingsUpdate(UserGuildSettings settings)
+    {
+        lock (_lock) _guildSettings[settings.GuildId ?? default] = settings;
     }
 
     private void OnReadySupplemental(JsonElement data)

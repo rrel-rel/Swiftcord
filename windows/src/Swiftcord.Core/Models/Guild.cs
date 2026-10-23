@@ -15,6 +15,8 @@ public sealed class Guild
     public bool Unavailable { get; set; }
     public int MemberCount { get; set; }
     public DateTimeOffset? JoinedAt { get; set; }
+    /// <summary>The server's default for members who haven't chosen (all messages or only mentions).</summary>
+    public MessageNotificationLevel DefaultMessageNotifications { get; set; }
     public int PremiumTier { get; set; }
     public Snowflake? SystemChannelId { get; set; }
     public Snowflake? RulesChannelId { get; set; }

@@ -6,6 +6,8 @@ using Swiftcord.Core.Gateway;
 using Swiftcord.Core.Models;
 using Swiftcord.Core.Permissions;
 using Swiftcord.ViewModels.Messages;
+using Swiftcord.ViewModels.Notifications;
+using Swiftcord.ViewModels.Settings;
 
 namespace Swiftcord.ViewModels.Navigation;
 
@@ -25,6 +27,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private readonly HashSet<Snowflake> _subscribedGuilds = [];
     private bool _windowActive = true;
     private bool _disposed;
+    private DeepLink? _pendingLink;
 
     public ShellViewModel(DiscordClient client, IUiDispatcher ui, TimeProvider? time = null)
     {
@@ -55,6 +58,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             LoadFromState();
     }
 
+    /// <summary>Where desktop notifications go; none in tests or when unsupported.</summary>
+    public INotificationSink? Notifications { get; init; }
+
+    /// <summary>App preferences, shown in the settings overlay.</summary>
+    public SettingsViewModel? Settings { get; init; }
+
     public ObservableCollection<GuildItemViewModel> Guilds { get; } = [];
     public ChannelListViewModel Sidebar { get; }
 
@@ -70,6 +79,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     private bool _isReady;
+
+    [ObservableProperty]
+    private bool _isSettingsOpen;
 
     [ObservableProperty]
     private bool _isConnected;
@@ -152,6 +164,28 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void Logout() => LogoutRequested?.Invoke();
 
+    [RelayCommand]
+    private void OpenSettings() => IsSettingsOpen = true;
+
+    [RelayCommand]
+    private void CloseSettings() => IsSettingsOpen = false;
+
+    /// <summary>
+    /// Opens the channel a link or notification points at. Before READY the link is kept and followed
+    /// once the cache is loaded (e.g. when a notification click launched the app).
+    /// </summary>
+    public void Navigate(DeepLink link)
+    {
+        IsSettingsOpen = false;
+        if (!IsReady)
+        {
+            _pendingLink = link;
+            return;
+        }
+        // Jumping to a specific message isn't supported yet; open its channel.
+        OpenChannel(link.ChannelId);
+    }
+
     /// <summary>Opens a channel by ID, switching guilds if needed (e.g. from a #channel mention).</summary>
     public void OpenChannel(Snowflake channelId)
     {
@@ -172,6 +206,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             return;
         }
 
+        Notifications?.Clear(channelId);
         if (Chat?.ChannelId == channelId) return;
         _lastChannelByGuild[channel.GuildId ?? HomeKey] = channelId;
         Sidebar.SelectedChannelId = channelId;
@@ -216,6 +251,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             if (reopen is { } r) _lastChannelByGuild[HomeKey] = r;
             SelectHome();
+        }
+
+        if (_pendingLink is { } link)
+        {
+            _pendingLink = null;
+            Navigate(link);
         }
     }
 
@@ -302,11 +343,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     private void OnMessageCreated(Message message)
     {
-        if (message.GuildId is not null) return;
-        _ui.Post(() =>
-        {
-            if (!_disposed) Sidebar.BumpDirectMessage(message.ChannelId);
-        });
+        // Decide on the gateway thread, against the cache as of this message.
+        var notify = Notifications is not null && Settings?.Current.NotificationsEnabled != false && _client.State.ShouldNotify(message);
+        if (message.GuildId is null || notify)
+            _ui.Post(() =>
+            {
+                if (_disposed) return;
+                if (message.GuildId is null)
+                    Sidebar.BumpDirectMessage(message.ChannelId);
+                // Don't notify for the conversation the user is looking at.
+                if (notify && !(_windowActive && Chat?.ChannelId == message.ChannelId))
+                    Notifications!.Show(MessageNotification.Create(message, _client.State, Settings?.Current.NotificationPreviews ?? true));
+            });
     }
 
     private void OnPresenceChanged(Snowflake userId, PresenceStatus status) => _ui.Post(() =>
