@@ -65,31 +65,51 @@ public sealed partial class ChatView : UserControl
 
     private void OnMessageListLoaded(object sender, RoutedEventArgs e)
     {
+        if (_scroller is not null) return;
         _scroller = FindDescendant<ScrollViewer>(MessageList);
-        if (_scroller is not null)
-            _scroller.ViewChanged += OnScrollViewChanged;
+        if (_scroller is null) return;
+        _scroller.ViewChanged += OnScrollViewChanged;
+        // Wheeling while already at the top raises no ViewChanged, so listen for the wheel itself too.
+        _scroller.AddHandler(PointerWheelChangedEvent, new PointerEventHandler(OnScrollerWheel), handledEventsToo: true);
     }
 
-    private async void OnScrollViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    private void OnScrollViewChanged(object? sender, ScrollViewerViewChangedEventArgs e) => _ = LoadOlderWhileNearTopAsync();
+
+    private void OnScrollerWheel(object sender, PointerRoutedEventArgs e) => _ = LoadOlderWhileNearTopAsync();
+
+    /// <summary>
+    /// Pages in older history until the viewport is no longer near the top. Looping here (rather than waiting
+    /// for the next scroll event) matters: if the user reaches the top while a page is loading, the event that
+    /// would have triggered the next page was skipped and none follows, leaving a blank header and no progress.
+    /// </summary>
+    private async Task LoadOlderWhileNearTopAsync()
     {
-        if (_loadingOlder || _scroller is not { VerticalOffset: < LoadOlderThreshold } scroller
-            || ViewModel is not { IsLoading: false, HasMoreHistory: true } vm || !vm.LoadOlderCommand.CanExecute(null))
+        if (_loadingOlder || _scroller is not { } scroller)
             return;
 
         _loadingOlder = true;
         try
         {
-            // Older messages are inserted above the viewport. Restore the same distance from the bottom
-            // afterwards so the visible messages don't move; otherwise the view can stay pinned at the
-            // very top, where further scrolling raises no ViewChanged and paging stops.
-            var fromBottom = scroller.ExtentHeight - scroller.VerticalOffset;
-            await vm.LoadOlderCommand.ExecuteAsync(null);
-            if (!ReferenceEquals(ViewModel, vm))
-                return;
-            MessageList.UpdateLayout();
-            var target = scroller.ExtentHeight - fromBottom;
-            if (target > scroller.VerticalOffset + 1)
-                scroller.ChangeView(null, target, null, disableAnimation: true);
+            var offset = scroller.VerticalOffset;
+            while (offset < LoadOlderThreshold
+                && ViewModel is { IsLoading: false, HasMoreHistory: true } vm && vm.LoadOlderCommand.CanExecute(null))
+            {
+                // Older messages are inserted above the viewport. Restore the same distance from the bottom
+                // afterwards so the visible messages don't move.
+                var fromBottom = scroller.ExtentHeight - offset;
+                var before = vm.Messages.Count;
+                await vm.LoadOlderCommand.ExecuteAsync(null);
+                if (!ReferenceEquals(ViewModel, vm) || vm.Error is not null || vm.Messages.Count == before)
+                    break;
+                MessageList.UpdateLayout();
+                offset = scroller.VerticalOffset;
+                var target = scroller.ExtentHeight - fromBottom;
+                if (target > offset + 1)
+                {
+                    scroller.ChangeView(null, target, null, disableAnimation: true);
+                    offset = target; // ChangeView applies asynchronously; judge the next iteration by where we're going.
+                }
+            }
         }
         finally
         {
