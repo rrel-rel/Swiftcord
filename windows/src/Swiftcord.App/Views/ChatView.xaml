@@ -44,6 +44,14 @@
                             Text="SPOILER" />
                     </Border>
                 </Grid>
+                <!-- Inline video -->
+                <c:VideoPreview
+                    Width="{x:Bind PreviewWidth}"
+                    Height="{x:Bind PreviewHeight}"
+                    Poster="{x:Bind PreviewUri}"
+                    Source="{x:Bind VideoUri}"
+                    ToolTipService.ToolTip="{x:Bind FileName}"
+                    Visibility="{x:Bind IsPlayableVideo}" />
                 <!-- File card -->
                 <Grid
                     MinWidth="260"
@@ -87,14 +95,23 @@
 
         <DataTemplate x:Key="EmbedTemplate" x:DataType="m:EmbedViewModel">
             <Grid Margin="0,4,0,0" HorizontalAlignment="Left">
-                <!-- A bare image or GIF link -->
+                <!-- A bare video or GIF -->
+                <c:VideoPreview
+                    Width="{x:Bind VideoWidth}"
+                    Height="{x:Bind VideoHeight}"
+                    IsGif="{x:Bind IsGif}"
+                    LinkUri="{x:Bind VideoLinkUri}"
+                    Poster="{x:Bind VideoPosterUri}"
+                    Source="{x:Bind VideoUri}"
+                    Visibility="{x:Bind h:Ui.Visible2(IsMediaOnly, HasVideo)}" />
+                <!-- A bare image link -->
                 <Button
                     Padding="0"
                     BorderThickness="0"
                     Click="OnOpenUri"
                     CornerRadius="6"
                     Tag="{x:Bind Url}"
-                    Visibility="{x:Bind IsMediaOnly}">
+                    Visibility="{x:Bind h:Ui.Visible2(IsMediaOnly, ShowsImage)}">
                     <Image
                         Width="{x:Bind ImageWidth}"
                         Height="{x:Bind ImageHeight}"
@@ -161,12 +178,20 @@
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                         </ItemsControl>
+                        <c:VideoPreview
+                            Width="{x:Bind VideoWidth}"
+                            Height="{x:Bind VideoHeight}"
+                            HorizontalAlignment="Left"
+                            LinkUri="{x:Bind VideoLinkUri}"
+                            Poster="{x:Bind VideoPosterUri}"
+                            Source="{x:Bind VideoUri}"
+                            Visibility="{x:Bind HasVideo}" />
                         <Image
                             MaxWidth="{x:Bind ImageWidth}"
                             MaxHeight="{x:Bind ImageHeight}"
                             HorizontalAlignment="Left"
                             Stretch="Uniform"
-                            Visibility="{x:Bind HasImage}">
+                            Visibility="{x:Bind ShowsImage}">
                             <Image.Source>
                                 <BitmapImage UriSource="{x:Bind ImageUri}" />
                             </Image.Source>

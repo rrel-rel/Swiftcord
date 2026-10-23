@@ -53,6 +53,8 @@ public static class Ui
 
     public static Visibility Visible(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
 
+    public static Visibility Visible2(bool first, bool second) => Visible(first && second);
+
     public static Visibility Collapsed(bool value) => value ? Visibility.Collapsed : Visibility.Visible;
 
     public static Visibility VisibleIfText(string? value) => Visible(!string.IsNullOrWhiteSpace(value));
