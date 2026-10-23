@@ -54,6 +54,8 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
     /// <summary>The unread or mention state of a channel changed.</summary>
     public event Action<Snowflake>? ReadStateChanged;
     public event Action<Snowflake, PresenceStatus>? PresenceChanged;
+    /// <summary>A subscribed member list changed; members in it have already been cached.</summary>
+    public event Action<MemberListUpdate>? MemberListUpdated;
     public event Action<User>? CurrentUserUpdated;
     /// <summary>The current user's roles or the guild's roles changed, so channel visibility may differ.</summary>
     public event Action<Snowflake>? PermissionsChanged;
@@ -400,6 +402,7 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
             case "PRESENCE_UPDATE": OnPresenceUpdate(DiscordJson.Deserialize<PresenceUpdateEvent>(data)); break;
             case "USER_UPDATE": OnUserUpdate(DiscordJson.Deserialize<User>(data)); break;
             case "USER_SETTINGS_UPDATE": OnUserSettingsUpdate(data); break;
+            case "GUILD_MEMBER_LIST_UPDATE": OnMemberListUpdate(DiscordJson.Deserialize<MemberListUpdate>(data)); break;
             case "USER_GUILD_SETTINGS_UPDATE": OnUserGuildSettingsUpdate(DiscordJson.Deserialize<UserGuildSettings>(data)); break;
             case "USER_SETTINGS_PROTO_UPDATE": OnUserSettingsProtoUpdate(data); break;
         }
@@ -841,6 +844,25 @@ public sealed class DiscordState(int messageCacheSize = 250, TimeProvider? time 
             typing[e.UserId] = _time.GetUtcNow() + TypingDuration;
         }
         TypingStarted?.Invoke(e.ChannelId, e.UserId);
+    }
+
+    private void OnMemberListUpdate(MemberListUpdate update)
+    {
+        // Lists carry members and presences the session wouldn't otherwise see; cache them for names and colours.
+        var items = update.Ops.SelectMany(o => o.Items ?? (o.Item is { } item ? [item] : []))
+            .Select(i => i.Member).OfType<MemberListMember>().ToList();
+        lock (_lock)
+        {
+            var members = GetMembersLocked(update.GuildId);
+            foreach (var member in items)
+            {
+                members[member.User.Id] = member.ToGuildMember();
+                _users.TryAdd(member.User.Id, member.User);
+                if (member.Presence is { } presence)
+                    _presences[member.User.Id] = PresenceStatusExtensions.Parse(presence.Status);
+            }
+        }
+        MemberListUpdated?.Invoke(update);
     }
 
     private void OnPresenceUpdate(PresenceUpdateEvent e)

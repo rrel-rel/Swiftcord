@@ -38,6 +38,9 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
         Channel = channel;
         UpdatePermissions();
 
+        if (channel.GuildId is not null && client.Options.TokenType == TokenType.User)
+            MemberList = new Members.MemberListViewModel(client, ui, channel);
+
         var state = client.State;
         state.MessageCreated += OnMessageCreated;
         state.MessageUpdated += OnMessageUpdated;
@@ -51,6 +54,29 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
     public Snowflake ChannelId => Channel.Id;
     public ObservableCollection<MessageItemViewModel> Messages { get; } = [];
     public ObservableCollection<PendingAttachment> Attachments { get; } = [];
+
+    /// <summary>The member sidebar; only for server channels on user accounts.</summary>
+    public Members.MemberListViewModel? MemberList { get; }
+    public bool HasMemberList => MemberList is not null;
+    public bool ShowsMemberList => MemberList is not null && IsMemberListOpen;
+    private bool _memberListStarted;
+
+    /// <summary>Whether the member sidebar is shown; the list is only requested once it is.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowsMemberList))]
+    private bool _isMemberListOpen;
+
+    partial void OnIsMemberListOpenChanged(bool value)
+    {
+        if (value && MemberList is { } list && !_memberListStarted)
+        {
+            _memberListStarted = true;
+            _ = list.StartAsync();
+        }
+    }
+
+    [RelayCommand]
+    private void ToggleMemberList() => IsMemberListOpen = !IsMemberListOpen;
 
     public string Title => Channel.IsPrivate ? Channel.DisplayName : Channel.Name ?? "";
     public string? Topic => Channel.Topic;
@@ -805,5 +831,6 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
         state.TypingStarted -= OnTypingStarted;
         state.PermissionsChanged -= OnPermissionsChanged;
         _typingTimer?.Dispose();
+        MemberList?.Dispose();
     }
 }

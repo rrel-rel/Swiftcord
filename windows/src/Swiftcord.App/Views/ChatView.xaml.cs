@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Swiftcord.ViewModels.Members;
 using Swiftcord.ViewModels.Messages;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Foundation;
@@ -354,6 +355,19 @@ public sealed partial class ChatView : UserControl
         }
     }
 
+    private void OnMemberRowRealizing(ListViewBase sender, ContainerContentChangingEventArgs args)
+    {
+        if (!args.InRecycleQueue)
+            ViewModel?.MemberList?.EnsureLoaded(args.ItemIndex);
+    }
+
+    private void OnMemberClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is MemberRow member && ViewModel is { } vm
+            && ((ListViewBase)sender).ContainerFromItem(member) is FrameworkElement row)
+            ProfileCard.ShowAt(row, vm.CreateProfile(member.UserId));
+    }
+
     private void OnErrorClosed(InfoBar sender, object args)
     {
         if (ViewModel is { } vm)
@@ -361,4 +375,21 @@ public sealed partial class ChatView : UserControl
     }
 
     #endregion
+}
+
+/// <summary>Chooses the member list template for group headers, members and not-yet-loaded rows.</summary>
+public sealed partial class MemberRowTemplateSelector : DataTemplateSelector
+{
+    public DataTemplate? Group { get; set; }
+    public DataTemplate? Member { get; set; }
+    public DataTemplate? Placeholder { get; set; }
+
+    protected override DataTemplate? SelectTemplateCore(object item) => item switch
+    {
+        MemberGroupRow => Group,
+        MemberRow => Member,
+        _ => Placeholder,
+    };
+
+    protected override DataTemplate? SelectTemplateCore(object item, DependencyObject container) => SelectTemplateCore(item);
 }

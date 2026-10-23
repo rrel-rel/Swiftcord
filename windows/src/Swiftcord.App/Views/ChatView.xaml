@@ -6,6 +6,8 @@
     xmlns:c="using:Swiftcord.App.Controls"
     xmlns:h="using:Swiftcord.App.Helpers"
     xmlns:m="using:Swiftcord.ViewModels.Messages"
+    xmlns:mem="using:Swiftcord.ViewModels.Members"
+    xmlns:views="using:Swiftcord.App.Views"
     AllowDrop="True"
     DragOver="OnDragOver"
     Drop="OnDrop">
@@ -654,6 +656,80 @@
                 </StackPanel>
             </Grid>
         </DataTemplate>
+        <!-- Member list rows -->
+        <DataTemplate x:Key="MemberGroupTemplate" x:DataType="mem:MemberGroupRow">
+            <TextBlock
+                Margin="8,16,0,4"
+                FontSize="12"
+                FontWeight="SemiBold"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Text="{x:Bind Title}"
+                TextTrimming="CharacterEllipsis" />
+        </DataTemplate>
+        <DataTemplate x:Key="MemberTemplate" x:DataType="mem:MemberRow">
+            <Grid
+                Padding="0,4"
+                ColumnSpacing="10"
+                Opacity="{x:Bind h:Ui.OfflineOpacity(IsOffline)}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="32" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid Width="32" Height="32">
+                    <Ellipse>
+                        <Ellipse.Fill>
+                            <ImageBrush Stretch="UniformToFill">
+                                <ImageBrush.ImageSource>
+                                    <BitmapImage DecodePixelWidth="64" UriSource="{x:Bind AvatarUri}" />
+                                </ImageBrush.ImageSource>
+                            </ImageBrush>
+                        </Ellipse.Fill>
+                    </Ellipse>
+                    <Ellipse
+                        Width="12"
+                        Height="12"
+                        Margin="0,0,-2,-2"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Bottom"
+                        Fill="{x:Bind h:Ui.PresenceBrush(Status)}"
+                        Stroke="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+                        StrokeThickness="2"
+                        Visibility="{x:Bind h:Ui.PresenceVisibility(Status)}" />
+                </Grid>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock
+                        Foreground="{x:Bind h:Ui.RoleBrush(Color)}"
+                        Text="{x:Bind Name}"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        Style="{StaticResource SecondaryTextStyle}"
+                        Text="{x:Bind ActivityText}"
+                        TextTrimming="CharacterEllipsis"
+                        Visibility="{x:Bind HasActivity}" />
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="MemberPlaceholderTemplate" x:DataType="mem:MemberPlaceholderRow">
+            <Grid Height="40" Padding="0,4" ColumnSpacing="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="32" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Ellipse Width="32" Height="32" Fill="{ThemeResource ControlFillColorDefaultBrush}" />
+                <Border
+                    Grid.Column="1"
+                    Width="120"
+                    Height="10"
+                    HorizontalAlignment="Left"
+                    Background="{ThemeResource ControlFillColorDefaultBrush}"
+                    CornerRadius="5" />
+            </Grid>
+        </DataTemplate>
+        <views:MemberRowTemplateSelector
+            x:Key="MemberRowTemplateSelector"
+            Group="{StaticResource MemberGroupTemplate}"
+            Member="{StaticResource MemberTemplate}"
+            Placeholder="{StaticResource MemberPlaceholderTemplate}" />
     </UserControl.Resources>
 
     <Grid>
@@ -664,9 +740,40 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Member list (server channels) -->
+        <Grid
+            Grid.Row="1"
+            Grid.RowSpan="4"
+            Grid.Column="1"
+            Width="240"
+            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+            BorderThickness="1,0,0,0"
+            Visibility="{x:Bind ViewModel.ShowsMemberList, Mode=OneWay}">
+            <ProgressRing
+                Width="24"
+                Height="24"
+                Margin="0,24,0,0"
+                VerticalAlignment="Top"
+                IsActive="{x:Bind ViewModel.MemberList.IsLoading, Mode=OneWay}" />
+            <ListView
+                Padding="0,8,0,8"
+                ContainerContentChanging="OnMemberRowRealizing"
+                IsItemClickEnabled="True"
+                ItemClick="OnMemberClick"
+                ItemContainerStyle="{StaticResource SidebarListViewItemStyle}"
+                ItemTemplateSelector="{StaticResource MemberRowTemplateSelector}"
+                ItemsSource="{x:Bind ViewModel.MemberList.Rows, Mode=OneWay}"
+                SelectionMode="None" />
+        </Grid>
 
         <!-- Header -->
         <Grid
+            Grid.ColumnSpan="2"
             Padding="16,0"
             BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
             BorderThickness="0,0,0,1"
@@ -676,7 +783,19 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
+            <ToggleButton
+                Grid.Column="4"
+                VerticalAlignment="Center"
+                AutomationProperties.Name="Member list"
+                Background="Transparent"
+                BorderThickness="0"
+                Content="&#xE716;"
+                FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                IsChecked="{x:Bind ViewModel.IsMemberListOpen, Mode=TwoWay}"
+                ToolTipService.ToolTip="Member list"
+                Visibility="{x:Bind ViewModel.HasMemberList, Mode=OneWay}" />
             <Button
                 x:Name="PinsButton"
                 Grid.Column="3"

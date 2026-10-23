@@ -31,6 +31,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     /// <summary>A message to show once its channel opens (switching servers first goes through SelectGuild).</summary>
     private (Snowflake Channel, Snowflake Message)? _pendingJump;
     private readonly HashSet<long> _expandedFolders = [];
+    /// <summary>The member sidebar stays open or closed as the user moves between channels.</summary>
+    private bool _memberListOpen = true;
 
     public ShellViewModel(DiscordClient client, IUiDispatcher ui, TimeProvider? time = null)
     {
@@ -254,7 +256,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         Sidebar.SelectedChannelId = channelId;
 
         Chat?.Dispose();
-        var chat = new ChatViewModel(_client, _ui, channel, OpenChannel, _time) { IsActive = _windowActive };
+        var chat = new ChatViewModel(_client, _ui, channel, OpenChannel, _time) { IsActive = _windowActive, IsMemberListOpen = _memberListOpen };
+        chat.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ChatViewModel.IsMemberListOpen)) _memberListOpen = chat.IsMemberListOpen;
+        };
         Chat = chat;
         _ = chat.InitializeAsync(jumpTo);
     }
