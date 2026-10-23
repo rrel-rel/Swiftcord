@@ -417,6 +417,7 @@
                         Height="40"
                         Margin="0,2,0,0"
                         VerticalAlignment="Top"
+                        Tapped="OnAuthorTapped"
                         Visibility="{x:Bind IsGroupStart, Mode=OneWay}">
                         <Ellipse.Fill>
                             <ImageBrush Stretch="UniformToFill">
@@ -447,6 +448,7 @@
                             <TextBlock
                                 FontWeight="SemiBold"
                                 Foreground="{x:Bind h:Ui.RoleBrush(AuthorColor)}"
+                                Tapped="OnAuthorTapped"
                                 Text="{x:Bind AuthorName}" />
                             <Border
                                 Padding="4,0"

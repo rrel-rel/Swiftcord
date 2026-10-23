@@ -37,6 +37,11 @@ public sealed class DiscordRestClient : IDisposable
     public Task<User> GetUserAsync(Snowflake userId, CancellationToken ct = default) =>
         SendAsync<User>(HttpMethod.Get, $"users/{userId}", ct: ct);
 
+    /// <summary>A user's full profile; with <paramref name="guildId"/>, their server profile and membership too. User accounts only.</summary>
+    public Task<UserProfile> GetUserProfileAsync(Snowflake userId, Snowflake? guildId = null, CancellationToken ct = default) =>
+        SendAsync<UserProfile>(HttpMethod.Get,
+            $"users/{userId}/profile?with_mutual_guilds=true{(guildId is { } g ? $"&guild_id={g}" : "")}", ct: ct);
+
     /// <summary>The user's protobuf-encoded PreloadedUserSettings, base64; read with <see cref="UserSettingsReader"/>. User accounts only.</summary>
     public async Task<string> GetUserSettingsProtoAsync(CancellationToken ct = default) =>
         (await SendAsync<UserSettingsProtoResponse>(HttpMethod.Get, "users/@me/settings-proto/1", ct: ct).ConfigureAwait(false)).Settings;

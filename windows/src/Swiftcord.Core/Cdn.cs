@@ -32,6 +32,13 @@ public static class Cdn
         return $"{BaseUrl}/embed/avatars/{index}.png";
     }
 
+    public static string? UserBanner(Snowflake userId, string? hash, int size = 600) =>
+        hash is null ? null : $"{BaseUrl}/banners/{userId}/{hash}.{Ext(hash, false)}?size={size}";
+
+    /// <summary>A server-specific profile banner.</summary>
+    public static string? MemberBanner(Snowflake guildId, Snowflake userId, string? hash, int size = 600) =>
+        hash is null ? null : $"{BaseUrl}/guilds/{guildId}/users/{userId}/banners/{hash}.{Ext(hash, false)}?size={size}";
+
     public static string? GuildIcon(Guild guild, int size = 128, bool animate = false) =>
         guild.Icon is { } hash ? $"{BaseUrl}/icons/{guild.Id}/{hash}.{Ext(hash, animate)}?size={size}" : null;
 

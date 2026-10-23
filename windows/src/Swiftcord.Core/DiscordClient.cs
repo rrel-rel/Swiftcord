@@ -82,6 +82,18 @@ public sealed class DiscordClient : IAsyncDisposable
         return messages.OrderBy(m => m.Id).ToList();
     }
 
+    /// <summary>Returns the DM with a user, creating it if there isn't one yet.</summary>
+    public async Task<Channel> OpenDmAsync(Snowflake userId, CancellationToken ct = default)
+    {
+        if (State.PrivateChannels.FirstOrDefault(c => c.Type == ChannelType.DirectMessage && c.Recipients.Any(r => r.Id == userId)) is { } existing)
+            return existing;
+        var channel = await Rest.CreateDmAsync(userId, ct).ConfigureAwait(false);
+        // The gateway sends CHANNEL_CREATE too, but the caller wants to open it now.
+        if (State.GetChannel(channel.Id) is null)
+            State.AddChannel(channel);
+        return State.GetChannel(channel.Id) ?? channel;
+    }
+
     /// <summary>A fresh nonce for matching a sent message to its gateway echo.</summary>
     public static string NewNonce() => Snowflake.FromTime(DateTimeOffset.UtcNow).ToString();
 

@@ -259,7 +259,8 @@ public sealed partial class MarkdownTextBlock : ContentControl
                     inlines.Add(new Run { Text = code.Code, FontFamily = Ui.MonoFont });
                     break;
                 case UserMentionNode user:
-                    AddMention(inlines, "@" + (context?.UserName(user.UserId) ?? user.UserId.ToString()), 0, inLink);
+                    AddMention(inlines, "@" + (context?.UserName(user.UserId) ?? user.UserId.ToString()), 0, inLink,
+                        context is null ? null : anchor => Views.ProfileCard.ShowAt(anchor, context.CreateProfile(user.UserId)));
                     break;
                 case RoleMentionNode role:
                     var (roleName, color) = context?.Role(role.RoleId) ?? (role.RoleId.ToString(), 0);
@@ -267,7 +268,7 @@ public sealed partial class MarkdownTextBlock : ContentControl
                     break;
                 case ChannelMentionNode channel:
                     AddMention(inlines, "#" + (context?.ChannelName(channel.ChannelId) ?? channel.ChannelId.ToString()), 0, inLink,
-                        () => context?.OpenChannel(channel.ChannelId));
+                        _ => context?.OpenChannel(channel.ChannelId));
                     break;
                 case EveryoneMentionNode everyone:
                     AddMention(inlines, everyone.Here ? "@here" : "@everyone", 0, inLink);
@@ -322,7 +323,7 @@ public sealed partial class MarkdownTextBlock : ContentControl
             }
         }
 
-        private static void AddMention(InlineCollection inlines, string text, int color, bool inLink, Action? onClick = null)
+        private static void AddMention(InlineCollection inlines, string text, int color, bool inLink, Action<FrameworkElement>? onClick = null)
         {
             if (inLink)
             {
@@ -333,7 +334,11 @@ public sealed partial class MarkdownTextBlock : ContentControl
             var pill = Pill(text, new SolidColorBrush(Windows.UI.Color.FromArgb(0x30,
                 (byte)(color != 0 ? color >> 16 : 0x58), (byte)(color != 0 ? color >> 8 : 0x65), (byte)(color != 0 ? color : 0xF2))), foreground);
             if (onClick is not null)
-                pill.Tapped += (_, _) => onClick();
+                pill.Tapped += (_, e) =>
+                {
+                    e.Handled = true;
+                    onClick(pill);
+                };
             inlines.Add(new InlineUIContainer { Child = pill });
         }
 

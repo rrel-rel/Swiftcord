@@ -333,6 +333,16 @@ public sealed partial class ChatView : UserControl
         }
     }
 
+    private void OnAuthorTapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: MessageItemViewModel message } anchor && ViewModel is { } vm
+            && !message.IsSystem)
+        {
+            e.Handled = true;
+            ProfileCard.ShowAt(anchor, vm.CreateProfile(message.AuthorId));
+        }
+    }
+
     private void OnErrorClosed(InfoBar sender, object args)
     {
         if (ViewModel is { } vm)

@@ -106,6 +106,9 @@ public static class Ui
 
     public static string ChevronGlyph(bool collapsed) => collapsed ? "\uE76C" : "\uE70D";
 
+    /// <summary>A profile's banner colour; Discord's grey-blue when the user hasn't picked one.</summary>
+    public static Brush BannerBrush(int rgb) => Rgb(rgb > 0 ? rgb : 0x5865F2);
+
     public static Brush PresenceBrush(PresenceStatus status) => status switch
     {
         PresenceStatus.Online => Rgb(0x23A55A),

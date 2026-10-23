@@ -551,6 +551,9 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
 
     #region IMessageContext
 
+    public Profiles.ProfileViewModel CreateProfile(Snowflake userId) =>
+        new(_client, userId, Channel.GuildId, this, id => _openChannel?.Invoke(id, null));
+
     public string UserName(Snowflake userId) => _client.State.GetDisplayName(userId, Channel.GuildId);
 
     public string ChannelName(Snowflake channelId) => _client.State.GetChannel(channelId)?.Name ?? "unknown-channel";
