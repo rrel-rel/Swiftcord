@@ -321,6 +321,8 @@
                                 <MenuFlyoutItem Command="{x:Bind AddReactionCommand}" CommandParameter="😮" Text="😮" />
                                 <MenuFlyoutItem Command="{x:Bind AddReactionCommand}" CommandParameter="😢" Text="😢" />
                                 <MenuFlyoutItem Command="{x:Bind AddReactionCommand}" CommandParameter="🔥" Text="🔥" />
+                                <MenuFlyoutSeparator />
+                                <MenuFlyoutItem Command="{x:Bind PickReactionCommand}" Text="More reactions…" />
                             </MenuFlyoutSubItem>
                             <MenuFlyoutItem Command="{x:Bind ReplyCommand}" Text="Reply">
                                 <MenuFlyoutItem.Icon>
@@ -1016,6 +1018,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Button
                     Margin="4,0,0,0"
@@ -1043,6 +1046,15 @@
                     TextWrapping="Wrap" />
                 <Button
                     Grid.Column="2"
+                    VerticalAlignment="Bottom"
+                    AutomationProperties.Name="Emoji"
+                    Click="OnComposerEmojiClick"
+                    Content="&#xE76E;"
+                    IsEnabled="{x:Bind ViewModel.CanSend, Mode=OneWay}"
+                    Style="{StaticResource IconButtonStyle}"
+                    ToolTipService.ToolTip="Emoji" />
+                <Button
+                    Grid.Column="3"
                     Margin="0,0,4,0"
                     VerticalAlignment="Bottom"
                     AutomationProperties.Name="Send"

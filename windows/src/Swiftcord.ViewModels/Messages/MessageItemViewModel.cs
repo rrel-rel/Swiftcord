@@ -19,6 +19,8 @@ public interface IMessageActions
     Task RetryAsync(MessageItemViewModel message);
     Task JumpToMessageAsync(Snowflake messageId);
     Task TogglePinAsync(MessageItemViewModel message);
+    /// <summary>Asks the view to show the full emoji picker for reacting to this message.</summary>
+    void RequestReactionPicker(MessageItemViewModel message);
 }
 
 public sealed partial class MessageItemViewModel : ObservableObject
@@ -103,6 +105,7 @@ public sealed partial class MessageItemViewModel : ObservableObject
         TogglePinCommand = new AsyncRelayCommand(() => _actions.TogglePinAsync(this), () => CanPin);
         RetryCommand = new AsyncRelayCommand(() => _actions.RetryAsync(this));
         AddReactionCommand = new AsyncRelayCommand<string>(emoji => _actions.AddReactionAsync(this, emoji!));
+        PickReactionCommand = new RelayCommand(() => _actions.RequestReactionPicker(this));
         SetReactions(message.Reactions);
     }
 
@@ -188,6 +191,7 @@ public sealed partial class MessageItemViewModel : ObservableObject
     public string PinMenuText => IsPinned ? "Unpin Message" : "Pin Message";
     public IAsyncRelayCommand RetryCommand { get; }
     public IAsyncRelayCommand<string> AddReactionCommand { get; }
+    public IRelayCommand PickReactionCommand { get; }
 
     /// <summary>Starts a new visual group (shows avatar and name) rather than continuing the previous one.</summary>
     [ObservableProperty]

@@ -135,6 +135,8 @@ public static class Ui
 
     public static Thickness ForwardPadding(bool forwarded) => new(forwarded ? 10 : 0, 0, 0, 0);
 
+    public static double LockedOpacity(bool locked) => locked ? 0.35 : 1;
+
     public static double OfflineOpacity(bool offline) => offline ? 0.45 : 1;
 
     public static double PendingOpacity(bool pending) => pending ? 0.5 : 1;

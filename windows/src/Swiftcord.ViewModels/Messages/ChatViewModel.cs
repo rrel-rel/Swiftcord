@@ -620,13 +620,17 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
         }
     }
 
-    public Task AddReactionAsync(MessageItemViewModel message, string emoji)
+    public Task AddReactionAsync(MessageItemViewModel message, string emoji) =>
+        AddReactionAsync(message, new Emoji { Name = emoji });
+
+    /// <summary>Reacts with a unicode or custom emoji (adding to an existing reaction when there is one).</summary>
+    public Task AddReactionAsync(MessageItemViewModel message, Emoji emoji)
     {
-        var existing = message.Reactions.FirstOrDefault(r => r.Emoji.Id is null && r.Emoji.Name == emoji);
+        var existing = message.Reactions.FirstOrDefault(r => emoji.Id is { } id ? r.Emoji.Id == id : r.Emoji.Id is null && r.Emoji.Name == emoji.Name);
         if (existing is not null)
             return existing.Me ? Task.CompletedTask : ToggleReactionAsync(message, existing);
 
-        var reaction = new ReactionViewModel(new Reaction { Emoji = new Emoji { Name = emoji } },
+        var reaction = new ReactionViewModel(new Reaction { Emoji = emoji },
             r => ToggleReactionAsync(message, r));
         message.Reactions.Add(reaction);
         return ToggleReactionAsync(message, reaction);
@@ -638,6 +642,14 @@ public sealed partial class ChatViewModel : ObservableObject, IMessageContext, I
     #endregion
 
     #region IMessageContext
+
+    /// <summary>Raised when the user wants to pick any emoji to react to a message with.</summary>
+    public event Action<MessageItemViewModel>? ReactionPickerRequested;
+
+    public void RequestReactionPicker(MessageItemViewModel message) => ReactionPickerRequested?.Invoke(message);
+
+    /// <summary>An emoji picker for this channel: its server's emoji first, then other servers' and unicode.</summary>
+    public Emojis.EmojiPickerViewModel CreateEmojiPicker() => new(_client.State, Channel.GuildId);
 
     public Profiles.ProfileViewModel CreateProfile(Snowflake userId) =>
         new(_client, userId, Channel.GuildId, this, id => _openChannel?.Invoke(id, null));

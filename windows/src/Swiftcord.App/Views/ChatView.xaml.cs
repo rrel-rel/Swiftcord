@@ -50,10 +50,14 @@ public sealed partial class ChatView : UserControl
     {
         var view = (ChatView)d;
         if (e.OldValue is ChatViewModel old)
+        {
             old.PropertyChanged -= view.OnViewModelPropertyChanged;
+            old.ReactionPickerRequested -= view.OnReactionPickerRequested;
+        }
         if (e.NewValue is ChatViewModel current)
         {
             current.PropertyChanged += view.OnViewModelPropertyChanged;
+            current.ReactionPickerRequested += view.OnReactionPickerRequested;
             view.ComposerBox.Focus(FocusState.Programmatic);
         }
     }
@@ -382,6 +386,30 @@ public sealed partial class ChatView : UserControl
             e.Handled = true;
             ProfileCard.ShowAt(anchor, vm.CreateProfile(message.AuthorId));
         }
+    }
+
+    private void OnReactionPickerRequested(MessageItemViewModel message)
+    {
+        if (ViewModel is not { } vm) return;
+        var anchor = MessageList.ContainerFromItem(message) as FrameworkElement ?? MessageList;
+        EmojiPicker.ShowAt(anchor, vm.CreateEmojiPicker(), item => _ = vm.AddReactionAsync(message, item.Emoji));
+    }
+
+    private void OnComposerEmojiClick(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } vm) return;
+        var caret = ComposerBox.SelectionStart;
+        EmojiPicker.ShowAt((FrameworkElement)sender, vm.CreateEmojiPicker(), item =>
+        {
+            // Insert at the caret (replacing any selection) and keep typing after it.
+            var text = ComposerBox.Text;
+            var start = Math.Min(caret, text.Length);
+            var end = Math.Min(start + ComposerBox.SelectionLength, text.Length);
+            var insert = item.MessageText + (item.IsCustom ? " " : "");
+            ComposerBox.Text = text[..start] + insert + text[end..];
+            ComposerBox.Focus(FocusState.Programmatic);
+            ComposerBox.SelectionStart = start + insert.Length;
+        });
     }
 
     private void OnPinsOpening(object? sender, object e) => ViewModel?.LoadPinsCommand.Execute(null);

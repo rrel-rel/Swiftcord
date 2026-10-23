@@ -15,6 +15,8 @@ public sealed class User
     public int PublicFlags { get; set; }
     public string? Pronouns { get; set; }
     public string? Bio { get; set; }
+    /// <summary>Nitro tier (0 or absent: none). Only Nitro users can use custom emoji from other servers.</summary>
+    public int? PremiumType { get; set; }
 
     public string DisplayName => string.IsNullOrEmpty(GlobalName) ? Username : GlobalName;
 

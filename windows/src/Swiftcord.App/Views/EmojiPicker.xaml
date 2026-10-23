@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Swiftcord.App.Views.EmojiPicker"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:e="using:Swiftcord.ViewModels.Emojis"
+    xmlns:h="using:Swiftcord.App.Helpers"
+    Width="372"
+    Height="420">
+
+    <UserControl.Resources>
+        <DataTemplate x:Key="EmojiTemplate" x:DataType="e:EmojiItem">
+            <Grid
+                Width="40"
+                Height="40"
+                Opacity="{x:Bind h:Ui.LockedOpacity(IsLocked)}"
+                ToolTipService.ToolTip="{x:Bind ToolTip}">
+                <TextBlock
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    FontFamily="Segoe UI Emoji"
+                    FontSize="24"
+                    Text="{x:Bind Text}"
+                    Visibility="{x:Bind h:Ui.Collapsed(IsCustom)}" />
+                <Image
+                    Width="28"
+                    Height="28"
+                    Visibility="{x:Bind IsCustom}">
+                    <Image.Source>
+                        <BitmapImage DecodePixelWidth="56" UriSource="{x:Bind ImageUri}" />
+                    </Image.Source>
+                </Image>
+            </Grid>
+        </DataTemplate>
+
+        <Style x:Key="EmojiCellStyle" TargetType="GridViewItem" BasedOn="{StaticResource DefaultGridViewItemStyle}">
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid RowSpacing="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TextBox
+            x:Name="SearchBox"
+            KeyDown="OnSearchKeyDown"
+            PlaceholderText="Find the perfect emoji"
+            Text="{x:Bind ViewModel.Query, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+        <!-- Every section, virtualized and grouped -->
+        <GridView
+            x:Name="SectionsGrid"
+            Grid.Row="1"
+            IsItemClickEnabled="True"
+            ItemClick="OnEmojiClick"
+            ItemContainerStyle="{StaticResource EmojiCellStyle}"
+            ItemTemplate="{StaticResource EmojiTemplate}"
+            SelectionMode="None"
+            Visibility="{x:Bind h:Ui.Collapsed(ViewModel.IsSearching), Mode=OneWay}">
+            <GridView.GroupStyle>
+                <GroupStyle>
+                    <GroupStyle.HeaderTemplate>
+                        <DataTemplate x:DataType="e:EmojiSection">
+                            <TextBlock
+                                FontSize="12"
+                                FontWeight="SemiBold"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="{x:Bind Title}" />
+                        </DataTemplate>
+                    </GroupStyle.HeaderTemplate>
+                </GroupStyle>
+            </GridView.GroupStyle>
+        </GridView>
+
+        <!-- Search results -->
+        <GridView
+            Grid.Row="1"
+            IsItemClickEnabled="True"
+            ItemClick="OnEmojiClick"
+            ItemContainerStyle="{StaticResource EmojiCellStyle}"
+            ItemTemplate="{StaticResource EmojiTemplate}"
+            ItemsSource="{x:Bind ViewModel.Results}"
+            SelectionMode="None"
+            Visibility="{x:Bind ViewModel.IsSearching, Mode=OneWay}" />
+        <TextBlock
+            Grid.Row="1"
+            Margin="0,24,0,0"
+            HorizontalAlignment="Center"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            Text="No emoji match that."
+            Visibility="{x:Bind h:Ui.Visible2(ViewModel.IsSearching, ViewModel.HasNoResults), Mode=OneWay}" />
+    </Grid>
+</UserControl>
