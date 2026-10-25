@@ -45,8 +45,13 @@ pub fn sticker(id: Snowflake, format_type: u8) -> Option<String> {
     }
 }
 
-/// A resized copy of an image attachment from Discord's media proxy.
+/// A resized copy of an image from Discord's media proxy. Other hosts don't understand the parameters, so
+/// their URLs are left alone.
 pub fn media_proxy(proxy_url: &str, width: u32, height: u32) -> String {
+    let host = proxy_url.split("://").nth(1).and_then(|r| r.split('/').next()).unwrap_or("");
+    if !(host == "media.discordapp.net" || host.ends_with(".discordapp.net") || host == "cdn.discordapp.com") {
+        return proxy_url.to_owned();
+    }
     let sep = if proxy_url.contains('?') { '&' } else { '?' };
     format!("{proxy_url}{sep}width={width}&height={height}&format=webp")
 }

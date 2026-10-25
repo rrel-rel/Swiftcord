@@ -453,9 +453,9 @@ pub fn is_emoji_grapheme(g: &str) -> bool {
     if (0x1F1E6..=0x1F1FF).contains(&cp) {
         return chars.next().is_some_and(|c| (0x1F1E6..=0x1F1FF).contains(&(c as u32)));
     }
-    let pictographic = matches!(cp,
-        0x1F300..=0x1F5FF | 0x1F600..=0x1F64F | 0x1F680..=0x1F6FF | 0x1F900..=0x1F9FF | 0x1FA70..=0x1FAFF
-        | 0x1F000..=0x1F02F | 0x1F0A0..=0x1F0FF | 0x1F170..=0x1F19A | 0x1F200..=0x1F2FF);
+    // The supplementary planes' emoji blocks (pictographs, emoticons, transport, geometric shapes like 🟢,
+    // supplemental symbols…), minus skin-tone modifiers on their own.
+    let pictographic = matches!(cp, 0x1F000..=0x1FAFF) && !(0x1F3FB..=0x1F3FF).contains(&cp);
     // Older symbols are only emoji when they're followed by the emoji presentation selector.
     let symbol = matches!(cp, 0x2600..=0x27BF | 0x2300..=0x23FF | 0x2B00..=0x2BFF | 0x00A9 | 0x00AE | 0x203C | 0x2049
         | 0x2122 | 0x2139 | 0x2194..=0x21AA | 0x3030 | 0x303D | 0x3297 | 0x3299);
@@ -540,6 +540,7 @@ mod tests {
         assert!(!is_emoji_only(&parse("😀 hi")));
         assert!(is_emoji_only(&parse("🇯🇵")));
         assert!(!is_emoji_only(&parse("©")));
+        assert!(is_emoji_only(&parse("🟢 🟡")));
         assert_eq!(twemoji_name("👍🏽"), "1f44d-1f3fd");
         assert_eq!(twemoji_name("❤️"), "2764");
         assert_eq!(twemoji_name("👨‍👩‍👧"), "1f468-200d-1f469-200d-1f467");

@@ -130,14 +130,26 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
                 }
                 return;
             }
-            let r = ui.add(egui::Label::new(styled(text, style, size, theme::LINK)).sense(Sense::click()));
-            let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
-            let r = if text != url { r.on_hover_text(url) } else { r };
-            if r.hovered() {
-                ui.painter().hline(r.rect.x_range(), r.rect.bottom() - 2.0, egui::Stroke::new(1.0, theme::LINK));
-            }
+            // Bare Discord links to a channel or message show as a pill, as in Discord.
+            let discord = swiftcord_core::links::parse(url).filter(|_| text == url);
+            let r = match discord {
+                Some(link) => {
+                    let name = cx.state.channel(link.channel).map_or_else(|| "unknown".to_owned(), |c| c.label());
+                    let label = if link.message.is_some() { format!("#{name} › 💬") } else { format!("#{name}") };
+                    mention(ui, &label, size).on_hover_text(url)
+                }
+                None => {
+                    let r = ui.add(egui::Label::new(styled(text, style, size, theme::LINK)).sense(Sense::click()));
+                    let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let r = if text != url { r.on_hover_text(url) } else { r };
+                    if r.hovered() {
+                        ui.painter().hline(r.rect.x_range(), r.rect.bottom() - 2.0, egui::Stroke::new(1.0, theme::LINK));
+                    }
+                    r
+                }
+            };
             if r.clicked() {
-                crate::platform::open_url(url);
+                cx.actions.push(Action::OpenLink(url.clone()));
             }
             r.context_menu(|ui| {
                 if ui.button("Copy link").clicked() {

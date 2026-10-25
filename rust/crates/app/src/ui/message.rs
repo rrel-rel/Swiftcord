@@ -315,9 +315,7 @@ fn reply_preview(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
                 let preview: String = if r.content.is_empty() { "Click to see attachment".into() } else { r.content.replace('\n', " ") };
                 let resp = ui.add(egui::Label::new(RichText::new(preview).size(13.0).color(theme::MUTED)).truncate().sense(Sense::click()));
                 if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                    if let Some(view) = cx.uis.chat.get_mut(&cx.channel) {
-                        view.jump_to(r.id);
-                    }
+                    cx.actions.push(Action::JumpTo { channel: cx.channel, message: Some(r.id) });
                 }
             }
             None => {
@@ -408,73 +406,110 @@ fn attachment(ui: &mut Ui, a: &Attachment) {
     });
 }
 
+fn embed_text(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
+    if let Some(p) = e.provider.as_ref().filter(|p| !p.name.is_empty()) {
+        ui.label(RichText::new(&p.name).size(12.0).color(theme::MUTED));
+    }
+    if let Some(a) = e.author.as_ref().filter(|a| !a.name.is_empty()) {
+        ui.horizontal(|ui| {
+            if let Some(icon) = &a.icon_url {
+                widgets::avatar(ui, icon, 20.0);
+            }
+            let r = ui.add(egui::Label::new(RichText::new(&a.name).font(theme::font_semibold(13.5)).color(theme::HEADER)).sense(Sense::click()));
+            if let Some(u) = &a.url {
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    cx.actions.push(Action::OpenLink(u.clone()));
+                }
+            }
+        });
+    }
+    if let Some(t) = &e.title {
+        let rt = RichText::new(t).font(theme::font_semibold(15.5));
+        match &e.url {
+            Some(u) => {
+                if ui.add(egui::Label::new(rt.color(theme::LINK)).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    cx.actions.push(Action::OpenLink(u.clone()));
+                }
+            }
+            None => {
+                ui.label(rt.color(theme::HEADER));
+            }
+        }
+    }
+    let mut mcx = Cx { state: cx.state, guild: cx.guild, message: msg_id, revealed: &mut cx.uis.revealed, actions: cx.actions, size: 14.0, color: theme::TEXT, jumbo: false };
+    if let Some(d) = e.description.as_deref().filter(|d| !d.is_empty()) {
+        md::blocks(ui, &parsed(msg_id, d), &mut mcx);
+    }
+    // Fields: inline ones share rows of up to three.
+    let mut i = 0;
+    while i < e.fields.len() {
+        let n = if e.fields[i].inline { e.fields[i..].iter().take(3).take_while(|f| f.inline).count().max(1) } else { 1 };
+        ui.columns(n, |cols| {
+            for (j, col) in cols.iter_mut().enumerate() {
+                let f = &e.fields[i + j];
+                col.label(RichText::new(&f.name).font(theme::font_semibold(13.5)).color(theme::HEADER));
+                md::blocks(col, &parsed(msg_id, &f.value), &mut mcx);
+            }
+        });
+        i += n;
+    }
+}
+
+/// An animated GIF for a GIF-as-video embed, where the site offers one at a predictable URL.
+fn animated_gif(e: &Embed) -> Option<String> {
+    let v = &e.video.as_ref()?.url;
+    // Tenor names formats by a suffix on the media ID: AAAPo is MP4, AAAAC the full GIF.
+    if v.starts_with("https://media.tenor.com/") && v.ends_with(".mp4") {
+        let (dir, file) = v.rsplit_once('/')?;
+        let dir = dir.strip_suffix("AAAPo")?;
+        return Some(format!("{dir}AAAAC/{}.gif", file.strip_suffix(".mp4")?));
+    }
+    if v.contains("giphy.com/media/") && v.ends_with("/giphy.mp4") {
+        return Some(v.replace("/giphy.mp4", "/giphy.gif"));
+    }
+    None
+}
+
 fn embed(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
     let kind = e.kind.as_deref().unwrap_or("rich");
-    // Bare media links (images, GIFV) render as the media alone.
+    // Bare media links (images, GIFs) render as the media alone.
     if matches!(kind, "image" | "gifv") {
-        if let Some(m) = e.thumbnail.as_ref().or(e.image.as_ref()) {
-            let size = fit(m.width, m.height, MAX_MEDIA);
-            let proxy = m.proxy_url.clone().unwrap_or_else(|| m.url.clone());
-            media(ui, &proxy, e.url.as_deref().unwrap_or(&m.url), size, false, kind == "gifv", None);
+        let Some(m) = e.thumbnail.as_ref().or(e.image.as_ref()) else { return };
+        let size = fit(m.width, m.height, MAX_MEDIA);
+        let target = e.url.as_deref().unwrap_or(&m.url);
+        match animated_gif(e) {
+            Some(gif) => media(ui, &gif, target, size, true, false, None),
+            None => media(ui, m.proxy_url.as_deref().unwrap_or(&m.url), target, size, false, kind == "gifv", None),
         }
         return;
     }
     let bar = e.color.map_or(theme::RAIL, |c| theme::role_color(Some(c)));
-    let r = egui::Frame::new().fill(theme::EMBED_BG).corner_radius(4).inner_margin(egui::Margin { left: 14, right: 14, top: 10, bottom: 12 }).show(ui, |ui| {
-        ui.set_max_width(500.0_f32.min(ui.available_width() - 8.0));
+    // Videos (and images) are shown large below the text; plain thumbnails sit beside it.
+    let video = e.video.is_some() && e.thumbnail.is_some();
+    let side_thumb = e.thumbnail.as_ref().filter(|_| !video && e.image.is_none());
+    let r = egui::Frame::new().fill(theme::EMBED_BG).corner_radius(4).inner_margin(egui::Margin { left: 16, right: 14, top: 10, bottom: 12 }).show(ui, |ui| {
+        ui.set_max_width(520.0_f32.min(ui.available_width() - 8.0));
         ui.spacing_mut().item_spacing.y = 6.0;
-        if let Some(p) = &e.provider {
-            if !p.name.is_empty() {
-                ui.label(RichText::new(&p.name).size(12.0).color(theme::MUTED));
-            }
-        }
-        if let Some(a) = &e.author {
-            ui.horizontal(|ui| {
-                if let Some(icon) = &a.icon_url {
-                    widgets::avatar(ui, icon, 20.0);
-                }
-                ui.label(RichText::new(&a.name).font(theme::font_semibold(13.5)).color(theme::HEADER));
+        ui.horizontal_top(|ui| {
+            let text_w = ui.available_width() - if side_thumb.is_some() { 96.0 } else { 0.0 };
+            ui.vertical(|ui| {
+                ui.set_max_width(text_w);
+                embed_text(ui, e, msg_id, cx);
             });
-        }
-        if let Some(t) = &e.title {
-            let rt = RichText::new(t).font(theme::font_semibold(15.5));
-            match &e.url {
-                Some(u) => {
-                    if ui.add(egui::Label::new(rt.color(theme::LINK)).sense(Sense::click())).clicked() {
-                        crate::platform::open_url(u);
-                    }
-                }
-                None => {
-                    ui.label(rt.color(theme::HEADER));
-                }
+            if let Some(t) = side_thumb {
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                    let size = fit(t.width, t.height, Vec2::splat(80.0));
+                    media(ui, t.proxy_url.as_deref().unwrap_or(&t.url), &t.url, size, false, false, None);
+                });
             }
-        }
-        let mut mcx = Cx { state: cx.state, guild: cx.guild, message: msg_id, revealed: &mut cx.uis.revealed, actions: cx.actions, size: 14.0, color: theme::TEXT, jumbo: false };
-        if let Some(d) = &e.description {
-            md::blocks(ui, &markdown::parse(d), &mut mcx);
-        }
-        // Fields: inline ones share rows of up to three.
-        let mut i = 0;
-        while i < e.fields.len() {
-            let n = if e.fields[i].inline { e.fields[i..].iter().take(3).take_while(|f| f.inline).count().max(1) } else { 1 };
-            ui.columns(n, |cols| {
-                for (j, col) in cols.iter_mut().enumerate() {
-                    let f = &e.fields[i + j];
-                    col.label(RichText::new(&f.name).font(theme::font_semibold(13.5)).color(theme::HEADER));
-                    md::blocks(col, &markdown::parse(&f.value), &mut mcx);
-                }
-            });
-            i += n;
-        }
+        });
         if let Some(img) = &e.image {
-            let size = fit(img.width, img.height, Vec2::new(468.0, 300.0));
+            let size = fit(img.width, img.height, Vec2::new(480.0, 300.0));
             media(ui, img.proxy_url.as_deref().unwrap_or(&img.url), &img.url, size, false, false, None);
-        } else if let Some(t) = &e.thumbnail {
-            let video = e.video.is_some();
-            let max = if video { Vec2::new(468.0, 264.0) } else { Vec2::splat(80.0) };
-            let size = fit(t.width, t.height, max);
+        } else if let Some(t) = e.thumbnail.as_ref().filter(|_| video) {
+            let size = fit(t.width, t.height, Vec2::new(480.0, 270.0));
             let target = e.url.as_deref().unwrap_or(&t.url);
-            media(ui, t.proxy_url.as_deref().unwrap_or(&t.url), target, size, false, video, None);
+            media(ui, t.proxy_url.as_deref().unwrap_or(&t.url), target, size, false, true, None);
         }
         if let Some(f) = &e.footer {
             ui.horizontal(|ui| {
@@ -528,7 +563,8 @@ fn reactions(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
 
 fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, cx: &mut Ctx) {
     let mine = cx.state.me.as_ref().is_some_and(|m| m.id == msg.author.id);
-    let can_delete = mine || cx.perms & perm::MANAGE_MESSAGES != 0;
+    // In DMs (where every permission is granted) only your own messages can be deleted.
+    let can_delete = mine || (cx.guild.is_some() && cx.perms & perm::MANAGE_MESSAGES != 0);
     let mut buttons: Vec<(&str, &str, u8)> = Vec::new();
     if cx.perms & perm::ADD_REACTIONS != 0 {
         buttons.push((icon::EMOJI, "Add Reaction", 0));
@@ -599,7 +635,7 @@ fn context_menu(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         cx.actions.push(Action::Copy(msg.id.to_string()));
         ui.close();
     }
-    if mine || cx.perms & perm::MANAGE_MESSAGES != 0 {
+    if mine || (cx.guild.is_some() && cx.perms & perm::MANAGE_MESSAGES != 0) {
         ui.separator();
         if ui.button(RichText::new("Delete Message").color(theme::RED)).clicked() {
             cx.actions.push(Action::Delete { channel: msg.channel_id, message: msg.id });

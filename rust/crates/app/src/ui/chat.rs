@@ -26,7 +26,8 @@ pub struct ChatView {
     anchor: Option<(Snowflake, f32)>,
     at_bottom: bool,
     scroll_y: f32,
-    jump: Option<Snowflake>,
+    /// A message to scroll to, and how many frames we have tried.
+    jump: Option<(Snowflake, u8)>,
     highlight: Option<(Snowflake, Instant)>,
 }
 
@@ -43,7 +44,7 @@ impl ChatView {
     }
 
     pub fn jump_to(&mut self, id: Snowflake) {
-        self.jump = Some(id);
+        self.jump = Some((id, 0));
     }
 }
 
@@ -168,14 +169,22 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
 
     // Keep the anchor row still if anything above it changed.
     let mut scroll_to = None;
-    if let Some(target) = view.jump.take() {
+    // A jump is retried for a few frames: the scroll area clamps offsets to the previous frame's size, so the
+    // first attempt can fall short while row heights are still being measured.
+    if let Some((target, tries)) = view.jump {
         match rows.iter().position(|r| r.id == target) {
             Some(i) => {
                 scroll_to = Some((tops[i] - ui.available_height() / 3.0).max(0.0));
                 view.at_bottom = false;
-                view.highlight = Some((target, Instant::now()));
+                if tries == 0 {
+                    view.highlight = Some((target, Instant::now()));
+                }
+                view.jump = (tries < 10).then_some((target, tries + 1));
             }
-            None => uis.banner = Some(("That message isn't loaded.".into(), Instant::now())),
+            None => {
+                view.jump = None;
+                uis.banner = Some(("That message isn't loaded.".into(), Instant::now()));
+            }
         }
     } else if !view.at_bottom {
         if let Some((id, old_top)) = view.anchor {
@@ -188,7 +197,7 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
         }
     }
 
-    let mut area = egui::ScrollArea::vertical().id_salt(("history", channel.id)).auto_shrink(false).stick_to_bottom(true);
+    let mut area = egui::ScrollArea::vertical().id_salt(("history", channel.id)).auto_shrink(false);
     // The scroll area clamps its stored offset, but the viewport it hands back uses the requested one, so an
     // offset past the end would hide every row. Clamp it here.
     let max_offset = (total - ui.available_height()).max(0.0);
@@ -249,19 +258,37 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
     }
     view.scroll_y = out.state.clamped_offset().y;
     let max_scroll = (out.content_size.y - out.inner_rect.height()).max(0.0);
-    view.at_bottom = out.state.clamped_offset().y >= max_scroll - 4.0;
+    let at_end = out.state.clamped_offset().y >= max_scroll - 4.0;
+    if view.at_bottom && scroll_to.is_none() {
+        // Following the bottom: the offset can lag while sizes settle, so only the user scrolling or dragging
+        // in the list stops it.
+        let user_moved = ui.input(|i| {
+            let over = i.pointer.hover_pos().is_some_and(|p| out.inner_rect.contains(p));
+            over && (i.is_scrolling() || i.pointer.primary_down())
+        });
+        view.at_bottom = !user_moved || at_end;
+    } else if view.jump.is_none() {
+        view.at_bottom = at_end;
+    }
+    if view.jump.is_some() || (view.at_bottom && !at_end) {
+        ui.ctx().request_repaint();
+    }
     view.anchor = new_anchor;
 
     if viewport.min.y < 800.0 && !history.reached_start && history.loaded {
         actions.push(Action::LoadOlder(channel.id));
     }
+    // After jumping to an old message, newer history loads as you approach the bottom.
+    if history.has_newer && viewport.max.y > total - 800.0 {
+        actions.push(Action::LoadNewer(channel.id));
+    }
 
-    // A "jump to present" pill when scrolled far up.
-    if !view.at_bottom && max_scroll - out.state.clamped_offset().y > 1500.0 {
+    // A "jump to present" pill when scrolled far up or viewing older history.
+    if history.has_newer || (!view.at_bottom && max_scroll - out.state.clamped_offset().y > 1500.0) {
         let rect = Rect::from_center_size(out.inner_rect.center_bottom() - Vec2::new(0.0, 24.0), Vec2::new(150.0, 30.0));
         let r = ui.put(rect, egui::Button::new(RichText::new("Jump to present").color(Color32::WHITE)).fill(theme::BLURPLE).corner_radius(15));
         if r.clicked() {
-            view.scroll_to_bottom();
+            actions.push(Action::JumpToPresent(channel.id));
             ui.ctx().request_repaint();
         }
     }

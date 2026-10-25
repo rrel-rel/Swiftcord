@@ -269,6 +269,16 @@ impl Rest {
         Ok(parse_lenient_list(&text)?)
     }
 
+    /// Up to `limit` messages newer than `after`.
+    pub async fn messages_after(&self, channel: Snowflake, after: Snowflake, limit: u8) -> Result<Vec<Message>> {
+        let text = self
+            .send(Method::GET, &format!("channels/{channel}/messages?limit={}&after={after}", limit.clamp(1, 100)), Body::None)
+            .await?
+            .text()
+            .await?;
+        Ok(parse_lenient_list(&text)?)
+    }
+
     pub async fn messages_around(&self, channel: Snowflake, around: Snowflake) -> Result<Vec<Message>> {
         let text = self
             .send(Method::GET, &format!("channels/{channel}/messages?limit=50&around={around}"), Body::None)

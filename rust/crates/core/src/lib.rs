@@ -3,6 +3,7 @@
 pub mod cdn;
 pub mod events;
 pub mod gateway;
+pub mod links;
 pub mod markdown;
 pub mod models;
 pub mod permissions;

@@ -23,6 +23,8 @@ pub const MAX_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 pub enum AppEvent {
     Gateway(GatewayOutput),
     History { channel: Snowflake, result: Result<Vec<Message>, String> },
+    Newer { channel: Snowflake, result: Result<Vec<Message>, String> },
+    Around { channel: Snowflake, message: Snowflake, result: Result<Vec<Message>, String> },
     Sent { channel: Snowflake, nonce: Snowflake, result: Result<Message, String> },
     Error(String),
     Token(String),
@@ -58,6 +60,11 @@ pub enum Action {
     ToggleMute,
     ToggleDeafen,
     Copy(String),
+    /// A clicked link: Discord channel/message links open in the app, others in the browser.
+    OpenLink(String),
+    JumpTo { channel: Snowflake, message: Option<Snowflake> },
+    LoadNewer(Snowflake),
+    JumpToPresent(Snowflake),
     LogOut,
     StartQrLogin,
     SaveSettings(crate::settings::Settings),
@@ -280,6 +287,26 @@ impl App {
                     }
                 }
             }
+            AppEvent::Newer { channel, result } => {
+                self.ui.loading.remove(&channel);
+                let Some(s) = &mut self.session else { return };
+                match result {
+                    Ok(page) => s.state.add_newer(channel, page, HISTORY_PAGE as usize),
+                    Err(e) => self.banner(format!("Couldn't load messages: {e}")),
+                }
+            }
+            AppEvent::Around { channel, message, result } => {
+                self.ui.loading.remove(&channel);
+                let Some(s) = &mut self.session else { return };
+                match result {
+                    Ok(page) if page.iter().any(|m| m.id == message) => {
+                        s.state.set_around(channel, page);
+                        self.ui.chat.entry(channel).or_default().jump_to(message);
+                    }
+                    Ok(_) => self.banner("That message was deleted or isn't available."),
+                    Err(e) => self.banner(format!("Couldn't open that message: {e}")),
+                }
+            }
             AppEvent::Sent { channel, nonce, result } => {
                 let Some(s) = &mut self.session else { return };
                 match result {
@@ -371,6 +398,9 @@ impl App {
 
     fn on_ready(&mut self) {
         let Some(s) = &mut self.session else { return };
+        if crate::demo::enabled() {
+            crate::demo::install(&mut s.state);
+        }
         // The selection may point at something that no longer exists after a fresh READY.
         if let Some(g) = self.ui.guild {
             if s.state.guild(g).is_none() {
@@ -716,6 +746,52 @@ impl App {
                 crate::voice_glue::update_self_state(self);
             }
             Action::Copy(text) => self.ctx.copy_text(text),
+            Action::OpenLink(url) => match swiftcord_core::links::parse(&url) {
+                Some(link) => self.apply(Action::JumpTo { channel: link.channel, message: link.message }),
+                None => platform::open_url(&url),
+            },
+            Action::JumpTo { channel, message } => {
+                let known = self.session.as_ref().is_some_and(|s| s.state.channel(channel).is_some());
+                if !known {
+                    self.banner("You don't have access to that channel.");
+                    return;
+                }
+                self.apply(Action::SelectChannel(channel));
+                let Some(message) = message else { return };
+                let Some(s) = &self.session else { return };
+                if s.state.message(channel, message).is_some() {
+                    self.ui.chat.entry(channel).or_default().jump_to(message);
+                    return;
+                }
+                // Not loaded: fetch the history around it instead.
+                self.ui.loading.insert(channel);
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    let result = rest.messages_around(channel, message).await.map_err(|e| e.to_string());
+                    AppEvent::Around { channel, message, result }
+                });
+            }
+            Action::LoadNewer(channel) => {
+                let Some(s) = &self.session else { return };
+                let Some(newest) = s.state.messages(channel).filter(|m| m.has_newer).and_then(|m| m.list.keys().next_back().copied()) else { return };
+                if !self.ui.loading.insert(channel) {
+                    return;
+                }
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    let result = rest.messages_after(channel, newest, HISTORY_PAGE).await.map_err(|e| e.to_string());
+                    AppEvent::Newer { channel, result }
+                });
+            }
+            Action::JumpToPresent(channel) => {
+                if let Some(s) = &mut self.session {
+                    if s.state.messages(channel).is_some_and(|m| m.has_newer) {
+                        s.state.reset_history(channel);
+                        self.ensure_history(channel);
+                    }
+                }
+                self.ui.chat.entry(channel).or_default().scroll_to_bottom();
+            }
             Action::LogOut => {
                 crate::voice_glue::leave(self);
                 self.end_session(true);

@@ -40,6 +40,9 @@ pub struct ChannelMessages {
     pub reached_start: bool,
     /// History has been fetched at least once since the channel's cache was last reset.
     pub loaded: bool,
+    /// Showing older history (e.g. after jumping to a linked message) without the latest messages, which are
+    /// loaded as the user scrolls down. New messages aren't added meanwhile, to avoid a gap.
+    pub has_newer: bool,
 }
 
 #[derive(Default)]
@@ -356,6 +359,31 @@ impl State {
         let entry = self.messages.entry(channel).or_default();
         entry.loaded = true;
         entry.reached_start |= reached_start;
+        for m in page {
+            entry.list.insert(m.id, m);
+        }
+    }
+
+    /// Replaces a channel's history with a page centred on a message (oldest first or newest first).
+    pub fn set_around(&mut self, channel: Snowflake, page: Vec<Message>) {
+        let latest = self.channels.get(&channel).and_then(|c| c.last_message_id);
+        for m in &page {
+            self.cache_author(m);
+        }
+        let has_newer = latest.is_some_and(|l| !page.iter().any(|m| m.id >= l));
+        let list = page.into_iter().map(|m| (m.id, m)).collect();
+        self.messages.insert(channel, ChannelMessages { list, reached_start: false, loaded: true, has_newer });
+    }
+
+    /// Adds a page of newer messages (fetched with `after`, which the API returns newest first).
+    pub fn add_newer(&mut self, channel: Snowflake, page: Vec<Message>, requested: usize) {
+        for m in &page {
+            self.cache_author(m);
+        }
+        let Some(entry) = self.messages.get_mut(&channel) else { return };
+        if page.len() < requested {
+            entry.has_newer = false;
+        }
         for m in page {
             entry.list.insert(m.id, m);
         }
@@ -693,7 +721,7 @@ impl State {
                 entry.mention_count += 1;
             }
         }
-        if let Some(list) = self.messages.get_mut(&channel_id) {
+        if let Some(list) = self.messages.get_mut(&channel_id).filter(|l| !l.has_newer) {
             // Replace the optimistic copy of a message we sent.
             if let Some(nonce) = m.nonce_str().and_then(|n| n.parse::<u64>().ok()) {
                 list.list.remove(&Snowflake(nonce));
