@@ -800,7 +800,7 @@ impl App {
             Action::StartQrLogin => self.start_qr_login(),
             Action::OpenSettings => {
                 let (inputs, outputs) = swiftcord_voice::list_devices();
-                self.ui.settings_draft = Some(ui::settings::Draft { settings: self.settings.clone(), inputs, outputs });
+                self.ui.settings_draft = Some(ui::settings::Draft { settings: self.settings.clone(), inputs, outputs, mic_test: None });
             }
             Action::SaveSettings(s) => {
                 let vad = s.vad_threshold_db;

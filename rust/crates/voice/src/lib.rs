@@ -5,6 +5,7 @@ pub mod audio;
 pub mod codec;
 mod connection;
 pub mod rtp;
+pub mod transmit;
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -113,6 +114,88 @@ impl Voice {
 
     pub fn disconnect(&self) {
         let _ = self.cmd.send(connection::Cmd::Disconnect);
+    }
+}
+
+/// Plays your microphone back through the same gate, Opus encoder, jitter buffer and decoder a call uses,
+/// without connecting anywhere, so you can hear what others would and set the sensitivity.
+pub struct MicTest {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    level: Arc<std::sync::atomic::AtomicU32>,
+    open: Arc<std::sync::atomic::AtomicBool>,
+    threshold: Arc<std::sync::atomic::AtomicU32>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    errors: std::sync::mpsc::Receiver<String>,
+    _io: audio::AudioIo,
+}
+
+impl MicTest {
+    pub fn start(devices: Devices, threshold_db: f32) -> MicTest {
+        use std::sync::atomic::{AtomicBool, AtomicU32};
+        let mixer = Arc::new(audio::Mixer::default());
+        let (mic_tx, mic_rx) = std::sync::mpsc::sync_channel(256);
+        let (io, errors) = audio::start(devices, mic_tx, mixer.clone(), Arc::new(AtomicBool::new(false)));
+        let stop = Arc::new(AtomicBool::new(false));
+        let level = Arc::new(AtomicU32::new((-100f32).to_bits()));
+        let open = Arc::new(AtomicBool::new(false));
+        let threshold = Arc::new(AtomicU32::new(threshold_db.to_bits()));
+        let (s, l, o, t) = (stop.clone(), level.clone(), open.clone(), threshold.clone());
+        let thread = std::thread::spawn(move || {
+            let Some(mut tx) = transmit::Transmitter::new(64_000) else { return };
+            let mut pending = Vec::new();
+            let mut seq = 0u16;
+            while !s.load(Ordering::Relaxed) {
+                let Ok(chunk) = mic_rx.recv_timeout(Duration::from_millis(100)) else { continue };
+                pending.extend_from_slice(&chunk);
+                while pending.len() >= codec::FRAME {
+                    let frame: Vec<f32> = pending.drain(..codec::FRAME).collect();
+                    let (out, _) = tx.process(frame, false, f32::from_bits(t.load(Ordering::Relaxed)));
+                    l.store(tx.level_db.to_bits(), Ordering::Relaxed);
+                    o.store(tx.is_open(), Ordering::Relaxed);
+                    if let transmit::Output::Audio(packets) = out {
+                        for p in packets {
+                            mixer.push(0, seq, p);
+                            seq = seq.wrapping_add(1);
+                        }
+                    }
+                }
+            }
+        });
+        MicTest { stop, level, open, threshold, thread: Some(thread), errors, _io: io }
+    }
+
+    /// The microphone's current level in dBFS.
+    pub fn level_db(&self) -> f32 {
+        f32::from_bits(self.level.load(Ordering::Relaxed))
+    }
+
+    /// Whether the voice-activity gate is open (you'd be transmitting).
+    pub fn transmitting(&self) -> bool {
+        self.open.load(Ordering::Relaxed)
+    }
+
+    pub fn set_threshold(&self, db: f32) {
+        self.threshold.store(db.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn errors(&self) -> Vec<String> {
+        self.errors.try_iter().collect()
+    }
+}
+
+impl Drop for MicTest {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+impl Voice {
+    /// The microphone's current level in dBFS.
+    pub fn input_level_db(&self) -> f32 {
+        f32::from_bits(self.shared.input_db.load(Ordering::Relaxed))
     }
 }
 

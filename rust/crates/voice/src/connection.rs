@@ -16,7 +16,8 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
 use crate::audio::{self, Mixer};
-use crate::codec::{self, Decoder, Encoder, FRAME};
+use crate::codec::{self, FRAME};
+use crate::transmit::{Output, Transmitter};
 use crate::rtp::{self, Cipher, Mode};
 use crate::{ConnectInfo, Event, Settings};
 
@@ -54,6 +55,8 @@ pub(crate) struct Shared {
     pub mixer: Arc<Mixer>,
     pub ping_ms: AtomicU32,
     pub self_speaking: AtomicBool,
+    /// The microphone level in dBFS (f32 bits), for meters.
+    pub input_db: AtomicU32,
     /// Voice-activity threshold in dBFS × -1 (so it fits an atomic), e.g. 50 for -50 dBFS.
     pub threshold: AtomicU16,
     pub dave: Mutex<Dave>,
@@ -71,6 +74,7 @@ impl Shared {
             mixer: Arc::new(Mixer::default()),
             ping_ms: AtomicU32::new(0),
             self_speaking: AtomicBool::new(false),
+            input_db: AtomicU32::new((-100f32).to_bits()),
             threshold: AtomicU16::new((-settings.vad_threshold_db).clamp(0.0, 100.0) as u16),
             dave: Mutex::new(Dave::default()),
             ssrc_users: Mutex::new(HashMap::new()),
@@ -121,7 +125,7 @@ impl Running {
     fn start(&mut self, media: &Media, cipher: Cipher, settings: &Settings, shared: &Arc<Shared>, cmd: &mpsc::UnboundedSender<Cmd>, events: &Arc<dyn Fn(Event) + Send + Sync>) {
         self.stop(shared);
         let cipher = Arc::new(cipher);
-        let (mic_tx, mic_rx) = std::sync::mpsc::sync_channel(64);
+        let (mic_tx, mic_rx) = std::sync::mpsc::sync_channel(256);
         let (io, errors) = audio::start(settings.devices.clone(), mic_tx, shared.mixer.clone(), shared.deafened.clone());
         self.audio = Some(io);
         self.threads.push(spawn_sender(&media.socket, cipher.clone(), media.ssrc, mic_rx, shared.clone(), cmd.clone()));
@@ -558,21 +562,17 @@ fn spawn_sender(
     std::thread::Builder::new()
         .name("swiftcord-voice-send".into())
         .spawn(move || {
-            let Some(mut encoder) = Encoder::new(64_000) else { return };
+            let Some(mut tx) = Transmitter::new(64_000) else { return };
             let mut pending: Vec<f32> = Vec::with_capacity(FRAME * 4);
-            let mut packet = [0u8; 1400];
+            // The RTP timestamp advances with every captured frame, sent or not, so receivers see real time.
             let (mut seq, mut ts, mut counter) = (rand::random::<u16>(), rand::random::<u32>(), 0u32);
-            let mut speaking = false;
-            let mut hangover = 0u32;
-            let mut silence_left = 0u32;
             let mut last_keepalive = Instant::now();
-            let send = |payload: &[u8], seq: &mut u16, ts: &mut u32, counter: &mut u32| {
-                if let Some(p) = rtp::seal(&cipher, rtp::OPUS_PAYLOAD_TYPE, *seq, *ts, ssrc, *counter, payload) {
+            let mut send = |payload: &[u8], ts: u32| {
+                if let Some(p) = rtp::seal(&cipher, rtp::OPUS_PAYLOAD_TYPE, seq, ts, ssrc, counter, payload) {
                     let _ = socket.send(&p);
                 }
-                *seq = seq.wrapping_add(1);
-                *ts = ts.wrapping_add(FRAME as u32);
-                *counter = counter.wrapping_add(1);
+                seq = seq.wrapping_add(1);
+                counter = counter.wrapping_add(1);
             };
             while !shared.stop.load(Ordering::Relaxed) {
                 let chunk = match mic.recv_timeout(Duration::from_millis(100)) {
@@ -590,50 +590,45 @@ fn spawn_sender(
                 pending.extend_from_slice(&chunk);
                 while pending.len() >= FRAME {
                     let frame: Vec<f32> = pending.drain(..FRAME).collect();
+                    ts = ts.wrapping_add(FRAME as u32);
                     let muted = shared.muted.load(Ordering::Relaxed) || shared.deafened.load(Ordering::Relaxed);
-                    let rms = (frame.iter().map(|s| s * s).sum::<f32>() / FRAME as f32).sqrt();
-                    let db = 20.0 * rms.max(1e-9).log10();
                     let threshold = -(shared.threshold.load(Ordering::Relaxed) as f32);
-                    let active = !muted && db > threshold;
-                    if active {
-                        hangover = 15; // Keep transmitting 300 ms past the last loud frame.
-                    } else {
-                        hangover = hangover.saturating_sub(1);
-                    }
-                    let transmit = !muted && hangover > 0;
-
-                    if transmit != speaking {
-                        speaking = transmit;
-                        shared.self_speaking.store(speaking, Ordering::Relaxed);
-                        if speaking {
+                    let (out, change) = tx.process(frame, muted, threshold);
+                    shared.input_db.store(tx.level_db.to_bits(), Ordering::Relaxed);
+                    match change {
+                        Some(true) => {
+                            shared.self_speaking.store(true, Ordering::Relaxed);
                             let _ = cmd.send(Cmd::Speaking(true));
-                        } else {
-                            silence_left = 5;
                         }
-                    }
-                    if transmit {
-                        let Some(n) = encoder.encode(&frame, &mut packet) else { continue };
-                        let mut dave = shared.dave.lock();
-                        let protected = if dave.active() {
-                            match dave.session.as_mut().filter(|s| s.is_ready()).map(|s| s.encrypt_opus(&packet[..n])) {
-                                Some(Ok(p)) => Some(p.into_owned()),
-                                // Never fall back to sending unencrypted audio into an E2EE call.
-                                _ => None,
-                            }
-                        } else {
-                            Some(packet[..n].to_vec())
-                        };
-                        drop(dave);
-                        if let Some(p) = protected {
-                            send(&p, &mut seq, &mut ts, &mut counter);
-                            last_keepalive = Instant::now();
-                        }
-                    } else if silence_left > 0 {
-                        send(&codec::SILENCE, &mut seq, &mut ts, &mut counter);
-                        silence_left -= 1;
-                        if silence_left == 0 {
+                        Some(false) => {
+                            shared.self_speaking.store(false, Ordering::Relaxed);
                             let _ = cmd.send(Cmd::Speaking(false));
                         }
+                        None => {}
+                    }
+                    match out {
+                        Output::Audio(packets) => {
+                            let first_ts = ts.wrapping_sub(FRAME as u32 * (packets.len() as u32 - 1));
+                            for (i, opus) in packets.iter().enumerate() {
+                                let mut dave = shared.dave.lock();
+                                let protected = if dave.active() {
+                                    match dave.session.as_mut().filter(|s| s.is_ready()).map(|s| s.encrypt_opus(opus)) {
+                                        Some(Ok(p)) => Some(p.into_owned()),
+                                        // Never fall back to sending unencrypted audio into an E2EE call.
+                                        _ => None,
+                                    }
+                                } else {
+                                    Some(opus.clone())
+                                };
+                                drop(dave);
+                                if let Some(p) = protected {
+                                    send(&p, first_ts.wrapping_add(FRAME as u32 * i as u32));
+                                    last_keepalive = Instant::now();
+                                }
+                            }
+                        }
+                        Output::Silence => send(&codec::SILENCE, ts),
+                        Output::Nothing => {}
                     }
                 }
             }
@@ -649,8 +644,6 @@ fn spawn_receiver(socket: &Arc<UdpSocket>, cipher: Arc<Cipher>, shared: Arc<Shar
         .spawn(move || {
             let _ = socket.set_read_timeout(Some(Duration::from_millis(250)));
             let mut buf = [0u8; 4096];
-            let mut decoders: HashMap<u32, (Decoder, u16)> = HashMap::new();
-            let mut pcm = vec![0f32; FRAME * 2 * 6];
             while !shared.stop.load(Ordering::Relaxed) {
                 let n = match socket.recv(&mut buf) {
                     Ok(n) => n,
@@ -683,22 +676,8 @@ fn spawn_receiver(socket: &Arc<UdpSocket>, cipher: Arc<Cipher>, shared: Arc<Shar
                 if let Some(u) = user {
                     shared.last_heard.lock().insert(u, Instant::now());
                 }
-                let entry = decoders.entry(p.ssrc).or_insert_with(|| (Decoder::new().expect("opus decoder"), p.seq.wrapping_sub(1)));
-                let (dec, last_seq) = entry;
-                // Conceal up to three lost packets; larger gaps are a pause, not loss.
-                let gap = p.seq.wrapping_sub(*last_seq).wrapping_sub(1);
-                if (1..=3).contains(&gap) {
-                    for _ in 0..gap {
-                        let k = dec.decode(None, &mut pcm);
-                        shared.mixer.push(p.ssrc, &pcm[..k]);
-                    }
-                }
-                if gap > 0x8000 {
-                    continue; // Late, out-of-order packet.
-                }
-                *last_seq = p.seq;
-                let k = dec.decode(Some(&opus), &mut pcm);
-                shared.mixer.push(p.ssrc, &pcm[..k]);
+                // Decoding happens at playback, in the jitter buffer.
+                shared.mixer.push(p.ssrc, p.seq, opus);
             }
         })
         .expect("voice receive thread")

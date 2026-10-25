@@ -4,7 +4,7 @@
 //! the call ends. Capture hands mono 48 kHz samples to the sender over a channel; playback pulls from the
 //! [`Mixer`] that the receiver fills.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
 use parking_lot::Mutex;
 
-use crate::codec::SAMPLE_RATE;
+use crate::codec::{Decoder, FRAME, SAMPLE_RATE};
 
 /// Linear resampling: plenty for voice, and nearly free.
 struct Resampler {
@@ -59,34 +59,137 @@ impl Resampler {
     }
 }
 
-/// One remote speaker's decoded audio (48 kHz interleaved stereo) waiting to be played.
-struct Source {
-    buf: VecDeque<f32>,
-    /// Playback starts after a little audio has buffered, to absorb network jitter.
-    primed: bool,
-    last_push: Instant,
+/// One remote speaker: a jitter buffer of Opus packets, decoded as they're played.
+///
+/// Packets wait until `target` frames are buffered, then play in sequence order. A missing packet is
+/// concealed by the decoder (packet-loss concealment) instead of leaving a gap; if the buffer runs dry while
+/// the speaker is still sending, `target` grows so the next run has more cushion, and shrinks again after a
+/// stretch without trouble.
+struct Stream {
+    decoder: Decoder,
+    packets: BTreeMap<u64, Vec<u8>>,
+    /// Highest extended sequence number seen, for unwrapping 16-bit sequence numbers.
+    highest: Option<u64>,
+    next: u64,
+    pcm: VecDeque<f32>,
+    playing: bool,
+    target: usize,
+    concealed: u32,
+    last_arrival: Instant,
+    last_underrun: Instant,
+}
+
+const MIN_TARGET: usize = 2;
+const MAX_TARGET: usize = 12;
+/// More than this many frames beyond the target are skipped to catch up (we've fallen behind).
+const MAX_BACKLOG: usize = 25;
+
+impl Stream {
+    fn new() -> Option<Self> {
+        Some(Self {
+            decoder: Decoder::new()?,
+            packets: BTreeMap::new(),
+            highest: None,
+            next: 0,
+            pcm: VecDeque::new(),
+            playing: false,
+            target: 3,
+            concealed: 0,
+            last_arrival: Instant::now(),
+            last_underrun: Instant::now(),
+        })
+    }
+
+    fn unwrap_seq(&self, seq: u16) -> u64 {
+        let Some(h) = self.highest else { return (1 << 16) + seq as u64 };
+        // Pick the candidate nearest the highest seen.
+        let base = h & !0xffff;
+        [base.wrapping_sub(1 << 16), base, base + (1 << 16)]
+            .into_iter()
+            .map(|b| b + seq as u64)
+            .min_by_key(|&c| c.abs_diff(h))
+            .unwrap()
+    }
+
+    fn push(&mut self, seq: u16, opus: Vec<u8>) {
+        let ext = self.unwrap_seq(seq);
+        self.last_arrival = Instant::now();
+        if self.playing && ext < self.next {
+            return; // Too late; already concealed.
+        }
+        self.highest = Some(self.highest.map_or(ext, |h| h.max(ext)));
+        self.packets.insert(ext, opus);
+        if self.packets.len() > self.target + MAX_BACKLOG {
+            // Far behind (e.g. after a stall): drop down to the target and carry on from there.
+            while self.packets.len() > self.target {
+                self.packets.pop_first();
+            }
+            self.next = *self.packets.keys().next().unwrap();
+            self.pcm.clear();
+        }
+    }
+
+    /// Decodes the next frame into `pcm`; false when there's nothing to play.
+    fn decode_next(&mut self, scratch: &mut [f32]) -> bool {
+        if !self.playing {
+            if self.packets.len() < self.target {
+                return false;
+            }
+            self.playing = true;
+            self.next = *self.packets.keys().next().unwrap();
+            self.concealed = 0;
+        }
+        let n = if let Some(p) = self.packets.remove(&self.next) {
+            self.concealed = 0;
+            self.decoder.decode(Some(&p), scratch)
+        } else if !self.packets.is_empty() || (self.concealed < 3 && self.last_arrival.elapsed() < Duration::from_millis(80)) {
+            // Lost or late: conceal. After several concealed frames with later packets waiting, skip ahead.
+            self.concealed += 1;
+            if self.concealed > 5 {
+                if let Some(&first) = self.packets.keys().next() {
+                    self.next = first;
+                    self.concealed = 0;
+                    return true;
+                }
+            }
+            // Conceal exactly one frame (the decoder would otherwise fill the whole buffer).
+            self.decoder.decode(None, &mut scratch[..FRAME * 2])
+        } else {
+            // Ran dry. If they're still talking, the buffer was too shallow: deepen it.
+            self.playing = false;
+            if self.last_arrival.elapsed() < Duration::from_millis(60) {
+                self.target = (self.target + 1).min(MAX_TARGET);
+                self.last_underrun = Instant::now();
+            }
+            return false;
+        };
+        self.next += 1;
+        if self.last_underrun.elapsed() > Duration::from_secs(15) && self.target > MIN_TARGET {
+            self.target -= 1;
+            self.last_underrun = Instant::now();
+        }
+        self.pcm.extend(&scratch[..n]);
+        true
+    }
 }
 
 /// Mixes every remote speaker into the output.
 #[derive(Default)]
 pub struct Mixer {
-    sources: Mutex<HashMap<u32, Source>>,
+    streams: Mutex<HashMap<u32, Stream>>,
     /// Per-SSRC gain, set from per-user volume.
     gains: Mutex<HashMap<u32, f32>>,
 }
 
-/// 60 ms of stereo audio before starting a source; at most 300 ms queued (older audio is dropped).
-const PRIME: usize = 960 * 2 * 3;
-const MAX_QUEUE: usize = 960 * 2 * 15;
-
 impl Mixer {
-    pub fn push(&self, ssrc: u32, stereo: &[f32]) {
-        let mut sources = self.sources.lock();
-        let s = sources.entry(ssrc).or_insert_with(|| Source { buf: VecDeque::new(), primed: false, last_push: Instant::now() });
-        s.buf.extend(stereo);
-        s.last_push = Instant::now();
-        let excess = s.buf.len().saturating_sub(MAX_QUEUE);
-        s.buf.drain(..excess);
+    /// Queues a received Opus packet.
+    pub fn push(&self, ssrc: u32, seq: u16, opus: Vec<u8>) {
+        let mut streams = self.streams.lock();
+        if !streams.contains_key(&ssrc) {
+            let Some(s) = Stream::new() else { return };
+            streams.insert(ssrc, s);
+        }
+        streams.get_mut(&ssrc).unwrap().push(seq, opus);
     }
 
     pub fn set_gain(&self, ssrc: u32, gain: f32) {
@@ -94,34 +197,32 @@ impl Mixer {
     }
 
     pub fn remove(&self, ssrc: u32) {
-        self.sources.lock().remove(&ssrc);
+        self.streams.lock().remove(&ssrc);
     }
 
     pub fn clear(&self) {
-        self.sources.lock().clear();
+        self.streams.lock().clear();
     }
 
     /// Fills `out` (interleaved stereo at 48 kHz) with the mix.
     fn mix(&self, out: &mut [f32]) {
         out.fill(0.0);
         let gains = self.gains.lock().clone();
-        let mut sources = self.sources.lock();
-        sources.retain(|_, s| s.last_push.elapsed() < Duration::from_secs(5) || !s.buf.is_empty());
-        for (ssrc, s) in sources.iter_mut() {
-            if !s.primed {
-                if s.buf.len() < PRIME {
-                    continue;
-                }
-                s.primed = true;
-            }
+        let mut streams = self.streams.lock();
+        streams.retain(|_, s| s.last_arrival.elapsed() < Duration::from_secs(30));
+        let mut scratch = [0f32; FRAME * 2 * 6];
+        for (ssrc, s) in streams.iter_mut() {
             let g = gains.get(ssrc).copied().unwrap_or(1.0);
-            let n = out.len().min(s.buf.len());
-            for (o, v) in out.iter_mut().zip(s.buf.drain(..n)) {
-                *o += v * g;
-            }
-            if s.buf.is_empty() {
-                // Underrun: wait for a fresh cushion rather than stuttering sample by sample.
-                s.primed = false;
+            let mut i = 0;
+            while i < out.len() {
+                if s.pcm.is_empty() && !s.decode_next(&mut scratch) {
+                    break;
+                }
+                let n = (out.len() - i).min(s.pcm.len());
+                for (o, v) in out[i..i + n].iter_mut().zip(s.pcm.drain(..n)) {
+                    *o += v * g;
+                }
+                i += n;
             }
         }
         for o in out.iter_mut() {
@@ -213,6 +314,7 @@ fn build_input(device: &cpal::Device, mic: SyncSender<Vec<f32>>, errors: SyncSen
     tracing::info!("microphone: {} ch @ {rate} Hz ({format:?})", channels);
     let mut resampler = Resampler::new(rate, SAMPLE_RATE, 1);
     let mut mono = Vec::new();
+    let mut dropped = 0u64;
     let mut process = move |samples: &mut dyn Iterator<Item = f32>| {
         mono.clear();
         let mut acc = 0.0;
@@ -226,7 +328,12 @@ fn build_input(device: &cpal::Device, mic: SyncSender<Vec<f32>>, errors: SyncSen
         let mut out = Vec::with_capacity(mono.len() * 2);
         resampler.process(&mono, &mut out);
         // If the sender falls behind, drop audio rather than block the device thread.
-        let _ = mic.try_send(out);
+        if mic.try_send(out).is_err() {
+            dropped += 1;
+            if dropped % 50 == 1 {
+                tracing::warn!("microphone audio dropped ({dropped} chunks): the sender is falling behind");
+            }
+        }
     };
     let err = move |e: cpal::Error| {
         let _ = errors.try_send(format!("Microphone error: {e}"));
@@ -326,16 +433,70 @@ mod tests {
         assert!(out.iter().skip(2).all(|&s| (s - 0.5).abs() < 1e-6));
     }
 
+    fn packets(n: usize) -> Vec<Vec<u8>> {
+        let mut enc = crate::codec::Encoder::new(64_000).unwrap();
+        let mut buf = [0u8; 1400];
+        (0..n)
+            .map(|f| {
+                let pcm: Vec<f32> = (0..FRAME).map(|i| ((f * FRAME + i) as f32 * 0.06).sin() * 0.5).collect();
+                let k = enc.encode(&pcm, &mut buf).unwrap();
+                buf[..k].to_vec()
+            })
+            .collect()
+    }
+
+    fn energy(out: &[f32]) -> f32 {
+        out.iter().map(|s| s * s).sum::<f32>() / out.len() as f32
+    }
+
     #[test]
-    fn mixer_primes_then_mixes() {
+    fn mixer_buffers_then_plays_and_conceals_loss() {
         let m = Mixer::default();
-        let mut out = vec![0.0; 960 * 2];
-        m.push(1, &vec![0.25; 960 * 2]);
+        let p = packets(8);
+        let mut out = vec![0.0; FRAME * 2];
+        m.push(1, 10, p[0].clone());
         m.mix(&mut out);
-        assert!(out.iter().all(|&s| s == 0.0), "not primed yet");
-        m.push(1, &vec![0.25; PRIME]);
-        m.push(2, &vec![0.25; PRIME + 960 * 2]);
+        assert_eq!(energy(&out), 0.0, "waits for the jitter buffer to fill");
+        m.push(1, 11, p[1].clone());
+        m.push(1, 12, p[2].clone());
         m.mix(&mut out);
-        assert!(out.iter().all(|&s| (s - 0.5).abs() < 1e-6));
+        m.mix(&mut out);
+        assert!(energy(&out) > 0.01, "plays once buffered");
+        // Packet 14 is lost; 13 and 15 arrive. The gap is concealed rather than silent.
+        m.push(1, 13, p[3].clone());
+        m.push(1, 15, p[5].clone());
+        m.push(1, 16, p[6].clone());
+        for _ in 0..3 {
+            m.mix(&mut out);
+            assert!(energy(&out) > 0.001);
+        }
+    }
+
+    #[test]
+    fn sequence_numbers_wrap() {
+        let mut s = Stream::new().unwrap();
+        s.push(65534, vec![1]);
+        s.push(65535, vec![2]);
+        s.push(0, vec![3]);
+        s.push(1, vec![4]);
+        let keys: Vec<u64> = s.packets.keys().copied().collect();
+        assert!(keys.windows(2).all(|w| w[1] == w[0] + 1), "{keys:?}");
+    }
+
+    #[test]
+    fn underrun_while_talking_deepens_the_buffer() {
+        let m = Mixer::default();
+        let p = packets(4);
+        let mut out = vec![0.0; FRAME * 2];
+        for (i, pk) in p.iter().take(3).enumerate() {
+            m.push(1, i as u16, pk.clone());
+        }
+        for _ in 0..8 {
+            m.mix(&mut out);
+        }
+        // Still "talking" (a packet just arrived) but nothing to play.
+        m.push(1, 100, p[3].clone());
+        let target = m.streams.lock()[&1].target;
+        assert!(target > 3, "target {target}");
     }
 }

@@ -8,7 +8,7 @@ pub const FRAME: usize = 960;
 /// Opus's three-byte silence frame, sent a few times after speaking stops so decoders don't interpolate.
 pub const SILENCE: [u8; 3] = [0xF8, 0xFF, 0xFE];
 
-pub struct Encoder(*mut opus::OpusEncoder);
+pub struct Encoder(*mut opus::OpusEncoder, i32);
 
 // The encoder is only ever used from one thread at a time.
 unsafe impl Send for Encoder {}
@@ -26,7 +26,14 @@ impl Encoder {
             opus::opus_encoder_ctl!(enc, opus::OPUS_SET_INBAND_FEC_REQUEST, 1);
             opus::opus_encoder_ctl!(enc, opus::OPUS_SET_PACKET_LOSS_PERC_REQUEST, 10);
         }
-        Some(Encoder(enc))
+        Some(Encoder(enc, bitrate))
+    }
+
+    /// Forgets the previous audio, so a new talk spurt doesn't start from stale state (an audible click).
+    pub fn reset(&mut self) {
+        if let Some(fresh) = Encoder::new(self.1) {
+            *self = fresh;
+        }
     }
 
     /// Encodes one mono frame of `FRAME` samples.
