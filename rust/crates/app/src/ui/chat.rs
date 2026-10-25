@@ -65,7 +65,11 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Actio
     };
     let perms = state.permissions(channel.id);
 
-    header(ui, s, channel, actions);
+    let in_call = uis.voice.as_ref().is_some_and(|v| v.channel == channel.id);
+    header(ui, s, channel, in_call, actions);
+    if channel.is_private() {
+        crate::ui::call::panel(ui, s, uis, channel, actions);
+    }
 
     egui::Panel::bottom(("composer", channel.id)).frame(egui::Frame::new().fill(theme::CHAT).inner_margin(egui::Margin { left: 16, right: 16, top: 0, bottom: 20 })).show(ui, |ui| {
         typing_line(ui, s, channel);
@@ -86,7 +90,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Actio
     });
 }
 
-fn header(ui: &mut Ui, s: &Session, c: &Channel, actions: &mut Vec<Action>) {
+fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, actions: &mut Vec<Action>) {
     egui::Panel::top(("chat-header", c.id)).frame(egui::Frame::new().fill(theme::CHAT).inner_margin(egui::Margin::symmetric(16, 0))).show(ui, |ui| {
         ui.set_height(48.0);
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -114,7 +118,7 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, actions: &mut Vec<Action>) {
                 if widgets::icon_button(ui, icon::PIN, "Pinned Messages").clicked() {
                     actions.push(Action::ShowPins(c.id));
                 }
-                if c.is_private() && widgets::icon_button(ui, crate::theme::icon::SIGNAL, "Start Voice Call").clicked() {
+                if c.is_private() && !in_call && s.state.call(c.id).is_none() && widgets::icon_button(ui, icon::PHONE, "Start Voice Call").clicked() {
                     actions.push(Action::JoinVoice { guild: None, channel: c.id });
                 }
             });

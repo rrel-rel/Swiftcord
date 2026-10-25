@@ -335,6 +335,11 @@ impl Rest {
         self.empty(Method::POST, &format!("channels/{channel}/call/ring"), Body::Json(json!({ "recipients": null }))).await
     }
 
+    /// Declines a call: stops it ringing for these users (yourself, usually).
+    pub async fn stop_ringing(&self, channel: Snowflake, users: &[Snowflake]) -> Result<()> {
+        self.empty(Method::POST, &format!("channels/{channel}/call/stop-ringing"), Body::Json(json!({ "recipients": users }))).await
+    }
+
     pub async fn typing(&self, channel: Snowflake) -> Result<()> {
         self.empty(Method::POST, &format!("channels/{channel}/typing"), Body::None).await
     }

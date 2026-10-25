@@ -257,6 +257,16 @@ pub struct VoiceServerUpdate {
     pub endpoint: Option<String>,
 }
 
+/// CALL_CREATE / CALL_UPDATE: a DM or group DM call, and who is being rung.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct CallEvent {
+    pub channel_id: Snowflake,
+    pub ringing: Vec<Snowflake>,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub voice_states: Vec<VoiceState>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct SettingsProtoUpdate {
@@ -302,6 +312,8 @@ pub enum Event {
     UserGuildSettingsUpdate(Box<UserGuildSettings>),
     VoiceStateUpdate(Box<VoiceState>),
     VoiceServerUpdate(VoiceServerUpdate),
+    CallUpdate(Box<CallEvent>),
+    CallDelete(Snowflake),
     /// Anything else, kept raw for subsystems (e.g. Go Live streams) that parse it themselves.
     Other(String, Box<RawValue>),
 }
@@ -341,6 +353,14 @@ impl Event {
             "USER_GUILD_SETTINGS_UPDATE" => Event::UserGuildSettingsUpdate(p(d)?),
             "VOICE_STATE_UPDATE" => Event::VoiceStateUpdate(p(d)?),
             "VOICE_SERVER_UPDATE" => Event::VoiceServerUpdate(p(d)?),
+            "CALL_CREATE" | "CALL_UPDATE" => Event::CallUpdate(p(d)?),
+            "CALL_DELETE" => {
+                #[derive(Deserialize)]
+                struct D {
+                    channel_id: Snowflake,
+                }
+                Event::CallDelete(p::<D>(d)?.channel_id)
+            }
             _ => Event::Other(name.to_owned(), data),
         })
     }

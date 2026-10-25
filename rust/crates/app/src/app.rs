@@ -57,6 +57,9 @@ pub enum Action {
     ShowPins(Snowflake),
     Ack(Snowflake),
     JoinVoice { guild: Option<Snowflake>, channel: Snowflake },
+    /// Answer a DM call: join it and show the conversation.
+    AcceptCall(Snowflake),
+    DeclineCall(Snowflake),
     WatchStream { guild: Option<Snowflake>, channel: Snowflake, user: Snowflake },
     StopWatching,
     /// Show the stream in the main area (true) or go back to the chat (false).
@@ -443,6 +446,11 @@ impl App {
                     self.toast(&message);
                 }
             }
+            Notice::Ring(channel) => {
+                let caller = s.state.channel(channel).map(|c| c.label()).unwrap_or_default();
+                platform::notify(format!("{caller} is calling you"), "Open Swiftcord to answer.".into());
+            }
+            Notice::RingStopped(_) => {}
             Notice::OwnVoiceState | Notice::VoiceServer(_) | Notice::Other(..) => {
                 crate::voice_glue::on_notice(self, notice);
             }
@@ -496,6 +504,12 @@ impl App {
 
     fn select_channel(&mut self, channel: Snowflake) {
         self.ui.channel_for.insert(self.ui.guild.unwrap_or_default(), channel);
+        if let Some(s) = &self.session {
+            if s.state.channel(channel).is_some_and(|c| c.is_private()) {
+                // Learn whether a call is going on in this DM.
+                s.gateway.request_call(channel);
+            }
+        }
         self.ui.focus_composer = true;
         self.ui.emoji_picker = None;
         self.ui.pins = None;
@@ -743,6 +757,19 @@ impl App {
             }
             Action::Ack(c) => self.mark_viewed(c),
             Action::JoinVoice { guild, channel } => crate::voice_glue::join(self, guild, channel),
+            Action::AcceptCall(channel) => {
+                self.apply(Action::SelectChannel(channel));
+                crate::voice_glue::join(self, None, channel);
+            }
+            Action::DeclineCall(channel) => {
+                let Some(s) = &self.session else { return };
+                let Some(me) = s.state.me.as_ref().map(|m| m.id) else { return };
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    let r = rest.stop_ringing(channel, &[me]).await;
+                    AppEvent::Error(r.err().map(|e| format!("Couldn't decline: {e}")).unwrap_or_default())
+                });
+            }
             Action::LeaveVoice => crate::voice_glue::leave(self),
             Action::WatchStream { guild, channel, user } => crate::stream_glue::watch(self, guild, channel, user),
             Action::StopWatching => crate::stream_glue::stop(self),

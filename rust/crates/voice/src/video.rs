@@ -292,6 +292,8 @@ mod mf {
         stride: usize,
         /// Rows in the decoder's padded Y plane (the UV plane starts after them).
         padded_height: usize,
+        /// The picture inside the decoded frame, which is padded to whole 16-pixel macroblocks.
+        visible: (usize, usize),
         provides_samples: bool,
         out_size: u32,
         time: i64,
@@ -311,7 +313,7 @@ mod mf {
                 input.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
                 input.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
                 mft.SetInputType(0, &input, 0)?;
-                let mut d = Decoder { mft, width: 0, height: 0, stride: 0, padded_height: 0, provides_samples: false, out_size: 0, time: 0 };
+                let mut d = Decoder { mft, width: 0, height: 0, stride: 0, padded_height: 0, visible: (0, 0), provides_samples: false, out_size: 0, time: 0 };
                 d.configure_output()?;
                 d.mft.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
                 d.mft.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
@@ -331,6 +333,7 @@ mod mf {
                         self.width = (size >> 32) as usize;
                         self.height = (size & 0xffff_ffff) as usize;
                         self.stride = t.GetUINT32(&MF_MT_DEFAULT_STRIDE).map(|s| s as i32 as usize).unwrap_or(self.width);
+                        self.visible = aperture(&t).unwrap_or((self.width, self.height));
                         break;
                     }
                     i += 1;
@@ -403,12 +406,28 @@ mod mf {
                 // The Y plane may be padded to a multiple of 16 rows; infer from the buffer size.
                 self.padded_height = (len as usize * 2 / 3) / stride.max(1);
                 let uv_offset = stride * self.padded_height.max(self.height);
+                // Only the visible area: the padding columns and rows hold garbage.
+                let (w, h) = (self.visible.0.min(self.width), self.visible.1.min(self.height));
                 let picture = (data.len() >= uv_offset + stride * self.height / 2)
-                    .then(|| Picture { width: self.width, height: self.height, rgba: nv12_to_rgba(data, self.width, self.height, stride, uv_offset) });
+                    .then(|| Picture { width: w, height: h, rgba: nv12_to_rgba(data, w, h, stride, uv_offset) });
                 buffer.Unlock()?;
                 Ok(Some(picture))
             }
         }
+    }
+
+    /// The visible size of a decoded frame, from its display aperture.
+    fn aperture(t: &IMFMediaType) -> Option<(usize, usize)> {
+        for key in [MF_MT_MINIMUM_DISPLAY_APERTURE, MF_MT_GEOMETRIC_APERTURE] {
+            let mut area = [0u8; std::mem::size_of::<MFVideoArea>()];
+            if unsafe { t.GetBlob(&key, &mut area, None) }.is_ok() {
+                let area: MFVideoArea = unsafe { std::ptr::read_unaligned(area.as_ptr().cast()) };
+                if area.Area.cx > 0 && area.Area.cy > 0 {
+                    return Some((area.Area.cx as usize, area.Area.cy as usize));
+                }
+            }
+        }
+        None
     }
 
     impl Drop for Decoder {

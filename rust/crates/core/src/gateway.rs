@@ -31,6 +31,8 @@ pub mod op {
     pub const HELLO: u8 = 10;
     pub const HEARTBEAT_ACK: u8 = 11;
     /// User accounts: subscribe to typing, activities, threads and member-list ranges for a guild.
+    /// User accounts: request the call state of a DM.
+    pub const CALL_CONNECT: u8 = 13;
     pub const GUILD_SUBSCRIPTIONS: u8 = 14;
     pub const STREAM_CREATE: u8 = 18;
     pub const STREAM_DELETE: u8 = 19;
@@ -111,6 +113,12 @@ impl Gateway {
             op::GUILD_SUBSCRIPTIONS,
             json!({ "guild_id": guild_id, "typing": true, "threads": true, "activities": true }),
         );
+    }
+
+    /// Asks for a DM's call state (CALL_CREATE if a call is going on), as the official client does when a DM is
+    /// opened.
+    pub fn request_call(&self, channel: Snowflake) {
+        self.send(op::CALL_CONNECT, json!({ "channel_id": channel }));
     }
 
     /// Starts watching a Go Live stream; Discord answers with STREAM_CREATE and STREAM_SERVER_UPDATE.

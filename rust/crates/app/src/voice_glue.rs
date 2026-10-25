@@ -69,8 +69,8 @@ pub fn join(app: &mut App, guild: Option<Snowflake>, channel: Snowflake) {
         drop(old.voice);
     }
     s.gateway.update_voice_state(guild, Some(channel), app.ui.self_mute, app.ui.self_deaf);
-    if guild.is_none() {
-        // Joining a DM's voice starts a call; ring the other people as the official client does.
+    if guild.is_none() && s.state.call(channel).is_none() {
+        // Starting a DM call (not answering one): ring the other people, as the official client does.
         let rest = s.rest.clone();
         app.rt.spawn(async move {
             let _ = rest.ring(channel).await;
@@ -151,7 +151,7 @@ pub fn on_notice(app: &mut App, notice: Notice) {
             connect(app);
         }
         Notice::Other(name, data) => crate::stream_glue::on_gateway(app, &name, &data),
-        Notice::MessageCreated { .. } => {}
+        Notice::MessageCreated { .. } | Notice::Ring(_) | Notice::RingStopped(_) => {}
     }
 }
 

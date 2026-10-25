@@ -51,6 +51,7 @@ pub mod icon {
     pub const FOLDER: &str = "\u{E8B7}";
     pub const FILE: &str = "\u{E8A5}";
     pub const SIGNAL: &str = "\u{E701}";
+    pub const PHONE: &str = "\u{E717}";
 }
 
 pub fn icons() -> FontFamily {

@@ -28,6 +28,16 @@ pub fn install(state: &mut State) {
     let mut msgs: Vec<Message> = parse_lenient_list(&json).unwrap_or_default();
     msgs.reverse(); // History pages are newest first.
     state.add_history(CHANNEL, msgs, 50);
+    // A pretend incoming call from the demo bot, to show the call screen and popup.
+    let call = format!(
+        r#"{{"channel_id":"{CHANNEL}","ringing":["{}"],"voice_states":[{{"user_id":"2","channel_id":"{CHANNEL}","session_id":"demo"}}]}}"#,
+        me.id
+    );
+    if let Ok(raw) = serde_json::value::RawValue::from_string(call) {
+        if let Ok(e) = swiftcord_core::events::Event::parse("CALL_CREATE", raw) {
+            state.apply(e);
+        }
+    }
 }
 
 const SAMPLES: &str = r##"[

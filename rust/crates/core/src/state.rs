@@ -28,6 +28,10 @@ pub enum Notice {
     /// The current user's voice state changed (joined, moved, left, muted…).
     OwnVoiceState,
     VoiceServer(VoiceServerUpdate),
+    /// A DM call started ringing the current user.
+    Ring(Snowflake),
+    /// A DM call stopped ringing the current user (answered elsewhere, declined, or ended).
+    RingStopped(Snowflake),
     /// Raw events for other subsystems.
     Other(String, Box<serde_json::value::RawValue>),
 }
@@ -64,6 +68,8 @@ pub struct State {
     typing: HashMap<Snowflake, HashMap<Snowflake, Instant>>,
     /// By guild (`Snowflake::NONE` for DM calls), then user.
     voice_states: HashMap<Snowflake, HashMap<Snowflake, VoiceState>>,
+    /// Active DM and group DM calls by channel.
+    calls: HashMap<Snowflake, CallEvent>,
 }
 
 impl State {
@@ -282,6 +288,17 @@ impl State {
             .unwrap_or_default();
         v.sort_by_key(|s| s.user_id);
         v
+    }
+
+    /// The active call in a DM or group DM, if any.
+    pub fn call(&self, channel: Snowflake) -> Option<&CallEvent> {
+        self.calls.get(&channel)
+    }
+
+    /// DM calls currently ringing the current user.
+    pub fn ringing_me(&self) -> Vec<Snowflake> {
+        let Some(me) = self.me.as_ref().map(|m| m.id) else { return Vec::new() };
+        self.calls.values().filter(|c| c.ringing.contains(&me)).map(|c| c.channel_id).collect()
     }
 
     pub fn my_voice_state(&self) -> Option<&VoiceState> {
@@ -613,6 +630,33 @@ impl State {
                 }
             }
             Event::VoiceServerUpdate(v) => notices.push(Notice::VoiceServer(v)),
+            Event::CallUpdate(call) => {
+                let me = self.me.as_ref().map(|m| m.id);
+                let was = self.calls.get(&call.channel_id).is_some_and(|c| me.is_some_and(|m| c.ringing.contains(&m)));
+                let now = me.is_some_and(|m| call.ringing.contains(&m));
+                let states = self.voice_states.entry(Snowflake::NONE).or_default();
+                for vs in &call.voice_states {
+                    if vs.channel_id.is_some() {
+                        states.insert(vs.user_id, vs.clone());
+                    }
+                }
+                let channel = call.channel_id;
+                self.calls.insert(channel, *call);
+                match (was, now) {
+                    (false, true) => notices.push(Notice::Ring(channel)),
+                    (true, false) => notices.push(Notice::RingStopped(channel)),
+                    _ => {}
+                }
+            }
+            Event::CallDelete(channel) => {
+                let me = self.me.as_ref().map(|m| m.id);
+                if self.calls.remove(&channel).is_some_and(|c| me.is_some_and(|m| c.ringing.contains(&m))) {
+                    notices.push(Notice::RingStopped(channel));
+                }
+                if let Some(states) = self.voice_states.get_mut(&Snowflake::NONE) {
+                    states.retain(|_, s| s.channel_id != Some(channel));
+                }
+            }
             Event::Other(name, data) => notices.push(Notice::Other(name, data)),
         }
         notices
@@ -883,6 +927,20 @@ mod tests {
         assert!(s.my_voice_state().is_some());
         s.apply(ev("VOICE_STATE_UPDATE", r#"{"guild_id":"100","user_id":"1","channel_id":null,"session_id":"a"}"#));
         assert!(s.my_voice_state().is_none());
+    }
+
+    #[test]
+    fn calls_ring_and_stop() {
+        let mut s = ready_state();
+        let n = s.apply(ev("CALL_CREATE", r#"{"channel_id":"300","ringing":["1"],"voice_states":[{"user_id":"2","channel_id":"300","session_id":"x"}]}"#));
+        assert!(matches!(n[..], [Notice::Ring(Snowflake(300))]));
+        assert_eq!(s.ringing_me(), [Snowflake(300)]);
+        assert_eq!(s.voice_members(s.channel(Snowflake(300)).unwrap()).len(), 1);
+        let n = s.apply(ev("CALL_UPDATE", r#"{"channel_id":"300","ringing":[]}"#));
+        assert!(matches!(n[..], [Notice::RingStopped(Snowflake(300))]));
+        s.apply(ev("CALL_DELETE", r#"{"channel_id":"300"}"#));
+        assert!(s.call(Snowflake(300)).is_none());
+        assert!(s.voice_members(s.channel(Snowflake(300)).unwrap()).is_empty());
     }
 
     #[test]
