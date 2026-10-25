@@ -295,11 +295,25 @@ impl State {
     pub fn search_people<'a>(&'a self, channel: &'a Channel, query: &str, limit: usize) -> Vec<&'a User> {
         let q = query.to_lowercase();
         let candidates: Vec<(&User, Option<&str>)> = match channel.guild_id {
-            Some(g) => self
-                .members
-                .get(&g)
-                .map(|m| m.iter().filter_map(|(id, mem)| Some((self.users.get(id)?, mem.nick.as_deref()))).collect())
-                .unwrap_or_default(),
+            // Only members who can see the channel (threads use their parent's permissions).
+            Some(g) => {
+                let guild = self.guilds.get(&g);
+                let perm_channel = match channel.parent_id {
+                    Some(p) if channel.is_thread() => self.channels.get(&p).unwrap_or(channel),
+                    _ => channel,
+                };
+                self.members
+                    .get(&g)
+                    .map(|m| {
+                        m.iter()
+                            .filter(|(id, mem)| {
+                                guild.is_some_and(|gd| permissions::compute(gd, perm_channel, **id, &mem.roles) & perm::VIEW_CHANNEL != 0)
+                            })
+                            .filter_map(|(id, mem)| Some((self.users.get(id)?, mem.nick.as_deref())))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
             None => channel.recipients.iter().chain(self.me.iter()).map(|u| (u, None)).collect(),
         };
         let mut scored: Vec<(u8, &User)> = candidates
@@ -988,6 +1002,9 @@ mod tests {
         assert_eq!(names, ["alice", "bob", "malice"]);
         let dm = s.channel(Snowflake(300)).unwrap().clone();
         assert_eq!(s.search_people(&dm, "fr", 10).len(), 1);
+        // Channel 201 hides itself from @everyone, so nobody without a role can be mentioned there.
+        let secret = s.channel(Snowflake(201)).unwrap().clone();
+        assert!(s.search_people(&secret, "al", 10).is_empty());
     }
 
     #[test]

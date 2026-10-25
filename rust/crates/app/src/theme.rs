@@ -22,7 +22,9 @@ pub const RED: Color32 = Color32::from_rgb(0xf2, 0x3f, 0x43);
 pub const LINK: Color32 = Color32::from_rgb(0x00, 0xa8, 0xfc);
 pub const MENTION_BG: Color32 = Color32::from_rgba_premultiplied(0x3c, 0x42, 0x70, 0xff);
 pub const MENTION_TEXT: Color32 = Color32::from_rgb(0xc9, 0xcd, 0xfb);
-pub const MENTIONED_ROW: Color32 = Color32::from_rgb(0x44, 0x40, 0x2e);
+/// Discord's gold tint for messages that mention you.
+pub const MENTIONED_ROW: Color32 = Color32::from_rgb(0x44, 0x3d, 0x2d);
+pub const MENTIONED_ROW_HOVER: Color32 = Color32::from_rgb(0x4a, 0x42, 0x2f);
 pub const CODE_BG: Color32 = Color32::from_rgb(0x2b, 0x2d, 0x31);
 pub const EMBED_BG: Color32 = Color32::from_rgb(0x2b, 0x2d, 0x31);
 

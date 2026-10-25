@@ -85,7 +85,8 @@ pub struct Ctx<'a> {
 /// Draws a message inside `rect` (whose height is the cached estimate) and returns the height used.
 pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
     let me = cx.state.me.as_ref().map(|m| m.id);
-    let mentioned = me.is_some_and(|_| cx.state.mentions_me(msg)) && msg.author.id != me.unwrap_or_default();
+    // Highlighted like Discord, including when you mention yourself.
+    let mentioned = me.is_some() && cx.state.mentions_me(msg);
     let row_id = egui::Id::unique(("msg", msg.id));
 
     // Background slot, filled once we know the height and hover state.
@@ -157,7 +158,7 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
     let fill = if cx.highlight == Some(msg.id) {
         Some(theme::BLURPLE.gamma_multiply(0.18))
     } else if mentioned {
-        Some(theme::MENTIONED_ROW.gamma_multiply(0.6))
+        Some(if hovered { theme::MENTIONED_ROW_HOVER } else { theme::MENTIONED_ROW })
     } else if hovered {
         Some(theme::MESSAGE_HOVER)
     } else {
