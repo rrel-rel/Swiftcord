@@ -28,6 +28,12 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Ca
         });
     }
 
+    // A fullscreen stream takes the whole window.
+    if uis.stream.as_ref().is_some_and(|v| v.visible && v.fullscreen) {
+        crate::ui::stream::show(ui, s, uis, actions);
+        return;
+    }
+
     egui::Panel::left("rail").exact_size(72.0).resizable(false).show_separator_line(false).frame(egui::Frame::new().fill(theme::RAIL)).show(ui, |ui| {
         rail::show(ui, &s.state, uis, actions);
     });
@@ -35,7 +41,12 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Ca
         sidebar::show(ui, s, uis, actions);
     });
     egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT)).show(ui, |ui| {
-        chat::show(ui, s, uis, actions);
+        if uis.stream.as_ref().is_some_and(|v| v.visible) {
+            crate::ui::stream::show(ui, s, uis, actions);
+        } else {
+            crate::ui::stream::return_bar(ui, s, uis, actions);
+            chat::show(ui, s, uis, actions);
+        }
     });
 
     emoji::show(ui, &s.state, uis, catalog, actions);

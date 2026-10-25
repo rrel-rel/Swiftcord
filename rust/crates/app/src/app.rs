@@ -35,6 +35,7 @@ pub enum AppEvent {
     DmOpened(swiftcord_core::models::Channel),
     Folders(Option<Vec<swiftcord_core::models::GuildFolder>>),
     Voice { generation: u64, event: swiftcord_voice::Event },
+    Stream { generation: u64, event: swiftcord_voice::Event },
 }
 
 /// Things the UI asks for; applied after the frame is drawn so drawing only borrows state.
@@ -56,6 +57,11 @@ pub enum Action {
     ShowPins(Snowflake),
     Ack(Snowflake),
     JoinVoice { guild: Option<Snowflake>, channel: Snowflake },
+    WatchStream { guild: Option<Snowflake>, channel: Snowflake, user: Snowflake },
+    StopWatching,
+    /// Show the stream in the main area (true) or go back to the chat (false).
+    ShowStream(bool),
+    ToggleFullscreen,
     LeaveVoice,
     ToggleMute,
     ToggleDeafen,
@@ -123,6 +129,7 @@ pub struct UiState {
     /// Users heard in the current call just now (including us).
     pub speaking: HashSet<Snowflake>,
     pub voice: Option<crate::voice_glue::VoiceView>,
+    pub stream: Option<crate::stream_glue::StreamView>,
     pub settings_draft: Option<ui::settings::Draft>,
 }
 
@@ -142,6 +149,7 @@ pub struct App {
     outgoing: HashMap<Snowflake, Outgoing>,
     pub emoji: ui::emoji::Catalog,
     pub voice: Option<crate::voice_glue::Call>,
+    pub watch: Option<crate::stream_glue::Watch>,
     pub settings: crate::settings::Settings,
     history_failed: HashMap<Snowflake, Instant>,
 }
@@ -164,6 +172,7 @@ impl App {
             outgoing: HashMap::new(),
             emoji: ui::emoji::Catalog::load(),
             voice: None,
+            watch: None,
             settings: crate::settings::Settings::load(),
             history_failed: HashMap::new(),
         };
@@ -233,6 +242,7 @@ impl App {
             }
         }
         credentials::delete_token();
+        self.watch = None;
         self.voice = None;
         let login = std::mem::take(&mut self.ui.login);
         self.ui = UiState { login, ..Default::default() };
@@ -351,6 +361,7 @@ impl App {
                 }
             },
             AppEvent::Voice { generation, event } => crate::voice_glue::on_event(self, generation, event),
+            AppEvent::Stream { generation, event } => crate::stream_glue::on_event(self, generation, event),
             AppEvent::Folders(folders) => {
                 if let (Some(f), Some(s)) = (folders, &mut self.session) {
                     s.state.set_folders(f);
@@ -733,6 +744,23 @@ impl App {
             Action::Ack(c) => self.mark_viewed(c),
             Action::JoinVoice { guild, channel } => crate::voice_glue::join(self, guild, channel),
             Action::LeaveVoice => crate::voice_glue::leave(self),
+            Action::WatchStream { guild, channel, user } => crate::stream_glue::watch(self, guild, channel, user),
+            Action::StopWatching => crate::stream_glue::stop(self),
+            Action::ShowStream(show) => {
+                if let Some(v) = &mut self.ui.stream {
+                    v.visible = show;
+                    if !show && v.fullscreen {
+                        v.fullscreen = false;
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                    }
+                }
+            }
+            Action::ToggleFullscreen => {
+                if let Some(v) = &mut self.ui.stream {
+                    v.fullscreen = !v.fullscreen;
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(v.fullscreen));
+                }
+            }
             Action::ToggleMute => {
                 self.ui.self_mute = !self.ui.self_mute;
                 if !self.ui.self_mute {

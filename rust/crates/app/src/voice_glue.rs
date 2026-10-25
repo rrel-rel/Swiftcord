@@ -49,6 +49,10 @@ impl Call {
     pub fn voice(&self) -> Option<&Voice> {
         self.voice.as_ref()
     }
+
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
 }
 
 pub fn join(app: &mut App, guild: Option<Snowflake>, channel: Snowflake) {
@@ -76,6 +80,7 @@ pub fn join(app: &mut App, guild: Option<Snowflake>, channel: Snowflake) {
 }
 
 pub fn leave(app: &mut App) {
+    crate::stream_glue::stop(app);
     let Some(call) = app.voice.take() else { return };
     drop(call.voice);
     if let Some(s) = &app.session {
@@ -95,6 +100,7 @@ pub fn update_self_state(app: &mut App) {
     if let Some(s) = &app.session {
         s.gateway.update_voice_state(call.guild, Some(call.channel), mute, deaf);
     }
+    crate::stream_glue::update_self_state(app);
 }
 
 pub fn on_notice(app: &mut App, notice: Notice) {
@@ -117,6 +123,7 @@ pub fn on_notice(app: &mut App, notice: Notice) {
                 }
                 None if call.status != Status::Joining => {
                     // Disconnected from elsewhere (kicked, or joined on another device).
+                    crate::stream_glue::stop(app);
                     drop(app.voice.take());
                     app.ui.speaking.clear();
                     app.ui.voice = None;
@@ -143,9 +150,7 @@ pub fn on_notice(app: &mut App, notice: Notice) {
             drop(call.voice.take());
             connect(app);
         }
-        Notice::Other(name, _) => {
-            tracing::trace!("unhandled gateway event {name}");
-        }
+        Notice::Other(name, data) => crate::stream_glue::on_gateway(app, &name, &data),
         Notice::MessageCreated { .. } => {}
     }
 }
@@ -171,6 +176,7 @@ fn connect(app: &mut App) {
         session_id: session_id.clone(),
         token: server.token.clone(),
         endpoint: server.endpoint.clone().unwrap_or_default(),
+        stream_owner: None,
     };
     call.status = Status::Connecting;
     call.generation += 1;
@@ -185,8 +191,12 @@ pub fn on_event(app: &mut App, generation: u64, event: Event) {
     }
     match event {
         Event::Connecting => call.status = Status::Connecting,
-        Event::Connected { e2ee } => call.status = Status::Connected { e2ee },
+        Event::Connected { e2ee } => {
+            call.status = Status::Connected { e2ee };
+            crate::stream_glue::request_if_ready(app);
+        }
         Event::Error(e) => app.banner(e),
+        Event::VideoFrame => {}
         Event::Disconnected(reason) => {
             tracing::info!("voice disconnected: {reason}");
             app.banner(reason);

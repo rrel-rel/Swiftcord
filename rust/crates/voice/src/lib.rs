@@ -6,6 +6,7 @@ pub mod codec;
 mod connection;
 pub mod rtp;
 pub mod transmit;
+pub mod video;
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -25,6 +26,9 @@ pub struct ConnectInfo {
     pub session_id: String,
     pub token: String,
     pub endpoint: String,
+    /// For a Go Live stream connection: the streamer. Stream connections receive video and the stream's
+    /// audio and never send.
+    pub stream_owner: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +53,8 @@ pub enum Event {
     Connected { e2ee: bool },
     /// A non-fatal problem, e.g. a missing microphone.
     Error(String),
+    /// A new video picture is ready (see [`Voice::take_picture`]).
+    VideoFrame,
     Disconnected(String),
 }
 
@@ -134,7 +140,7 @@ impl MicTest {
         use std::sync::atomic::{AtomicBool, AtomicU32};
         let mixer = Arc::new(audio::Mixer::default());
         let (mic_tx, mic_rx) = std::sync::mpsc::sync_channel(256);
-        let (io, errors) = audio::start(devices, mic_tx, mixer.clone(), Arc::new(AtomicBool::new(false)));
+        let (io, errors) = audio::start(devices, Some(mic_tx), mixer.clone(), Arc::new(AtomicBool::new(false)));
         let stop = Arc::new(AtomicBool::new(false));
         let level = Arc::new(AtomicU32::new((-100f32).to_bits()));
         let open = Arc::new(AtomicBool::new(false));
@@ -193,6 +199,11 @@ impl Drop for MicTest {
 }
 
 impl Voice {
+    /// The latest decoded video picture, if a new one arrived since the last call.
+    pub fn take_picture(&self) -> Option<video::Picture> {
+        self.shared.video.lock().take()
+    }
+
     /// The microphone's current level in dBFS.
     pub fn input_level_db(&self) -> f32 {
         f32::from_bits(self.shared.input_db.load(Ordering::Relaxed))

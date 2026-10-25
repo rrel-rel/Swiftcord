@@ -24,3 +24,6 @@ unsafe-libopus = "0.2"
 
 [dev-dependencies]
 tracing-subscriber = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_Media_MediaFoundation"] }

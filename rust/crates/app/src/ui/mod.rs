@@ -5,6 +5,7 @@ pub mod markdown;
 pub mod message;
 pub mod rail;
 pub mod shell;
+pub mod stream;
 pub mod settings;
 pub mod sidebar;
 pub mod widgets;

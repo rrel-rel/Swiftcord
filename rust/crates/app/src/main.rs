@@ -5,6 +5,7 @@ mod app;
 mod demo;
 mod media;
 mod settings;
+mod stream_glue;
 mod platform;
 mod theme;
 mod ui;

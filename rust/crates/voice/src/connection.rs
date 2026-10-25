@@ -19,6 +19,7 @@ use crate::audio::{self, Mixer};
 use crate::codec::{self, FRAME};
 use crate::transmit::{Output, Transmitter};
 use crate::rtp::{self, Cipher, Mode};
+use crate::video;
 use crate::{ConnectInfo, Event, Settings};
 
 mod op {
@@ -34,6 +35,8 @@ mod op {
     pub const RESUMED: u8 = 9;
     pub const CLIENTS_CONNECT: u8 = 11;
     pub const CLIENT_DISCONNECT: u8 = 13;
+    pub const SESSION_UPDATE: u8 = 14;
+    pub const MEDIA_SINK_WANTS: u8 = 15;
     pub const DAVE_PREPARE_TRANSITION: u8 = 21;
     pub const DAVE_EXECUTE_TRANSITION: u8 = 22;
     pub const DAVE_TRANSITION_READY: u8 = 23;
@@ -63,6 +66,8 @@ pub(crate) struct Shared {
     pub ssrc_users: Mutex<HashMap<u32, u64>>,
     pub last_heard: Mutex<HashMap<u64, Instant>>,
     pub user_volume: Mutex<HashMap<u64, f32>>,
+    /// The latest decoded video picture (stream connections).
+    pub video: Mutex<Option<crate::video::Picture>>,
 }
 
 impl Shared {
@@ -80,6 +85,7 @@ impl Shared {
             ssrc_users: Mutex::new(HashMap::new()),
             last_heard: Mutex::new(HashMap::new()),
             user_volume: Mutex::new(HashMap::new()),
+            video: Mutex::new(None),
         }
     }
 }
@@ -122,14 +128,24 @@ impl Running {
         shared.stop.store(false, Ordering::Relaxed);
     }
 
-    fn start(&mut self, media: &Media, cipher: Cipher, settings: &Settings, shared: &Arc<Shared>, cmd: &mpsc::UnboundedSender<Cmd>, events: &Arc<dyn Fn(Event) + Send + Sync>) {
+    #[allow(clippy::too_many_arguments)]
+    fn start(&mut self, media: &Media, cipher: Cipher, info: &ConnectInfo, settings: &Settings, shared: &Arc<Shared>, cmd: &mpsc::UnboundedSender<Cmd>, events: &Arc<dyn Fn(Event) + Send + Sync>) {
         self.stop(shared);
         let cipher = Arc::new(cipher);
+        let stream = info.stream_owner.is_some();
         let (mic_tx, mic_rx) = std::sync::mpsc::sync_channel(256);
-        let (io, errors) = audio::start(settings.devices.clone(), mic_tx, shared.mixer.clone(), shared.deafened.clone());
+        // Watching a stream plays its audio but never opens the microphone.
+        let (io, errors) = audio::start(settings.devices.clone(), (!stream).then_some(mic_tx), shared.mixer.clone(), shared.deafened.clone());
         self.audio = Some(io);
-        self.threads.push(spawn_sender(&media.socket, cipher.clone(), media.ssrc, mic_rx, shared.clone(), cmd.clone()));
-        self.threads.push(spawn_receiver(&media.socket, cipher, shared.clone()));
+        if !stream {
+            self.threads.push(spawn_sender(&media.socket, cipher.clone(), media.ssrc, mic_rx, shared.clone(), cmd.clone()));
+        }
+        let video = stream.then(|| {
+            let (tx, rx) = std::sync::mpsc::sync_channel(8);
+            self.threads.push(spawn_video_decoder(rx, shared.clone(), events.clone()));
+            tx
+        });
+        self.threads.push(spawn_receiver(&media.socket, cipher, media.ssrc, info.stream_owner, video, shared.clone()));
         // Device errors are reported from their own thread; it ends when the audio stops.
         let ev = events.clone();
         std::thread::spawn(move || {
@@ -244,7 +260,8 @@ async fn session(
                 "user_id": info.user_id.to_string(),
                 "session_id": info.session_id,
                 "token": info.token,
-                "video": false,
+                "video": info.stream_owner.is_some(),
+                "streams": if info.stream_owner.is_some() { json!([{ "type": "screen", "rid": "100", "quality": 100 }]) } else { json!([]) },
                 "max_dave_protocol_version": davey::DAVE_PROTOCOL_VERSION,
             }),
         )
@@ -302,7 +319,7 @@ async fn session(
                                 send!(json_msg(op::SELECT_PROTOCOL, json!({
                                     "protocol": "udp",
                                     "data": { "address": my_ip, "port": my_port, "mode": mode.name() },
-                                    "codecs": [{ "name": "opus", "type": "audio", "priority": 1000, "payload_type": rtp::OPUS_PAYLOAD_TYPE }],
+                                    "codecs": codecs(info.stream_owner.is_some()),
                                 })));
                             }
                             op::SESSION_DESCRIPTION => {
@@ -322,8 +339,18 @@ async fn session(
                                         }
                                     }
                                 }
-                                running.start(m, cipher, settings, shared, cmd_tx, events);
+                                running.start(m, cipher, info, settings, shared, cmd_tx, events);
+                                if info.stream_owner.is_some() {
+                                    check_video_codec(&f.d, events);
+                                    // Ask for the stream's video at full quality.
+                                    send!(json_msg(op::MEDIA_SINK_WANTS, json!({ "any": 100 })));
+                                }
                                 events(Event::Connected { e2ee: dave_version > 0 });
+                            }
+                            op::SESSION_UPDATE => {
+                                if info.stream_owner.is_some() {
+                                    check_video_codec(&f.d, events);
+                                }
                             }
                             op::RESUMED => events(Event::Connected { e2ee: shared.dave.lock().active() }),
                             op::HEARTBEAT_ACK => {
@@ -636,49 +663,148 @@ fn spawn_sender(
         .expect("voice send thread")
 }
 
-/// Receives, decrypts and decodes everyone else's audio into the mixer.
-fn spawn_receiver(socket: &Arc<UdpSocket>, cipher: Arc<Cipher>, shared: Arc<Shared>) -> std::thread::JoinHandle<()> {
+/// The codecs we offer: Opus always, and H.264 (decode only) when watching a stream, which makes the
+/// streamer's client encode in a format Windows can decode natively.
+fn codecs(video: bool) -> Value {
+    let mut list = vec![json!({ "name": "opus", "type": "audio", "priority": 1000, "payload_type": rtp::OPUS_PAYLOAD_TYPE })];
+    if video {
+        list.push(json!({
+            "name": "H264", "type": "video", "priority": 1000,
+            "payload_type": video::H264_PAYLOAD_TYPE, "rtx_payload_type": video::H264_RTX_PAYLOAD_TYPE,
+            "encode": false, "decode": true,
+        }));
+    }
+    Value::Array(list)
+}
+
+/// Decodes stream video on its own thread (Media Foundation wants a COM thread of its own) and publishes the
+/// latest picture.
+fn spawn_video_decoder(
+    frames: std::sync::mpsc::Receiver<video::EncodedFrame>,
+    shared: Arc<Shared>,
+    events: Arc<dyn Fn(Event) + Send + Sync>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("swiftcord-video".into())
+        .spawn(move || {
+            let mut decoder = match video::Decoder::new() {
+                Ok(d) => d,
+                Err(e) => {
+                    events(Event::Error(format!("Can't decode video: {e}. Windows' H.264 decoder is missing (N editions need the Media Feature Pack).")));
+                    return;
+                }
+            };
+            for frame in frames.iter() {
+                match decoder.decode(&frame.data) {
+                    Ok(pictures) => {
+                        if let Some(p) = pictures.into_iter().last() {
+                            *shared.video.lock() = Some(p);
+                            events(Event::VideoFrame);
+                        }
+                    }
+                    Err(e) => tracing::debug!("video decode error: {e}"),
+                }
+            }
+        })
+        .expect("video thread")
+}
+
+/// Receives and decrypts everyone else's audio into the mixer, and (for streams) video into the decoder.
+fn spawn_receiver(
+    socket: &Arc<UdpSocket>,
+    cipher: Arc<Cipher>,
+    our_ssrc: u32,
+    stream_owner: Option<u64>,
+    video_out: Option<std::sync::mpsc::SyncSender<video::EncodedFrame>>,
+    shared: Arc<Shared>,
+) -> std::thread::JoinHandle<()> {
     let socket = socket.clone();
     std::thread::Builder::new()
         .name("swiftcord-voice-recv".into())
         .spawn(move || {
             let _ = socket.set_read_timeout(Some(Duration::from_millis(250)));
             let mut buf = [0u8; 4096];
+            let mut depacketizers: HashMap<u32, video::H264Depacketizer> = HashMap::new();
+            let mut seen_types = HashSet::new();
+            let mut last_pli = Instant::now() - Duration::from_secs(10);
+            // RTCP shares the key; start its nonce counter far from the (unused) RTP one.
+            let mut rtcp_counter = 0x8000_0000u32 | rand::random::<u32>() >> 1;
             while !shared.stop.load(Ordering::Relaxed) {
                 let n = match socket.recv(&mut buf) {
                     Ok(n) => n,
                     Err(_) => continue,
                 };
-                if shared.deafened.load(Ordering::Relaxed) {
-                    continue;
-                }
                 let Some(p) = rtp::open(&cipher, &buf[..n]) else { continue };
-                if p.payload_type != rtp::OPUS_PAYLOAD_TYPE {
-                    continue;
-                }
-                let user = shared.ssrc_users.lock().get(&p.ssrc).copied();
-                let opus = {
-                    let mut dave = shared.dave.lock();
-                    if dave.active() {
-                        let (Some(user), Some(s)) = (user, dave.session.as_mut()) else { continue };
-                        match s.decrypt(user, MediaType::AUDIO, &p.payload) {
-                            Ok(f) => f,
-                            Err(_) if s.can_passthrough(user) => p.payload,
-                            Err(_) => continue,
+                // Everything in a stream connection comes from the streamer.
+                let user = stream_owner.or_else(|| shared.ssrc_users.lock().get(&p.ssrc).copied());
+                match p.payload_type {
+                    rtp::OPUS_PAYLOAD_TYPE => {
+                        if shared.deafened.load(Ordering::Relaxed) {
+                            continue;
                         }
-                    } else {
-                        p.payload
+                        let Some(opus) = e2ee_decrypt(&shared, user, MediaType::AUDIO, p.payload) else { continue };
+                        if opus == codec::SILENCE {
+                            continue;
+                        }
+                        if let Some(u) = user {
+                            shared.last_heard.lock().insert(u, Instant::now());
+                        }
+                        // Decoding happens at playback, in the jitter buffer.
+                        shared.mixer.push(p.ssrc, p.seq, opus);
                     }
-                };
-                if opus == codec::SILENCE {
-                    continue;
+                    video::H264_PAYLOAD_TYPE => {
+                        let Some(out) = &video_out else { continue };
+                        let d = depacketizers.entry(p.ssrc).or_insert_with(video::H264Depacketizer::awaiting_keyframe);
+                        if let Some(mut frame) = d.push(p.seq, p.timestamp, p.marker, p.payload) {
+                            // DAVE encrypts whole frames, so decryption happens after reassembly.
+                            match e2ee_decrypt(&shared, user, MediaType::VIDEO, std::mem::take(&mut frame.data)) {
+                                Some(data) => {
+                                    frame.data = data;
+                                    let _ = out.try_send(frame);
+                                }
+                                None => tracing::debug!("couldn't decrypt a video frame"),
+                            }
+                        }
+                        // Ask for a keyframe when starting or after loss, at most once a second.
+                        if d.needs_keyframe && last_pli.elapsed() > Duration::from_secs(1) {
+                            last_pli = Instant::now();
+                            if let Some(pli) = rtp::seal_pli(&cipher, our_ssrc, p.ssrc, rtcp_counter) {
+                                let _ = socket.send(&pli);
+                            }
+                            rtcp_counter = rtcp_counter.wrapping_add(1);
+                        }
+                    }
+                    other => {
+                        if video_out.is_some() && other != video::H264_RTX_PAYLOAD_TYPE && seen_types.insert(other) {
+                            tracing::warn!("ignoring RTP payload type {other} on the stream connection");
+                        }
+                    }
                 }
-                if let Some(u) = user {
-                    shared.last_heard.lock().insert(u, Instant::now());
-                }
-                // Decoding happens at playback, in the jitter buffer.
-                shared.mixer.push(p.ssrc, p.seq, opus);
             }
         })
         .expect("voice receive thread")
+}
+
+/// Warns when a stream uses a video codec other than H.264, which is all we can decode.
+fn check_video_codec(d: &Value, events: &Arc<dyn Fn(Event) + Send + Sync>) {
+    if let Some(codec) = d["video_codec"].as_str() {
+        tracing::info!("stream video codec: {codec}");
+        if !codec.eq_ignore_ascii_case("H264") {
+            events(Event::Error(format!("This stream uses {codec} video, which Swiftcord can't play yet (only H.264).")));
+        }
+    }
+}
+
+/// Removes DAVE end-to-end encryption when the call uses it.
+fn e2ee_decrypt(shared: &Shared, user: Option<u64>, kind: MediaType, payload: Vec<u8>) -> Option<Vec<u8>> {
+    let mut dave = shared.dave.lock();
+    if !dave.active() {
+        return Some(payload);
+    }
+    let (user, session) = (user?, dave.session.as_mut()?);
+    match session.decrypt(user, kind, &payload) {
+        Ok(f) => Some(f),
+        Err(_) if session.can_passthrough(user) => Some(payload),
+        Err(_) => None,
+    }
 }

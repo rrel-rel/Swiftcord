@@ -113,6 +113,16 @@ impl Gateway {
         );
     }
 
+    /// Starts watching a Go Live stream; Discord answers with STREAM_CREATE and STREAM_SERVER_UPDATE.
+    pub fn watch_stream(&self, stream_key: &str) {
+        self.send(op::STREAM_WATCH, json!({ "stream_key": stream_key }));
+    }
+
+    /// Stops watching (or streaming) a Go Live stream.
+    pub fn stop_stream(&self, stream_key: &str) {
+        self.send(op::STREAM_DELETE, json!({ "stream_key": stream_key }));
+    }
+
     pub fn update_presence(&self, status: PresenceStatus) {
         self.send(op::PRESENCE_UPDATE, json!({ "status": status.as_str(), "since": 0, "activities": [], "afk": false }));
     }

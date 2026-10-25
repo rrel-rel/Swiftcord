@@ -84,7 +84,7 @@ fn guild_channels(ui: &mut Ui, state: &State, uis: &mut UiState, guild: Snowflak
             }
             channel_row(ui, state, c, is_selected, unread, actions);
             if c.is_voice() {
-                voice_members(ui, state, uis, c);
+                voice_members(ui, state, uis, c, actions);
             }
         }
     }
@@ -139,7 +139,7 @@ fn channel_row(ui: &mut Ui, state: &State, c: &Channel, selected: bool, unread: 
     });
 }
 
-fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel) {
+fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel, actions: &mut Vec<Action>) {
     for vs in state.voice_members(c) {
         let name = state.display_name(vs.user_id, c.guild_id);
         let speaking = crate::voice_glue::is_speaking(uis, vs.user_id);
@@ -154,7 +154,11 @@ fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel) {
             }
             ui.add(egui::Label::new(RichText::new(name).size(14.0).color(theme::MUTED)).truncate().selectable(false));
             if vs.self_stream {
-                ui.label(RichText::new("LIVE").font(theme::font_bold(10.0)).color(Color32::WHITE).background_color(theme::RED));
+                let mine = state.me.as_ref().is_some_and(|m| m.id == vs.user_id);
+                let live = ui.add(egui::Label::new(RichText::new(" LIVE ").font(theme::font_bold(10.0)).color(Color32::WHITE).background_color(theme::RED)).sense(Sense::click()));
+                if !mine && live.on_hover_text("Watch stream").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    actions.push(Action::WatchStream { guild: c.guild_id, channel: c.id, user: vs.user_id });
+                }
             }
             if vs.self_deaf || vs.deaf {
                 ui.label(RichText::new(icon::DEAFENED).font(theme::icon_font(12.0)).color(theme::RED));

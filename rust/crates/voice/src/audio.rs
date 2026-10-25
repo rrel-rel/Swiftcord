@@ -272,9 +272,9 @@ fn pick(devices: impl Iterator<Item = cpal::Device>, name: Option<&str>, default
     default
 }
 
-/// Starts capture (sending mono 48 kHz chunks to `mic`) and playback (pulling from `mixer`).
+/// Starts capture (sending mono 48 kHz chunks to `mic`, when given) and playback (pulling from `mixer`).
 /// Either side may be unavailable; that's reported and the other keeps working.
-pub fn start(devices: Devices, mic: SyncSender<Vec<f32>>, mixer: Arc<Mixer>, deafened: Arc<AtomicBool>) -> (AudioIo, Receiver<String>) {
+pub fn start(devices: Devices, mic: Option<SyncSender<Vec<f32>>>, mixer: Arc<Mixer>, deafened: Arc<AtomicBool>) -> (AudioIo, Receiver<String>) {
     let stop = Arc::new(AtomicBool::new(false));
     let (err_tx, err_rx) = std::sync::mpsc::sync_channel(8);
     let s = stop.clone();
@@ -282,11 +282,11 @@ pub fn start(devices: Devices, mic: SyncSender<Vec<f32>>, mixer: Arc<Mixer>, dea
         .name("swiftcord-audio".into())
         .spawn(move || {
             let host = cpal::default_host();
-            let input = host
+            let input = mic.and_then(|mic| host
                 .input_devices()
                 .ok()
                 .and_then(|d| pick(d, devices.input.as_deref(), host.default_input_device()))
-                .and_then(|d| build_input(&d, mic, err_tx.clone()).map_err(|e| { let _ = err_tx.try_send(format!("Microphone unavailable: {e}")); }).ok());
+                .and_then(|d| build_input(&d, mic, err_tx.clone()).map_err(|e| { let _ = err_tx.try_send(format!("Microphone unavailable: {e}")); }).ok()));
             let output = host
                 .output_devices()
                 .ok()

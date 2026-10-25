@@ -98,6 +98,22 @@ pub fn seal(cipher: &Cipher, payload_type: u8, seq: u16, timestamp: u32, ssrc: u
     Some(out)
 }
 
+/// An encrypted RTCP Picture Loss Indication, asking the sender of `media_ssrc` for a keyframe. As with RTP,
+/// the 8-byte header is authenticated in the clear and the rest encrypted, with the nonce counter appended.
+pub fn seal_pli(cipher: &Cipher, our_ssrc: u32, media_ssrc: u32, counter: u32) -> Option<Vec<u8>> {
+    // V=2, FMT=1 (PLI), PT=206 (payload-specific feedback), length 2 (in 32-bit words, minus one).
+    let mut header = [0x81, 206, 0, 2, 0, 0, 0, 0];
+    header[4..8].copy_from_slice(&our_ssrc.to_be_bytes());
+    let mut body = media_ssrc.to_be_bytes().to_vec();
+    if !cipher.seal(counter, &header, &mut body) {
+        return None;
+    }
+    let mut out = header.to_vec();
+    out.extend_from_slice(&body);
+    out.extend_from_slice(&counter.to_be_bytes());
+    Some(out)
+}
+
 #[derive(Debug)]
 pub struct Packet {
     pub payload_type: u8,
