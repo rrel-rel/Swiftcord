@@ -114,6 +114,39 @@ pub fn seal_pli(cipher: &Cipher, our_ssrc: u32, media_ssrc: u32, counter: u32) -
     Some(out)
 }
 
+/// An encrypted RTCP generic NACK asking for specific lost packets to be retransmitted (RFC 4585): each entry
+/// is a sequence number plus a bitmask of the 16 following ones.
+pub fn seal_nack(cipher: &Cipher, our_ssrc: u32, media_ssrc: u32, lost: &[u16], counter: u32) -> Option<Vec<u8>> {
+    let mut fci: Vec<(u16, u16)> = Vec::new();
+    for &seq in lost {
+        match fci.last_mut() {
+            Some((pid, blp)) if seq.wrapping_sub(*pid).wrapping_sub(1) < 16 && seq != *pid => {
+                *blp |= 1 << seq.wrapping_sub(*pid).wrapping_sub(1);
+            }
+            _ => fci.push((seq, 0)),
+        }
+    }
+    if fci.is_empty() {
+        return None;
+    }
+    let words = 2 + fci.len() as u16; // length field: total 32-bit words minus one
+    let mut header = [0x81, 205, 0, 0, 0, 0, 0, 0];
+    header[2..4].copy_from_slice(&words.to_be_bytes());
+    header[4..8].copy_from_slice(&our_ssrc.to_be_bytes());
+    let mut body = media_ssrc.to_be_bytes().to_vec();
+    for (pid, blp) in fci {
+        body.extend_from_slice(&pid.to_be_bytes());
+        body.extend_from_slice(&blp.to_be_bytes());
+    }
+    if !cipher.seal(counter, &header, &mut body) {
+        return None;
+    }
+    let mut out = header.to_vec();
+    out.extend_from_slice(&body);
+    out.extend_from_slice(&counter.to_be_bytes());
+    Some(out)
+}
+
 #[derive(Debug)]
 pub struct Packet {
     pub payload_type: u8,
@@ -156,6 +189,15 @@ pub fn open(cipher: &Cipher, data: &[u8]) -> Option<Packet> {
         return None;
     }
     buf.drain(..skip);
+    // With the padding bit set, the (decrypted) payload ends in filler whose last byte gives its length. Video
+    // uses it a lot, including padding-only packets for bandwidth probing.
+    if data[0] & 0x20 != 0 {
+        let pad = *buf.last()? as usize;
+        if pad == 0 || pad > buf.len() {
+            return None;
+        }
+        buf.truncate(buf.len() - pad);
+    }
     Some(Packet {
         payload_type: data[1] & 0x7f,
         marker: data[1] & 0x80 != 0,
@@ -223,6 +265,35 @@ mod tests {
         let p = open(&c, &header).unwrap();
         assert_eq!(p.payload, b"audio");
         assert_eq!(p.ssrc, 5);
+    }
+
+    #[test]
+    fn nack_packs_neighbours_into_bitmasks() {
+        let c = Cipher::new(Mode::Aes256Gcm, &[3u8; 32]).unwrap();
+        let p = seal_nack(&c, 1, 2, &[100, 101, 103, 200], 0).unwrap();
+        // Header + media SSRC + two FCI entries + tag + nonce.
+        assert_eq!(p.len(), 8 + 4 + 8 + 16 + 4);
+        assert_eq!(u16::from_be_bytes([p[2], p[3]]), 4);
+        let Cipher::Aes(aes) = &c else { unreachable!() };
+        let mut body = p[8..p.len() - 4].to_vec();
+        aes.decrypt_in_place(&[0u8; 12].into(), &p[..8], &mut body).unwrap();
+        // 100 with 101 (bit 0) and 103 (bit 2); then 200 alone.
+        assert_eq!(&body[4..], &[0, 100, 0, 0b101, 0, 200, 0, 0]);
+    }
+
+    #[test]
+    fn strips_padding() {
+        let c = Cipher::new(Mode::Aes256Gcm, &[2u8; 32]).unwrap();
+        let mut header = vec![0xA0, 101, 0, 7, 0, 0, 0, 9, 0, 0, 0, 5];
+        let mut body = b"frame".to_vec();
+        body.extend_from_slice(&[0, 0, 3]);
+        let mut nonce = [0u8; 12];
+        nonce[..4].copy_from_slice(&1u32.to_be_bytes());
+        let Cipher::Aes(aes) = &c else { unreachable!() };
+        aes.encrypt_in_place(&nonce.into(), &header, &mut body).unwrap();
+        header.extend_from_slice(&body);
+        header.extend_from_slice(&1u32.to_be_bytes());
+        assert_eq!(open(&c, &header).unwrap().payload, b"frame");
     }
 
     #[test]

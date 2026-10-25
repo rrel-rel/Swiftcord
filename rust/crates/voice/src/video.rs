@@ -1,7 +1,8 @@
 //! Received video: H.264 RTP depacketizing into Annex-B access units, decoding through Windows' Media
 //! Foundation H.264 decoder (hardware-accelerated where available, nothing to ship), and NV12 → RGBA.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::time::{Duration, Instant};
 
 pub const H264_PAYLOAD_TYPE: u8 = 101;
 pub const H264_RTX_PAYLOAD_TYPE: u8 = 102;
@@ -18,84 +19,182 @@ pub struct EncodedFrame {
     pub keyframe: bool,
 }
 
-/// Reassembles RTP packets (RFC 6184: single NAL units, STAP-A and FU-A) into frames. Packets are reordered
-/// within a frame; a frame with a missing packet is dropped, and frames after it are held back until the
-/// next keyframe (the caller should request one).
-#[derive(Default)]
-pub struct H264Depacketizer {
-    current: Option<u32>,
-    packets: BTreeMap<u16, (bool, Vec<u8>)>,
-    /// Waiting for a keyframe after loss.
-    broken: bool,
-    last_seq: Option<u16>,
-    pub needs_keyframe: bool,
+/// Gaps unfilled for this long are given up on (the frame is dropped and a keyframe requested).
+const GIVE_UP: Duration = Duration::from_millis(300);
+/// How often a missing packet is re-requested, and how many times.
+const NACK_INTERVAL: Duration = Duration::from_millis(60);
+const NACK_TRIES: u8 = 3;
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct VideoStats {
+    pub packets: u64,
+    pub retransmitted: u64,
+    pub frames: u64,
+    pub lost_frames: u64,
+    pub nacked: u64,
 }
 
-impl H264Depacketizer {
-    /// For joining a stream midway: frames are held back until the first keyframe, which is requested.
-    pub fn awaiting_keyframe() -> Self {
-        Self { broken: true, needs_keyframe: true, ..Default::default() }
+/// Reassembles one video SSRC's RTP packets (RFC 6184: single NAL units, STAP-A and FU-A) into frames, in
+/// sequence order. Packets may arrive out of order or be retransmitted; missing ones are reported for NACKs
+/// and, if they don't turn up in time, the frame is dropped and later frames are held back until the next
+/// keyframe (which the caller should request).
+pub struct VideoReceiver {
+    packets: BTreeMap<u64, (u32, bool, Vec<u8>)>,
+    highest: Option<u64>,
+    /// The first sequence number of the next frame.
+    next: Option<u64>,
+    gap_since: Option<(u64, Instant)>,
+    nacked: HashMap<u64, (Instant, u8)>,
+    /// Holding frames back until a keyframe.
+    broken: bool,
+    pub needs_keyframe: bool,
+    pub stats: VideoStats,
+}
+
+impl Default for VideoReceiver {
+    /// Joining a stream midway: frames are held back until the first keyframe, which should be requested.
+    fn default() -> Self {
+        Self {
+            packets: BTreeMap::new(),
+            highest: None,
+            next: None,
+            gap_since: None,
+            nacked: HashMap::new(),
+            broken: true,
+            needs_keyframe: true,
+            stats: VideoStats::default(),
+        }
+    }
+}
+
+impl VideoReceiver {
+    fn unwrap_seq(&self, seq: u16) -> u64 {
+        let Some(h) = self.highest else { return (1 << 16) + seq as u64 };
+        let base = h & !0xffff;
+        [base.wrapping_sub(1 << 16), base, base + (1 << 16)].into_iter().map(|b| b + seq as u64).min_by_key(|&c| c.abs_diff(h)).unwrap()
     }
 
-    /// Adds one packet's payload; returns a frame when one completes.
-    pub fn push(&mut self, seq: u16, timestamp: u32, marker: bool, payload: Vec<u8>) -> Option<EncodedFrame> {
-        if self.current != Some(timestamp) {
-            if self.current.is_some() && !self.packets.is_empty() {
-                // The previous frame never got its marker: lost tail.
-                self.mark_broken();
+    pub fn push(&mut self, seq: u16, timestamp: u32, marker: bool, payload: Vec<u8>, retransmitted: bool) {
+        let ext = self.unwrap_seq(seq);
+        self.stats.packets += 1;
+        if retransmitted {
+            self.stats.retransmitted += 1;
+        }
+        if self.next.is_some_and(|n| ext < n) {
+            return; // Already played past it.
+        }
+        self.next.get_or_insert(ext);
+        self.highest = Some(self.highest.map_or(ext, |h| h.max(ext)));
+        self.nacked.remove(&ext);
+        // Padding-only packets (bandwidth probes) carry no media but still occupy a sequence number.
+        self.packets.insert(ext, (timestamp, marker, payload));
+    }
+
+    /// Emits completed frames, and gives up on gaps that have waited too long.
+    pub fn poll(&mut self) -> Vec<EncodedFrame> {
+        let mut out = Vec::new();
+        while let Some(start) = self.next {
+            // Walk forward from the start of the next frame to its marker packet.
+            let mut s = start;
+            let complete = loop {
+                match self.packets.get(&s) {
+                    Some(&(_, true, _)) => break true,
+                    Some(_) => s += 1,
+                    None => break false,
+                }
+            };
+            if complete {
+                let parts: Vec<(u32, bool, Vec<u8>)> = (start..=s).filter_map(|k| self.packets.remove(&k)).collect();
+                self.next = Some(s + 1);
+                self.gap_since = None;
+                let ts = parts.last().map_or(0, |p| p.0);
+                // Packets from an earlier timestamp would be the tail of a frame we joined midway; skip them.
+                let payloads: Vec<Vec<u8>> = parts.into_iter().filter(|p| p.0 == ts && !p.2.is_empty()).map(|p| p.2).collect();
+                if let Some(frame) = self.emit(&payloads, ts) {
+                    out.push(frame);
+                }
+                continue;
             }
-            self.current = Some(timestamp);
-            self.packets.clear();
+            // A gap at `s`. If nothing has arrived beyond it, we're simply waiting for the rest of the frame.
+            if self.highest.is_none_or(|h| h <= s) {
+                break;
+            }
+            let since = match self.gap_since {
+                Some((g, t)) if g == s => t,
+                _ => {
+                    self.gap_since = Some((s, Instant::now()));
+                    Instant::now()
+                }
+            };
+            if since.elapsed() < GIVE_UP && self.packets.len() < 2000 {
+                break;
+            }
+            // Give up: skip to just past the next frame boundary after the gap.
+            self.stats.lost_frames += 1;
+            self.broken = true;
+            self.needs_keyframe = true;
+            self.gap_since = None;
+            let boundary = self.packets.range(s..).find(|(_, p)| p.1).map(|(&k, _)| k);
+            match boundary {
+                Some(b) => {
+                    self.packets.retain(|&k, _| k > b);
+                    self.next = Some(b + 1);
+                }
+                None => {
+                    // No complete frame yet beyond the gap: restart from what's buffered.
+                    self.next = self.packets.keys().next().copied();
+                    if self.next.is_none() {
+                        break;
+                    }
+                }
+            }
         }
-        self.packets.insert(seq, (marker, payload));
-        if !marker {
+        self.nacked.retain(|&k, _| self.next.is_none_or(|n| k >= n));
+        out
+    }
+
+    fn emit(&mut self, payloads: &[Vec<u8>], ts: u32) -> Option<EncodedFrame> {
+        let Some((data, keyframe)) = assemble(payloads) else {
+            return None;
+        };
+        if self.broken && !keyframe {
             return None;
         }
-        // The frame is complete if its sequence numbers are contiguous and follow the previous frame's.
-        let seqs: Vec<u16> = self.packets.keys().copied().collect();
-        let first = Self::first_in_order(&seqs);
-        let contiguous = (0..seqs.len()).all(|i| self.packets.contains_key(&first.wrapping_add(i as u16)));
-        let follows = self.last_seq.is_none_or(|l| l.wrapping_add(1) == first);
-        let last = first.wrapping_add(seqs.len() as u16 - 1);
-        let ordered: Vec<Vec<u8>> = (0..seqs.len()).filter_map(|i| self.packets.remove(&first.wrapping_add(i as u16)).map(|p| p.1)).collect();
-        self.packets.clear();
-        self.current = None;
-        self.last_seq = Some(last);
-        if !contiguous {
-            self.mark_broken();
-            return None;
-        }
-        let frame = assemble(&ordered)?;
-        if !follows && !frame.1 {
-            self.mark_broken();
-        }
-        if self.broken && !frame.1 {
-            return None;
-        }
-        if frame.1 {
+        if keyframe {
             self.broken = false;
             self.needs_keyframe = false;
         }
-        Some(EncodedFrame { data: frame.0, timestamp, keyframe: frame.1 })
+        self.stats.frames += 1;
+        Some(EncodedFrame { data, timestamp: ts, keyframe })
     }
 
-    fn mark_broken(&mut self) {
-        self.broken = true;
-        self.needs_keyframe = true;
-    }
-
-    /// The first sequence number, allowing for wraparound within the frame.
-    fn first_in_order(seqs: &[u16]) -> u16 {
-        // Sorted numerically; if the frame wraps, the run after the largest gap comes first.
-        let mut best = (0u16, seqs[0]);
-        for w in seqs.windows(2) {
-            let gap = w[1].wrapping_sub(w[0]);
-            if gap > best.0 {
-                best = (gap, w[1]);
+    /// Sequence numbers to NACK now: missing ones between the next frame and the newest packet, each asked for
+    /// at most a few times.
+    pub fn nacks(&mut self) -> Vec<u16> {
+        let (Some(next), Some(high)) = (self.next, self.highest) else { return Vec::new() };
+        let now = Instant::now();
+        let mut out = Vec::new();
+        for k in next..high {
+            if out.len() >= 64 {
+                break;
+            }
+            if self.packets.contains_key(&k) {
+                continue;
+            }
+            let e = self.nacked.entry(k).or_insert((now - NACK_INTERVAL * 2, 0));
+            if e.1 < NACK_TRIES && now.duration_since(e.0) >= NACK_INTERVAL {
+                *e = (now, e.1 + 1);
+                out.push(k as u16);
             }
         }
-        let wrap_gap = seqs[0].wrapping_sub(*seqs.last().unwrap());
-        if wrap_gap >= best.0 { seqs[0] } else { best.1 }
+        self.stats.nacked += out.len() as u64;
+        out
+    }
+
+    /// The decoder lost track (a dropped or undecodable frame): hold back until a keyframe.
+    pub fn resync(&mut self) {
+        self.broken = true;
+        self.needs_keyframe = true;
     }
 }
 
@@ -243,8 +342,10 @@ mod mf {
             Ok(())
         }
 
-        /// Feeds one Annex-B access unit and returns any pictures that came out.
-        pub fn decode(&mut self, annexb: &[u8]) -> windows::core::Result<Vec<Picture>> {
+        /// Feeds one Annex-B access unit. Pictures that come out are converted for display only when `convert`
+        /// is set (conversion costs far more than decoding, and a viewer that has fallen behind only needs the
+        /// latest); every frame is still decoded, so later frames have their references.
+        pub fn decode(&mut self, annexb: &[u8], convert: bool) -> windows::core::Result<Vec<Picture>> {
             unsafe {
                 let buf = MFCreateMemoryBuffer(annexb.len() as u32)?;
                 let mut ptr = std::ptr::null_mut();
@@ -259,13 +360,14 @@ mod mf {
                 self.mft.ProcessInput(0, &sample, 0)?;
             }
             let mut pictures = Vec::new();
-            while let Some(p) = self.drain_one()? {
-                pictures.push(p);
+            while let Some(p) = self.drain_one(convert)? {
+                pictures.extend(p);
             }
             Ok(pictures)
         }
 
-        fn drain_one(&mut self) -> windows::core::Result<Option<Picture>> {
+        /// One output sample: `None` when the decoder needs more input, `Some(None)` for a picture not converted.
+        fn drain_one(&mut self, convert: bool) -> windows::core::Result<Option<Option<Picture>>> {
             unsafe {
                 let own_sample = if self.provides_samples {
                     None
@@ -283,12 +385,15 @@ mod mf {
                     Err(e) if e.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(None),
                     Err(e) if e.code() == MF_E_TRANSFORM_STREAM_CHANGE => {
                         self.configure_output()?;
-                        return self.drain_one();
+                        return self.drain_one(convert);
                     }
                     Err(e) => return Err(e),
                     Ok(()) => {}
                 }
                 let Some(sample) = sample else { return Ok(None) };
+                if !convert {
+                    return Ok(Some(None));
+                }
                 let buffer = sample.ConvertToContiguousBuffer()?;
                 let mut ptr = std::ptr::null_mut();
                 let mut len = 0u32;
@@ -301,7 +406,7 @@ mod mf {
                 let picture = (data.len() >= uv_offset + stride * self.height / 2)
                     .then(|| Picture { width: self.width, height: self.height, rgba: nv12_to_rgba(data, self.width, self.height, stride, uv_offset) });
                 buffer.Unlock()?;
-                Ok(picture)
+                Ok(Some(picture))
             }
         }
     }
@@ -319,47 +424,86 @@ mod mf {
 mod tests {
     use super::*;
 
+    fn rx() -> VideoReceiver {
+        VideoReceiver::default()
+    }
+
     #[test]
     fn single_and_fragmented_nals() {
-        let mut d = H264Depacketizer::default();
+        let mut d = rx();
         // SPS (type 7) alone, then an IDR slice split across two FU-A packets.
-        assert!(d.push(1, 900, false, vec![0x67, 0xAA]).is_none());
-        assert!(d.push(2, 900, false, vec![0x7C, 0x85, 1, 2]).is_none());
-        let f = d.push(3, 900, true, vec![0x7C, 0x45, 3, 4]).unwrap();
+        d.push(1, 900, false, vec![0x67, 0xAA], false);
+        d.push(2, 900, false, vec![0x7C, 0x85, 1, 2], false);
+        d.push(3, 900, true, vec![0x7C, 0x45, 3, 4], false);
+        let f = d.poll().pop().unwrap();
         assert!(f.keyframe);
         assert_eq!(f.data, [0, 0, 0, 1, 0x67, 0xAA, 0, 0, 0, 1, 0x65, 1, 2, 3, 4]);
     }
 
     #[test]
     fn stap_a() {
-        let mut d = H264Depacketizer::default();
-        let stap = vec![0x18, 0, 2, 0x67, 1, 0, 2, 0x68, 2];
-        assert!(d.push(10, 5, false, stap.clone()).is_none());
-        let f = d.push(11, 5, true, vec![0x65, 9]).unwrap();
+        let mut d = rx();
+        d.push(10, 5, false, vec![0x18, 0, 2, 0x67, 1, 0, 2, 0x68, 2], false);
+        d.push(11, 5, true, vec![0x65, 9], false);
+        let f = d.poll().pop().unwrap();
         assert_eq!(f.data, [0, 0, 0, 1, 0x67, 1, 0, 0, 0, 1, 0x68, 2, 0, 0, 0, 1, 0x65, 9]);
     }
 
     #[test]
-    fn loss_holds_frames_until_keyframe() {
-        let mut d = H264Depacketizer::default();
-        assert!(d.push(1, 1, true, vec![0x65, 0]).unwrap().keyframe);
-        // Packet 3 of the next frame is lost.
-        assert!(d.push(2, 2, false, vec![0x7C, 0x81, 0]).is_none());
-        assert!(d.push(4, 2, true, vec![0x7C, 0x41, 0]).is_none());
-        assert!(d.needs_keyframe);
-        // A following P-frame is held back…
-        assert!(d.push(5, 3, true, vec![0x41, 0]).is_none());
-        // …until a keyframe arrives.
-        assert!(d.push(6, 4, true, vec![0x65, 1]).is_some());
+    fn reordering_across_frames() {
+        let mut d = rx();
+        d.push(1, 1, true, vec![0x65, 0], false);
+        // Frame 2's marker arrives before its first packet, and frame 3 before both.
+        d.push(4, 3, true, vec![0x41, 3], false);
+        d.push(3, 2, true, vec![0x7C, 0x41, 2], false);
+        assert_eq!(d.poll().len(), 1, "only the keyframe so far; 2 is waiting for packet 2");
+        d.push(2, 2, false, vec![0x7C, 0x81, 1], false);
+        let frames = d.poll();
+        assert_eq!(frames.iter().map(|f| f.timestamp).collect::<Vec<_>>(), [2, 3]);
         assert!(!d.needs_keyframe);
     }
 
     #[test]
-    fn wraps_sequence_numbers_within_a_frame() {
-        let mut d = H264Depacketizer::default();
-        assert!(d.push(65535, 7, false, vec![0x7C, 0x85, 1]).is_none());
-        let f = d.push(0, 7, true, vec![0x7C, 0x45, 2]).unwrap();
-        assert_eq!(f.data, [0, 0, 0, 1, 0x65, 1, 2]);
+    fn nacks_and_recovers_retransmissions() {
+        let mut d = rx();
+        d.push(1, 1, true, vec![0x65, 0], false);
+        d.poll();
+        d.push(2, 2, false, vec![0x7C, 0x81, 1], false);
+        d.push(4, 2, true, vec![0x7C, 0x41, 3], false);
+        assert!(d.poll().is_empty());
+        assert_eq!(d.nacks(), [3]);
+        assert!(d.nacks().is_empty(), "not re-requested immediately");
+        d.push(3, 2, false, vec![0x7C, 0x01, 2], true);
+        let f = d.poll().pop().unwrap();
+        assert_eq!(f.data, [0, 0, 0, 1, 0x61, 1, 2, 3]);
+        assert_eq!(d.stats.retransmitted, 1);
+    }
+
+    #[test]
+    fn gives_up_on_lost_packets_and_waits_for_keyframe() {
+        let mut d = rx();
+        d.push(1, 1, true, vec![0x65, 0], false);
+        d.poll();
+        d.push(2, 2, false, vec![0x7C, 0x81, 1], false);
+        d.push(4, 2, true, vec![0x7C, 0x41, 3], false);
+        d.push(5, 3, true, vec![0x41, 4], false);
+        d.poll();
+        // As if we had waited out the gap.
+        let (gap, _) = d.gap_since.unwrap();
+        d.gap_since = Some((gap, Instant::now() - GIVE_UP));
+        assert!(d.poll().is_empty(), "frame 2 lost; P-frame 3 held back");
+        assert!(d.needs_keyframe);
+        d.push(6, 4, true, vec![0x65, 5], false);
+        assert!(d.poll().pop().unwrap().keyframe);
+        assert_eq!(d.stats.lost_frames, 1);
+    }
+
+    #[test]
+    fn wraps_sequence_numbers() {
+        let mut d = rx();
+        d.push(65535, 7, false, vec![0x7C, 0x85, 1], false);
+        d.push(0, 7, true, vec![0x7C, 0x45, 2], false);
+        assert_eq!(d.poll().pop().unwrap().data, [0, 0, 0, 1, 0x65, 1, 2]);
     }
 
     #[test]
@@ -493,10 +637,10 @@ mod tests {
         let lum = |mb: usize| if mb % 2 == 0 { 40 } else { 200 };
         let stream = pcm_stream(w, h, lum);
         let mut dec = Decoder::new().expect("H.264 decoder");
-        let mut pics = dec.decode(&stream).expect("decode");
+        let mut pics = dec.decode(&stream, true).expect("decode");
         // Low-latency mode may still hold the first picture until more input arrives.
         if pics.is_empty() {
-            pics = dec.decode(&stream).expect("decode");
+            pics = dec.decode(&stream, true).expect("decode");
         }
         let p = pics.first().expect("a picture");
         assert_eq!((p.width, p.height), (64, 64));
