@@ -1,4 +1,4 @@
-//! The chat area: header, a virtualized message list that stays pinned to the bottom and keeps its place
+﻿//! The chat area: header, a virtualized message list that stays pinned to the bottom and keeps its place
 //! when older history loads above, typing indicator and composer.
 
 use std::collections::HashMap;
@@ -58,7 +58,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Actio
     let state = &s.state;
     let Some(channel) = uis.channel().and_then(|c| state.channel(c)) else {
         ui.centered_and_justified(|ui| {
-            ui.label(RichText::new(if s.ready { "No channel selected" } else { "Connecting…" }).color(theme::MUTED));
+            ui.label(RichText::new(if s.ready { "No channel selected" } else { "Connectingâ€¦" }).color(theme::MUTED));
         });
         return;
     };
@@ -189,11 +189,13 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
     }
 
     let mut area = egui::ScrollArea::vertical().id_salt(("history", channel.id)).auto_shrink(false).stick_to_bottom(true);
+    // The scroll area clamps its stored offset, but the viewport it hands back uses the requested one, so an
+    // offset past the end would hide every row. Clamp it here.
+    let max_offset = (total - ui.available_height()).max(0.0);
     if let Some(y) = scroll_to {
-        area = area.vertical_scroll_offset(y);
+        area = area.vertical_scroll_offset(y.clamp(0.0, max_offset));
     } else if view.at_bottom {
-        // Clamped to the real maximum by the scroll area.
-        area = area.vertical_scroll_offset(total);
+        area = area.vertical_scroll_offset(max_offset);
     }
 
     let highlight = view.highlight.map(|(id, _)| id);
@@ -321,15 +323,15 @@ fn typing_line(ui: &mut Ui, s: &Session, c: &Channel) {
     let users = s.state.typing_users(c.id);
     let text = match users.len() {
         0 => String::new(),
-        1 => format!("{} is typing…", s.state.display_name(users[0], c.guild_id)),
-        2 => format!("{} and {} are typing…", s.state.display_name(users[0], c.guild_id), s.state.display_name(users[1], c.guild_id)),
+        1 => format!("{} is typingâ€¦", s.state.display_name(users[0], c.guild_id)),
+        2 => format!("{} and {} are typingâ€¦", s.state.display_name(users[0], c.guild_id), s.state.display_name(users[1], c.guild_id)),
         3 => format!(
-            "{}, {} and {} are typing…",
+            "{}, {} and {} are typingâ€¦",
             s.state.display_name(users[0], c.guild_id),
             s.state.display_name(users[1], c.guild_id),
             s.state.display_name(users[2], c.guild_id)
         ),
-        _ => "Several people are typing…".to_owned(),
+        _ => "Several people are typingâ€¦".to_owned(),
     };
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
     if !text.is_empty() {
@@ -475,7 +477,7 @@ fn pins_panel(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, pins: Op
         return;
     };
     if pins.is_empty() {
-        ui.label(RichText::new("This channel doesn't have any pinned messages… yet.").color(theme::MUTED));
+        ui.label(RichText::new("This channel doesn't have any pinned messagesâ€¦ yet.").color(theme::MUTED));
         return;
     }
     let perms = s.state.permissions(c.id);

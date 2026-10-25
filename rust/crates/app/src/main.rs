@@ -53,8 +53,8 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("Swiftcord")
             .with_app_id("Swiftcord")
-            .with_inner_size([1240.0, 780.0])
-            .with_min_inner_size([820.0, 520.0]),
+            .with_inner_size([1100.0, 680.0])
+            .with_min_inner_size([760.0, 460.0]),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };

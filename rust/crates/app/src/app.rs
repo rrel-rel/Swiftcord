@@ -268,9 +268,13 @@ impl App {
                 self.ui.loading.remove(&channel);
                 let Some(s) = &mut self.session else { return };
                 match result {
-                    Ok(page) => s.state.add_history(channel, page, HISTORY_PAGE as usize),
+                    Ok(page) => {
+                        tracing::info!("loaded {} messages in {channel}", page.len());
+                        s.state.add_history(channel, page, HISTORY_PAGE as usize)
+                    }
                     Err(e) => {
                         // Don't retry every frame; wait a while before trying this channel again.
+                        tracing::warn!("history for {channel} failed: {e}");
                         self.history_failed.insert(channel, Instant::now());
                         self.banner(format!("Couldn't load messages: {e}"));
                     }
@@ -289,6 +293,7 @@ impl App {
                         if let Some(m) = s.state.message_mut(channel, nonce) {
                             m.pending = Some(PendingState::Failed);
                         }
+                        tracing::warn!("send to {channel} failed: {e}");
                         self.banner(format!("Message not sent: {e}"));
                     }
                 }
@@ -338,7 +343,10 @@ impl App {
     fn handle_gateway(&mut self, out: GatewayOutput) {
         let Some(s) = &mut self.session else { return };
         match out {
-            GatewayOutput::State(c) => s.conn = c,
+            GatewayOutput::State(c) => {
+                tracing::info!("gateway: {c:?}");
+                s.conn = c;
+            }
             GatewayOutput::Fatal { code, reason } => {
                 let msg = if code == 4004 { "Your session has expired. Please sign in again.".to_owned() } else { format!("Disconnected: {reason} ({code})") };
                 self.end_session(false);
@@ -349,6 +357,7 @@ impl App {
                 let is_ready = matches!(event, swiftcord_core::events::Event::Ready(_));
                 let notices = s.state.apply(event);
                 if is_ready {
+                    tracing::info!("READY: {} channels, me = {:?}", s.state.private_channels().len(), s.state.me.as_ref().map(|m| m.id));
                     s.ready = true;
                     s.subscribed.clear();
                     self.on_ready();
@@ -475,6 +484,7 @@ impl App {
 
     fn fetch_history(&mut self, channel: Snowflake, before: Option<Snowflake>) {
         let Some(s) = &self.session else { return };
+        tracing::info!("fetching history for {channel} before {before:?}");
         self.ui.loading.insert(channel);
         let rest = s.rest.clone();
         self.spawn(async move {
