@@ -21,3 +21,6 @@ cpal = "0.18"
 davey = "0.1.5"
 # libopus transpiled to Rust: no C toolchain or CMake needed, which matters on ARM64 Windows.
 unsafe-libopus = "0.2"
+
+[dev-dependencies]
+tracing-subscriber = "0.3"

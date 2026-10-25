@@ -136,6 +136,7 @@ pub struct App {
     pub emoji: ui::emoji::Catalog,
     pub voice: Option<crate::voice_glue::Call>,
     pub settings: crate::settings::Settings,
+    history_failed: HashMap<Snowflake, Instant>,
 }
 
 impl App {
@@ -157,6 +158,7 @@ impl App {
             emoji: ui::emoji::Catalog::load(),
             voice: None,
             settings: crate::settings::Settings::load(),
+            history_failed: HashMap::new(),
         };
         match credentials::load_token() {
             Some(token) => app.start_session(token),
@@ -267,7 +269,11 @@ impl App {
                 let Some(s) = &mut self.session else { return };
                 match result {
                     Ok(page) => s.state.add_history(channel, page, HISTORY_PAGE as usize),
-                    Err(e) => self.banner(format!("Couldn't load messages: {e}")),
+                    Err(e) => {
+                        // Don't retry every frame; wait a while before trying this channel again.
+                        self.history_failed.insert(channel, Instant::now());
+                        self.banner(format!("Couldn't load messages: {e}"));
+                    }
                 }
             }
             AppEvent::Sent { channel, nonce, result } => {
@@ -276,7 +282,8 @@ impl App {
                     Ok(msg) => {
                         self.outgoing.remove(&nonce);
                         s.state.remove_message(channel, nonce);
-                        s.state.add_history(channel, vec![msg], 0);
+                        // Inserted like a pending message so it doesn't mark unloaded history as loaded.
+                        s.state.add_pending(msg);
                     }
                     Err(e) => {
                         if let Some(m) = s.state.message_mut(channel, nonce) {
@@ -458,6 +465,9 @@ impl App {
     pub fn ensure_history(&mut self, channel: Snowflake) {
         let Some(s) = &self.session else { return };
         if !s.ready || self.ui.loading.contains(&channel) || s.state.messages(channel).is_some_and(|m| m.loaded) {
+            return;
+        }
+        if self.history_failed.get(&channel).is_some_and(|t| t.elapsed() < Duration::from_secs(15)) {
             return;
         }
         self.fetch_history(channel, None);

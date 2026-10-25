@@ -39,25 +39,17 @@ pub mod icon {
     pub const REPLY: &str = "\u{E97A}";
     pub const EDIT: &str = "\u{E70F}";
     pub const DELETE: &str = "\u{E74D}";
-    pub const COPY: &str = "\u{E8C8}";
     pub const HANG_UP: &str = "\u{E778}";
     pub const SPEAKER: &str = "\u{E767}";
-    pub const SCREEN: &str = "\u{E7F4}";
-    pub const SEND: &str = "\u{E724}";
-    pub const ATTACH: &str = "\u{E723}";
     pub const PEOPLE: &str = "\u{E716}";
     pub const CHEVRON_DOWN: &str = "\u{E70D}";
     pub const CHEVRON_RIGHT: &str = "\u{E76C}";
     pub const CLOSE: &str = "\u{E711}";
-    pub const REFRESH: &str = "\u{E72C}";
     pub const HOME: &str = "\u{E80F}";
-    pub const MORE: &str = "\u{E712}";
-    pub const LINK: &str = "\u{E71B}";
     pub const DOWNLOAD: &str = "\u{E896}";
     pub const PLAY: &str = "\u{E768}";
     pub const FOLDER: &str = "\u{E8B7}";
     pub const FILE: &str = "\u{E8A5}";
-    pub const SIGN_OUT: &str = "\u{F3B1}";
     pub const SIGNAL: &str = "\u{E701}";
 }
 
