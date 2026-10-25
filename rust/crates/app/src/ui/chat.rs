@@ -5,14 +5,16 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use eframe::egui::{self, Align, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
+use swiftcord_core::mentions::{self, Token};
 use swiftcord_core::models::{Channel, ChannelType, Message};
 use swiftcord_core::permissions::perm;
 use swiftcord_core::Snowflake;
 
 use crate::app::{Action, Session, UiState};
 use crate::theme::{self, icon};
-use crate::ui::emoji::PickerTarget;
+use crate::ui::emoji::{Catalog, PickerTarget};
 use crate::ui::message::{self, Ctx};
+use crate::ui::suggest::{self, Suggestion};
 use crate::ui::widgets;
 
 /// Space around the list that's laid out even though it's off-screen, so short scrolls don't show gaps.
@@ -55,7 +57,7 @@ struct Row<'a> {
     divider: bool,
 }
 
-pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) {
+pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, actions: &mut Vec<Action>) {
     let state = &s.state;
     let Some(channel) = uis.channel().and_then(|c| state.channel(c)) else {
         ui.centered_and_justified(|ui| {
@@ -73,7 +75,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Actio
 
     egui::Panel::bottom(("composer", channel.id)).frame(egui::Frame::new().fill(theme::CHAT).inner_margin(egui::Margin { left: 16, right: 16, top: 0, bottom: 20 })).show(ui, |ui| {
         typing_line(ui, s, channel);
-        composer(ui, s, uis, channel, perms, actions);
+        composer(ui, s, uis, catalog, channel, perms, actions);
     });
 
     if let Some((pin_channel, pins)) = &uis.pins {
@@ -372,7 +374,31 @@ fn typing_line(ui: &mut Ui, s: &Session, c: &Channel) {
     }
 }
 
-fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, perms: u64, actions: &mut Vec<Action>) {
+/// Byte offset of a character index.
+fn byte_at(text: &str, chars: usize) -> usize {
+    text.char_indices().nth(chars).map_or(text.len(), |(i, _)| i)
+}
+
+/// Replaces the token being typed with a picked suggestion and moves the caret after it.
+fn accept(ctx: &egui::Context, edit_id: egui::Id, draft: &mut crate::app::Draft, token: &Token, item: &Suggestion) {
+    let caret = byte_at(&draft.text, draft.caret);
+    let (text, raw) = item.insertion();
+    let inserted = format!("{text} ");
+    draft.text.replace_range(token.start..caret, &inserted);
+    if let Some(raw) = raw {
+        draft.mentions.retain(|(d, _)| *d != text);
+        draft.mentions.push((text, raw));
+    }
+    draft.caret = draft.text[..token.start].chars().count() + inserted.chars().count();
+    draft.selected = 0;
+    if let Some(mut st) = egui::TextEdit::load_state(ctx, edit_id) {
+        st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(draft.caret))));
+        st.store(ctx, edit_id);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &Channel, perms: u64, actions: &mut Vec<Action>) {
     let state = &s.state;
     if perms & perm::SEND_MESSAGES == 0 {
         egui::Frame::new().fill(theme::INPUT).corner_radius(8).inner_margin(14).show(ui, |ui| {
@@ -385,22 +411,68 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, perms: u64
     let focused = ui.ctx().memory(|m| m.has_focus(edit_id));
     let draft = uis.drafts.entry(c.id).or_default();
 
-    // Keys handled before the text box sees them: Enter sends (Shift+Enter is a newline), Escape cancels a
-    // reply, Up edits your last message.
-    let (enter, esc, up) = ui.input_mut(|i| {
+    // Autocomplete for the @/#/: token at the caret.
+    let at_caret = focused.then(|| mentions::token_at(&draft.text, byte_at(&draft.text, draft.caret))).flatten();
+    // Escape hides suggestions for that token only; they come back for the next one.
+    if at_caret.as_ref().map(|t| t.start) != draft.dismissed {
+        draft.dismissed = None;
+    }
+    let token = at_caret.filter(|t| draft.dismissed != Some(t.start));
+    let items = token.as_ref().map(|t| suggest::suggestions(s, catalog, c, t, perms)).unwrap_or_default();
+    draft.selected = draft.selected.min(items.len().saturating_sub(1));
+
+    // Server members aren't all known locally, so ask Discord as the user types (once they pause).
+    if let (Some(t), Some(g)) = (token.as_ref().filter(|t| t.trigger == '@' && !t.query.is_empty()), c.guild_id) {
+        let changed = uis.member_query.as_ref().is_none_or(|(qg, q, ..)| *qg != g || *q != t.query);
+        if changed {
+            uis.member_query = Some((g, t.query.clone(), Instant::now(), false));
+        }
+        if let Some((g, q, at, sent)) = &mut uis.member_query {
+            if !*sent && at.elapsed().as_millis() > 250 {
+                *sent = true;
+                actions.push(Action::SearchMembers { guild: *g, query: q.clone() });
+            } else if !*sent {
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(260));
+            }
+        }
+    }
+
+    // Keys handled before the text box sees them. With suggestions open: arrows choose, Tab/Enter insert,
+    // Escape closes. Otherwise Enter sends (Shift+Enter is a newline), Escape cancels a reply and Up edits
+    // your last message.
+    let suggesting = !items.is_empty();
+    let (enter, esc, up, down, tab) = ui.input_mut(|i| {
         let enter = focused && !i.modifiers.shift && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
         let esc = focused && i.key_pressed(egui::Key::Escape);
-        let up = focused && draft.text.is_empty() && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
-        (enter, esc, up)
+        let up = focused && (suggesting || draft.text.is_empty()) && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+        let down = focused && suggesting && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+        // Tab is always ours while typing (no tab characters in messages); it only completes suggestions.
+        let tab = focused && i.consume_key(egui::Modifiers::NONE, egui::Key::Tab) && suggesting;
+        (enter, esc, up, down, tab)
     });
-    if esc {
+    if suggesting {
+        let n = items.len();
+        if up {
+            draft.selected = (draft.selected + n - 1) % n;
+        }
+        if down {
+            draft.selected = (draft.selected + 1) % n;
+        }
+        if enter || tab {
+            accept(ui.ctx(), edit_id, draft, token.as_ref().unwrap(), &items[draft.selected]);
+        }
+        if esc {
+            draft.dismissed = token.as_ref().map(|t| t.start);
+        }
+    } else if esc {
         draft.reply = None;
     }
+    let (enter, up) = if suggesting { (false, false) } else { (enter, up) };
 
     let reply = draft.reply;
     let files: Vec<(String, usize)> = draft.files.iter().map(|f| (f.name.clone(), f.bytes.len())).collect();
 
-    egui::Frame::new().fill(theme::INPUT).corner_radius(8).show(ui, |ui| {
+    let frame = egui::Frame::new().fill(theme::INPUT).corner_radius(8).show(ui, |ui| {
         ui.set_width(ui.available_width());
         if let Some((rid, ping)) = reply {
             egui::Frame::new().fill(theme::SIDEBAR).corner_radius(egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }).inner_margin(egui::Margin::symmetric(14, 6)).show(ui, |ui| {
@@ -458,16 +530,28 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, perms: u64
                 _ => format!("Message #{}", c.label()),
             };
             let before = draft.text.len();
-            let r = ui.add(
-                egui::TextEdit::multiline(&mut draft.text)
-                    .id(edit_id)
-                    .hint_text(RichText::new(hint).color(theme::FAINT))
-                    .font(theme::font(15.5))
-                    .frame(egui::Frame::NONE)
-                    .desired_rows(1)
-                    .desired_width(ui.available_width() - emoji_w - 8.0)
-                    .margin(egui::Margin::symmetric(4, 12)),
-            );
+            let out = egui::TextEdit::multiline(&mut draft.text)
+                .id(edit_id)
+                .hint_text(RichText::new(hint).color(theme::FAINT))
+                .font(theme::font(15.5))
+                .frame(egui::Frame::NONE)
+                .desired_rows(1)
+                .desired_width(ui.available_width() - emoji_w - 8.0)
+                .margin(egui::Margin::symmetric(4, 12))
+                // Tab completes suggestions rather than moving focus.
+                .lock_focus(true)
+                .show(ui);
+            if let Some(range) = out.cursor_range {
+                if draft.caret != range.primary.index.0 {
+                    // Suggestions are worked out from the caret before drawing, so take another look now.
+                    draft.caret = range.primary.index.0;
+                    ui.ctx().request_repaint();
+                }
+            }
+            if draft.text.is_empty() {
+                draft.mentions.clear();
+            }
+            let r = out.response.response;
             if draft.text.len() != before && !draft.text.is_empty() {
                 actions.push(Action::Typing(c.id));
             }
@@ -482,6 +566,19 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, perms: u64
         });
     });
 
+    // Suggestions float above the composer.
+    if let Some(t) = token.as_ref().filter(|_| !items.is_empty()) {
+        let title = match t.trigger {
+            '@' => "MEMBERS",
+            '#' => "TEXT CHANNELS",
+            _ => "EMOJI",
+        };
+        let draft = uis.drafts.entry(c.id).or_default();
+        if let Some(i) = suggest::popup(ui, frame.response.rect, &items, draft.selected, title) {
+            accept(ui.ctx(), edit_id, draft, t, &items[i]);
+            ui.ctx().memory_mut(|m| m.request_focus(edit_id));
+        }
+    }
     if enter {
         actions.push(Action::Send(c.id));
     }

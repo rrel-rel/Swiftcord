@@ -58,6 +58,7 @@ fn main() -> eframe::Result {
             .with_inner_size([1100.0, 680.0])
             .with_min_inner_size([760.0, 460.0]),
         renderer: eframe::Renderer::Wgpu,
+        centered: true,
         ..Default::default()
     };
     let handle = rt.handle().clone();

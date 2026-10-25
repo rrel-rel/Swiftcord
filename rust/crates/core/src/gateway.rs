@@ -27,6 +27,7 @@ pub mod op {
     pub const VOICE_STATE_UPDATE: u8 = 4;
     pub const RESUME: u8 = 6;
     pub const RECONNECT: u8 = 7;
+    pub const REQUEST_GUILD_MEMBERS: u8 = 8;
     pub const INVALID_SESSION: u8 = 9;
     pub const HELLO: u8 = 10;
     pub const HEARTBEAT_ACK: u8 = 11;
@@ -113,6 +114,11 @@ impl Gateway {
             op::GUILD_SUBSCRIPTIONS,
             json!({ "guild_id": guild_id, "typing": true, "threads": true, "activities": true }),
         );
+    }
+
+    /// Searches a guild's members by name prefix; results arrive as GUILD_MEMBERS_CHUNK.
+    pub fn search_members(&self, guild_id: Snowflake, query: &str, limit: u32) {
+        self.send(op::REQUEST_GUILD_MEMBERS, json!({ "guild_id": [guild_id], "query": query, "limit": limit, "presences": false }));
     }
 
     /// Asks for a DM's call state (CALL_CREATE if a call is going on), as the official client does when a DM is

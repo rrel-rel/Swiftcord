@@ -290,6 +290,39 @@ impl State {
         v
     }
 
+    /// People matching a name prefix, for mention suggestions: a guild's cached members, or a DM's participants.
+    /// Prefix matches on any name rank first, then substring matches; at most `limit`.
+    pub fn search_people<'a>(&'a self, channel: &'a Channel, query: &str, limit: usize) -> Vec<&'a User> {
+        let q = query.to_lowercase();
+        let candidates: Vec<(&User, Option<&str>)> = match channel.guild_id {
+            Some(g) => self
+                .members
+                .get(&g)
+                .map(|m| m.iter().filter_map(|(id, mem)| Some((self.users.get(id)?, mem.nick.as_deref()))).collect())
+                .unwrap_or_default(),
+            None => channel.recipients.iter().chain(self.me.iter()).map(|u| (u, None)).collect(),
+        };
+        let mut scored: Vec<(u8, &User)> = candidates
+            .into_iter()
+            .filter(|(u, _)| !u.bot || !q.is_empty())
+            .filter_map(|(u, nick)| {
+                let names = [Some(u.username.as_str()), u.global_name.as_deref(), nick];
+                let lower: Vec<String> = names.iter().flatten().map(|n| n.to_lowercase()).collect();
+                let score = if lower.iter().any(|n| n.starts_with(&q)) {
+                    0
+                } else if lower.iter().any(|n| n.contains(&q)) {
+                    1
+                } else {
+                    return None;
+                };
+                Some((score, u))
+            })
+            .collect();
+        scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.username.cmp(&b.1.username)));
+        scored.dedup_by_key(|(_, u)| u.id);
+        scored.into_iter().take(limit).map(|(_, u)| u).collect()
+    }
+
     /// The active call in a DM or group DM, if any.
     pub fn call(&self, channel: Snowflake) -> Option<&CallEvent> {
         self.calls.get(&channel)
@@ -648,6 +681,16 @@ impl State {
                     _ => {}
                 }
             }
+            Event::GuildMembersChunk(chunk) => {
+                let members = self.members.entry(chunk.guild_id).or_default();
+                for m in chunk.members {
+                    let Some(uid) = m.user_id() else { continue };
+                    if let Some(u) = &m.user {
+                        self.users.insert(u.id, u.clone());
+                    }
+                    members.insert(uid, m);
+                }
+            }
             Event::CallDelete(channel) => {
                 let me = self.me.as_ref().map(|m| m.id);
                 if self.calls.remove(&channel).is_some_and(|c| me.is_some_and(|m| c.ringing.contains(&m))) {
@@ -927,6 +970,24 @@ mod tests {
         assert!(s.my_voice_state().is_some());
         s.apply(ev("VOICE_STATE_UPDATE", r#"{"guild_id":"100","user_id":"1","channel_id":null,"session_id":"a"}"#));
         assert!(s.my_voice_state().is_none());
+    }
+
+    #[test]
+    fn searches_people_by_any_name() {
+        let mut s = ready_state();
+        s.apply(ev(
+            "GUILD_MEMBERS_CHUNK",
+            r#"{"guild_id":"100","members":[
+                {"user":{"id":"10","username":"alice","global_name":"Ally"},"roles":[]},
+                {"user":{"id":"11","username":"bob"},"nick":"Alfred","roles":[]},
+                {"user":{"id":"12","username":"malice"},"roles":[]}]}"#,
+        ));
+        let g = s.channel(Snowflake(200)).unwrap().clone();
+        let names: Vec<&str> = s.search_people(&g, "al", 10).iter().map(|u| u.username.as_str()).collect();
+        // Prefix matches (alice by username, bob by nickname) before the substring match.
+        assert_eq!(names, ["alice", "bob", "malice"]);
+        let dm = s.channel(Snowflake(300)).unwrap().clone();
+        assert_eq!(s.search_people(&dm, "fr", 10).len(), 1);
     }
 
     #[test]

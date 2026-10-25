@@ -5,6 +5,7 @@ pub mod events;
 pub mod gateway;
 pub mod links;
 pub mod markdown;
+pub mod mentions;
 pub mod models;
 pub mod permissions;
 pub mod proto;

@@ -53,6 +53,7 @@ pub enum Action {
     PickFiles(Snowflake),
     AddFiles { channel: Snowflake, files: Vec<FileUpload> },
     Notice(String),
+    SearchMembers { guild: Snowflake, query: String },
     OpenDm(Snowflake),
     ShowPins(Snowflake),
     Ack(Snowflake),
@@ -100,6 +101,13 @@ pub struct Draft {
     /// Replying to this message, pinging its author if the flag is set.
     pub reply: Option<(Snowflake, bool)>,
     pub files: Vec<FileUpload>,
+    /// Caret position (in characters) as of the last frame, for autocomplete.
+    pub caret: usize,
+    /// Mentions picked from suggestions: readable text in the box, and what it becomes when sent.
+    pub mentions: Vec<(String, String)>,
+    /// The token start the user dismissed suggestions for (Escape).
+    pub dismissed: Option<usize>,
+    pub selected: usize,
 }
 
 /// Retained copies of failed sends so they can be retried.
@@ -134,6 +142,8 @@ pub struct UiState {
     pub voice: Option<crate::voice_glue::VoiceView>,
     pub stream: Option<crate::stream_glue::StreamView>,
     pub settings_draft: Option<ui::settings::Draft>,
+    /// A pending member search (guild, query, when it changed, sent yet).
+    pub member_query: Option<(Snowflake, String, Instant, bool)>,
 }
 
 impl UiState {
@@ -552,10 +562,22 @@ impl App {
         let Some(s) = &mut self.session else { return };
         let Some(me) = s.state.me.clone() else { return };
         let draft = self.ui.drafts.entry(channel).or_default();
-        let content = draft.text.trim().to_owned();
-        if content.is_empty() && draft.files.is_empty() {
+        if draft.text.trim().is_empty() && draft.files.is_empty() {
             return;
         }
+        // "@alice" picked from suggestions (or typed in full) becomes a real mention.
+        let content = match s.state.channel(channel) {
+            Some(ch) => swiftcord_core::mentions::finalize(draft.text.trim(), &draft.mentions, |name| {
+                s.state
+                    .search_people(ch, name, 10)
+                    .into_iter()
+                    .find(|u| u.username.eq_ignore_ascii_case(name))
+                    .map(|u| format!("<@{}>", u.id))
+            }),
+            None => draft.text.trim().to_owned(),
+        };
+        draft.mentions.clear();
+        draft.dismissed = None;
         let files = std::mem::take(&mut draft.files);
         let reply = draft.reply.take();
         draft.text.clear();
@@ -642,6 +664,11 @@ impl App {
             }
             Action::AddFiles { channel, files } => self.add_files(channel, files),
             Action::Notice(text) => self.banner(text),
+            Action::SearchMembers { guild, query } => {
+                if let Some(s) = &self.session {
+                    s.gateway.search_members(guild, &query, 10);
+                }
+            }
             Action::LoadOlder(c) => {
                 let Some(s) = &self.session else { return };
                 let Some(list) = s.state.messages(c) else { return };

@@ -44,7 +44,8 @@ pub struct Catalog {
 #[derive(Deserialize)]
 struct File {
     groups: Vec<String>,
-    emoji: Vec<(String, String, String, usize)>,
+    /// [character, name, search terms, group, (skin tones)]; the last is optional, so entries are read loosely.
+    emoji: Vec<Vec<serde_json::Value>>,
 }
 
 fn recent_path() -> std::path::PathBuf {
@@ -54,7 +55,14 @@ fn recent_path() -> std::path::PathBuf {
 impl Catalog {
     pub fn load() -> Catalog {
         let file: File = serde_json::from_str(EMOJI_JSON).unwrap_or(File { groups: vec![], emoji: vec![] });
-        let unicode = file.emoji.into_iter().map(|(ch, name, terms, group)| Unicode { ch, name, terms, group }).collect();
+        let unicode = file
+            .emoji
+            .into_iter()
+            .filter_map(|e| {
+                let s = |i: usize| e.get(i).and_then(|v| v.as_str()).map(str::to_owned);
+                Some(Unicode { ch: s(0)?, name: s(1)?, terms: s(2).unwrap_or_default(), group: e.get(3)?.as_u64()? as usize })
+            })
+            .collect();
         let recent = std::fs::read_to_string(recent_path())
             .ok()
             .and_then(|s| serde_json::from_str::<Vec<(Option<Snowflake>, Option<String>, bool)>>(&s).ok())
@@ -63,6 +71,27 @@ impl Catalog {
             .map(|(id, name, animated)| Emoji { id, name, animated })
             .collect();
         Catalog { unicode, groups: file.groups, recent }
+    }
+
+    /// Unicode emoji whose short name starts with `query` (then ones whose name or keywords contain it), as
+    /// (character, name).
+    pub fn search(&self, query: &str, limit: usize) -> Vec<(String, String)> {
+        let q = query.to_lowercase();
+        // Name prefix, then a word in the name or keywords starting with the query, then anywhere inside.
+        let rank = |u: &Unicode| {
+            if u.name.starts_with(&q) {
+                Some(0)
+            } else if u.name.split('_').chain(u.terms.split_whitespace()).any(|w| w.starts_with(&q)) {
+                Some(1)
+            } else if u.name.contains(&q) {
+                Some(2)
+            } else {
+                None
+            }
+        };
+        let mut hits: Vec<(u8, usize, &Unicode)> = self.unicode.iter().enumerate().filter_map(|(i, u)| rank(u).map(|r| (r, i, u))).collect();
+        hits.sort_by_key(|&(r, i, _)| (r, i));
+        hits.into_iter().take(limit).map(|(_, _, u)| (u.ch.clone(), u.name.clone())).collect()
     }
 
     pub fn note_used(&mut self, e: &Emoji) {
@@ -218,5 +247,19 @@ pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog
         uis.emoji_picker = None;
         uis.emoji_search.clear();
         ctx.memory_mut(|m| m.data.remove::<bool>(egui::Id::unique("emoji-picker-open")));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loads_the_bundled_table_and_searches_it() {
+        let c = Catalog::load();
+        assert!(c.unicode.len() > 1500, "{} emoji", c.unicode.len());
+        assert!(c.groups.len() >= 8);
+        let hits = c.search("thumbs", 5);
+        assert!(hits.iter().any(|(ch, _)| ch.starts_with('👍')), "{hits:?}");
     }
 }

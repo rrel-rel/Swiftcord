@@ -45,7 +45,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Ca
             crate::ui::stream::show(ui, s, uis, actions);
         } else {
             crate::ui::stream::return_bar(ui, s, uis, actions);
-            chat::show(ui, s, uis, actions);
+            chat::show(ui, s, uis, catalog, actions);
         }
     });
 

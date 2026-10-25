@@ -257,6 +257,15 @@ pub struct VoiceServerUpdate {
     pub endpoint: Option<String>,
 }
 
+/// Members returned for a member search (op 8).
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct GuildMembersChunk {
+    pub guild_id: Snowflake,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub members: Vec<Member>,
+}
+
 /// CALL_CREATE / CALL_UPDATE: a DM or group DM call, and who is being rung.
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
@@ -313,6 +322,7 @@ pub enum Event {
     VoiceStateUpdate(Box<VoiceState>),
     VoiceServerUpdate(VoiceServerUpdate),
     CallUpdate(Box<CallEvent>),
+    GuildMembersChunk(Box<GuildMembersChunk>),
     CallDelete(Snowflake),
     /// Anything else, kept raw for subsystems (e.g. Go Live streams) that parse it themselves.
     Other(String, Box<RawValue>),
@@ -354,6 +364,7 @@ impl Event {
             "VOICE_STATE_UPDATE" => Event::VoiceStateUpdate(p(d)?),
             "VOICE_SERVER_UPDATE" => Event::VoiceServerUpdate(p(d)?),
             "CALL_CREATE" | "CALL_UPDATE" => Event::CallUpdate(p(d)?),
+            "GUILD_MEMBERS_CHUNK" => Event::GuildMembersChunk(p(d)?),
             "CALL_DELETE" => {
                 #[derive(Deserialize)]
                 struct D {
