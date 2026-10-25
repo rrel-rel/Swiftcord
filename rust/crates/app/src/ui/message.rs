@@ -1,0 +1,627 @@
+//! One message: author header (or compact continuation), reply preview, content, media, embeds, reactions,
+//! hover toolbar and context menu.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use chrono::{DateTime, Local, Utc};
+use eframe::egui::{self, Align, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
+use swiftcord_core::markdown::{self, Block};
+use swiftcord_core::models::{message_type, Attachment, Embed, Message, PendingState};
+use swiftcord_core::permissions::perm;
+use swiftcord_core::state::State;
+use swiftcord_core::Snowflake;
+
+use crate::app::{Action, UiState};
+use crate::theme::{self, icon};
+use crate::ui::emoji::PickerTarget;
+use crate::ui::markdown::{self as md, Cx};
+use crate::ui::widgets;
+
+pub const GUTTER: f32 = 72.0;
+const MAX_MEDIA: Vec2 = Vec2::new(420.0, 320.0);
+
+thread_local! {
+    static PARSED: RefCell<HashMap<(Snowflake, u64), Rc<Vec<Block>>>> = RefCell::new(HashMap::new());
+}
+
+fn hash(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
+
+/// Parsed markdown, cached by message and content so scrolling doesn't re-parse.
+pub fn parsed(id: Snowflake, content: &str) -> Rc<Vec<Block>> {
+    PARSED.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() > 4000 {
+            c.clear();
+        }
+        c.entry((id, hash(content))).or_insert_with(|| Rc::new(markdown::parse(content))).clone()
+    })
+}
+
+/// Whether `msg` continues `prev`'s group (no avatar/name header).
+pub fn is_compact(msg: &Message, prev: Option<&Message>) -> bool {
+    let Some(p) = prev else { return false };
+    msg.is_regular()
+        && !msg.is_reply()
+        && p.is_regular()
+        && p.author.id == msg.author.id
+        && p.webhook_id == msg.webhook_id
+        && (msg.timestamp() - p.timestamp()).num_minutes() < 7
+        && same_day(msg.timestamp(), p.timestamp())
+}
+
+pub fn same_day(a: DateTime<Utc>, b: DateTime<Utc>) -> bool {
+    a.with_timezone(&Local).date_naive() == b.with_timezone(&Local).date_naive()
+}
+
+fn time_label(t: DateTime<Utc>) -> String {
+    let local = t.with_timezone(&Local);
+    let today = Local::now().date_naive();
+    match (today - local.date_naive()).num_days() {
+        0 => format!("Today at {}", local.format("%-I:%M %p")),
+        1 => format!("Yesterday at {}", local.format("%-I:%M %p")),
+        _ => local.format("%m/%d/%Y %-I:%M %p").to_string(),
+    }
+}
+
+pub struct Ctx<'a> {
+    pub state: &'a State,
+    pub uis: &'a mut UiState,
+    pub actions: &'a mut Vec<Action>,
+    pub channel: Snowflake,
+    pub guild: Option<Snowflake>,
+    pub perms: u64,
+    pub highlight: Option<Snowflake>,
+    /// Pinned-messages list: no toolbar.
+    pub read_only: bool,
+}
+
+/// Draws a message inside `rect` (whose height is the cached estimate) and returns the height used.
+pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
+    let me = cx.state.me.as_ref().map(|m| m.id);
+    let mentioned = me.is_some_and(|_| cx.state.mentions_me(msg)) && msg.author.id != me.unwrap_or_default();
+    let row_id = egui::Id::unique(("msg", msg.id));
+
+    // Background slot, filled once we know the height and hover state.
+    let bg = ui.painter().add(egui::Shape::Noop);
+    let top = ui.cursor().top();
+    let width = ui.available_width();
+    let hover_rect_prev = ui.ctx().memory(|m| m.data.get_temp::<Rect>(row_id));
+    let hovered = !cx.read_only
+        && hover_rect_prev.is_some_and(|r| ui.rect_contains_pointer(r))
+        && ui.ctx().memory(|m| m.focused().is_none_or(|_| true));
+
+    // Context menu target registered before the content, so links and buttons inside still get clicks.
+    let menu_resp = hover_rect_prev.map(|r| ui.interact(r, row_id.with("ctx"), Sense::click()));
+
+    ui.add_space(if compact { 1.0 } else { 14.0 });
+    let alpha = match msg.pending {
+        Some(PendingState::Sending) => 0.5,
+        _ => 1.0,
+    };
+
+    if msg.is_reply() {
+        reply_preview(ui, msg, cx);
+    }
+
+    if !msg.is_regular() {
+        system_line(ui, msg, cx);
+    } else {
+        ui.horizontal_top(|ui| {
+            ui.add_space(16.0);
+            if compact {
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(40.0, 20.0), Sense::hover());
+                if hovered {
+                    let t = msg.timestamp().with_timezone(&Local).format("%-I:%M %p").to_string();
+                    ui.painter().text(rect.right_center() + Vec2::new(4.0, 1.0), egui::Align2::RIGHT_CENTER, t, theme::font(10.5), theme::FAINT);
+                }
+            } else {
+                let r = widgets::user_avatar(ui, &msg.author, 40.0);
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && Some(msg.author.id) != me {
+                    cx.actions.push(Action::OpenDm(msg.author.id));
+                }
+            }
+            ui.add_space(16.0);
+            ui.vertical(|ui| {
+                ui.set_max_width(width - GUTTER - 24.0);
+                ui.multiply_opacity(alpha);
+                if !compact {
+                    header(ui, msg, cx);
+                }
+                body(ui, msg, cx);
+            });
+        });
+    }
+    if msg.pending == Some(PendingState::Failed) {
+        ui.horizontal(|ui| {
+            ui.add_space(GUTTER);
+            ui.colored_label(theme::RED, "Message failed to send.");
+            if ui.link("Retry").clicked() {
+                cx.actions.push(Action::Retry { channel: msg.channel_id, nonce: msg.id });
+            }
+            if ui.link("Delete").clicked() {
+                cx.actions.push(Action::Discard { channel: msg.channel_id, nonce: msg.id });
+            }
+        });
+    }
+    ui.add_space(2.0);
+
+    let rect = Rect::from_min_max(egui::pos2(ui.max_rect().left(), top), egui::pos2(ui.max_rect().left() + width, ui.cursor().top()));
+    ui.ctx().memory_mut(|m| m.data.insert_temp(row_id, rect));
+    let fill = if cx.highlight == Some(msg.id) {
+        Some(theme::BLURPLE.gamma_multiply(0.18))
+    } else if mentioned {
+        Some(theme::MENTIONED_ROW.gamma_multiply(0.6))
+    } else if hovered {
+        Some(theme::MESSAGE_HOVER)
+    } else {
+        None
+    };
+    if let Some(f) = fill {
+        ui.painter().set(bg, egui::Shape::rect_filled(rect, 0, f));
+    }
+    if mentioned {
+        ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())), 0, theme::YELLOW);
+    }
+
+    if !cx.read_only && msg.pending.is_none() {
+        if hovered {
+            toolbar(ui, msg, rect, cx);
+        }
+        if let Some(r) = menu_resp {
+            r.context_menu(|ui| context_menu(ui, msg, cx));
+        }
+    }
+    rect.height()
+}
+
+fn header(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
+    ui.horizontal(|ui| {
+        let name = match &msg.member {
+            Some(m) if m.nick.as_deref().is_some_and(|n| !n.is_empty()) => m.nick.clone().unwrap(),
+            _ if msg.webhook_id.is_some() => msg.author.display_name().to_owned(),
+            _ => cx.state.display_name(msg.author.id, cx.guild),
+        };
+        let color = cx.guild.and_then(|g| cx.state.role_color(g, msg.author.id));
+        let r = ui.add(egui::Label::new(RichText::new(name).font(theme::font_semibold(15.5)).color(theme::role_color(color))).sense(Sense::click()));
+        if r.clicked() {
+            cx.actions.push(Action::OpenDm(msg.author.id));
+        }
+        r.on_hover_text(msg.author.tag());
+        if msg.author.bot || msg.webhook_id.is_some() {
+            let text = if msg.webhook_id.is_some() { " APP " } else { " BOT " };
+            ui.label(RichText::new(text).font(theme::font_semibold(10.0)).color(Color32::WHITE).background_color(theme::BLURPLE));
+        }
+        ui.label(RichText::new(time_label(msg.timestamp())).size(12.0).color(theme::FAINT))
+            .on_hover_text(msg.timestamp().with_timezone(&Local).format("%A, %B %-d, %Y %-I:%M %p").to_string());
+    });
+}
+
+fn body(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
+    let editing = cx.uis.editing.as_ref().is_some_and(|(id, _)| *id == msg.id);
+    if editing {
+        edit_box(ui, msg, cx);
+    } else if !msg.content.is_empty() {
+        let blocks = parsed(msg.id, &msg.content);
+        let jumbo = markdown::is_emoji_only(&blocks);
+        let mut mcx = Cx {
+            state: cx.state,
+            guild: cx.guild,
+            message: msg.id,
+            revealed: &mut cx.uis.revealed,
+            actions: cx.actions,
+            size: 15.5,
+            color: theme::TEXT,
+            jumbo,
+        };
+        md::blocks(ui, &blocks, &mut mcx);
+        if msg.edited_timestamp.is_some() {
+            ui.label(RichText::new("(edited)").size(10.5).color(theme::FAINT));
+        }
+    }
+
+    if msg.is_forward() {
+        for snap in &msg.message_snapshots {
+            let r = egui::Frame::new().inner_margin(egui::Margin { left: 12, ..Default::default() }).show(ui, |ui| {
+                ui.label(RichText::new("↪ Forwarded").italics().size(12.5).color(theme::MUTED));
+                if !snap.message.content.is_empty() {
+                    let blocks = parsed(Snowflake(msg.id.0 ^ 1), &snap.message.content);
+                    let mut mcx = Cx { state: cx.state, guild: cx.guild, message: msg.id, revealed: &mut cx.uis.revealed, actions: cx.actions, size: 15.5, color: theme::TEXT, jumbo: false };
+                    md::blocks(ui, &blocks, &mut mcx);
+                }
+                for a in &snap.message.attachments {
+                    attachment(ui, a);
+                }
+                for e in &snap.message.embeds {
+                    embed(ui, e, msg.id, cx);
+                }
+            });
+            let rect = r.response.rect;
+            ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(4.0, rect.height())), 2, theme::FAINT);
+        }
+    }
+
+    for a in &msg.attachments {
+        attachment(ui, a);
+    }
+    if msg.flags & swiftcord_core::models::message_flags::SUPPRESS_EMBEDS == 0 {
+        for e in &msg.embeds {
+            embed(ui, e, msg.id, cx);
+        }
+    }
+    for s in &msg.sticker_items {
+        match swiftcord_core::cdn::sticker(s.id, s.format_type) {
+            Some(url) => {
+                ui.add(egui::Image::from_uri(url).fit_to_exact_size(Vec2::splat(160.0))).on_hover_text(&s.name);
+            }
+            None => {
+                ui.label(RichText::new(format!("[sticker: {}]", s.name)).color(theme::MUTED));
+            }
+        }
+    }
+    if !msg.reactions.is_empty() {
+        reactions(ui, msg, cx);
+    }
+}
+
+fn edit_box(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
+    let Some((_, text)) = &mut cx.uis.editing else { return };
+    let id = egui::Id::unique(("edit", msg.id));
+    let focused = ui.ctx().memory(|m| m.has_focus(id));
+    let (enter, esc) = ui.input_mut(|i| {
+        let enter = focused && !i.modifiers.shift && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+        (enter, focused && i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    });
+    egui::Frame::new().fill(theme::INPUT).corner_radius(6).inner_margin(8).show(ui, |ui| {
+        let r = ui.add(egui::TextEdit::multiline(text).id(id).desired_rows(1).frame(egui::Frame::NONE).desired_width(f32::INFINITY));
+        if !focused && !r.lost_focus() {
+            r.request_focus();
+        }
+    });
+    ui.label(RichText::new("escape to cancel • enter to save").size(11.5).color(theme::MUTED));
+    if esc {
+        cx.uis.editing = None;
+    } else if enter {
+        let content = text.trim().to_owned();
+        if content.is_empty() {
+            cx.actions.push(Action::Delete { channel: msg.channel_id, message: msg.id });
+            cx.uis.editing = None;
+        } else {
+            cx.actions.push(Action::SaveEdit { channel: msg.channel_id, message: msg.id, content });
+        }
+    }
+}
+
+fn reply_preview(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
+    ui.horizontal(|ui| {
+        ui.add_space(GUTTER - 36.0);
+        // The elbow connecting the reply to its parent.
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(32.0, 14.0), Sense::hover());
+        let stroke = egui::Stroke::new(2.0, theme::FAINT);
+        let p = ui.painter();
+        p.line_segment([rect.left_bottom() + Vec2::new(4.0, 2.0), rect.left_top() + Vec2::new(4.0, 7.0)], stroke);
+        p.line_segment([rect.left_top() + Vec2::new(4.0, 7.0), rect.right_top() + Vec2::new(-4.0, 7.0)], stroke);
+        match msg.referenced_message.as_deref() {
+            Some(r) => {
+                widgets::user_avatar(ui, &r.author, 16.0);
+                let color = cx.guild.and_then(|g| cx.state.role_color(g, r.author.id));
+                ui.label(RichText::new(cx.state.display_name(r.author.id, cx.guild)).font(theme::font_semibold(13.0)).color(theme::role_color(color)));
+                let preview: String = if r.content.is_empty() { "Click to see attachment".into() } else { r.content.replace('\n', " ") };
+                let resp = ui.add(egui::Label::new(RichText::new(preview).size(13.0).color(theme::MUTED)).truncate().sense(Sense::click()));
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    if let Some(view) = cx.uis.chat.get_mut(&cx.channel) {
+                        view.jump_to(r.id);
+                    }
+                }
+            }
+            None => {
+                ui.label(RichText::new("Original message was deleted").italics().size(13.0).color(theme::MUTED));
+            }
+        }
+    });
+}
+
+fn system_line(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
+    let author = cx.state.display_name(msg.author.id, cx.guild);
+    let (glyph, text) = match msg.kind {
+        message_type::RECIPIENT_ADD => ("→", format!("{author} added {} to the group.", msg.mentions.first().map_or("someone", |u| u.display_name()))),
+        message_type::RECIPIENT_REMOVE => ("←", format!("{author} left the group.")),
+        message_type::CALL => ("📞", format!("{author} started a call.")),
+        message_type::CHANNEL_NAME_CHANGE => ("✎", format!("{author} changed the channel name: {}", msg.content)),
+        message_type::CHANNEL_PINNED_MESSAGE => ("📌", format!("{author} pinned a message to this channel.")),
+        message_type::USER_JOIN => ("→", format!("{author} joined the server.")),
+        message_type::GUILD_BOOST | 9..=11 => ("💎", format!("{author} just boosted the server!")),
+        message_type::THREAD_CREATED => ("#", format!("{author} started a thread: {}", msg.content)),
+        _ => ("•", if msg.content.is_empty() { format!("{author} did something.") } else { msg.content.clone() }),
+    };
+    ui.horizontal(|ui| {
+        ui.add_space(GUTTER - 40.0);
+        ui.add_sized(Vec2::new(24.0, 18.0), egui::Label::new(RichText::new(glyph).color(theme::GREEN)));
+        ui.add_space(12.0);
+        ui.label(RichText::new(text).color(theme::MUTED));
+        ui.label(RichText::new(time_label(msg.timestamp())).size(11.5).color(theme::FAINT));
+    });
+}
+
+fn fit(w: Option<u32>, h: Option<u32>, max: Vec2) -> Vec2 {
+    let (w, h) = (w.unwrap_or(300).max(1) as f32, h.unwrap_or(200).max(1) as f32);
+    let scale = (max.x / w).min(max.y / h).min(1.0);
+    Vec2::new((w * scale).round(), (h * scale).round())
+}
+
+fn media(ui: &mut Ui, proxy_url: &str, original: &str, size: Vec2, gif: bool, video: bool, alt: Option<&str>) {
+    let ppp = ui.ctx().pixels_per_point();
+    let (pw, ph) = ((size.x * ppp) as u32, (size.y * ppp) as u32);
+    // Animated GIFs must stay GIFs; everything else is fetched resized as WebP to save memory.
+    let url = if gif {
+        let sep = if proxy_url.contains('?') { '&' } else { '?' };
+        format!("{proxy_url}{sep}width={pw}&height={ph}")
+    } else {
+        swiftcord_core::cdn::media_proxy(proxy_url, pw, ph)
+    };
+    let r = ui.add(egui::Image::from_uri(url).fit_to_exact_size(size).corner_radius(6).sense(Sense::click()));
+    if video {
+        ui.painter().circle_filled(r.rect.center(), 24.0, Color32::from_black_alpha(160));
+        ui.painter().text(r.rect.center(), egui::Align2::CENTER_CENTER, icon::PLAY, theme::icon_font(20.0), Color32::WHITE);
+    }
+    let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let r = match alt { Some(a) if !a.is_empty() => r.on_hover_text(a), _ => r };
+    if r.clicked() {
+        crate::platform::open_url(original);
+    }
+}
+
+fn attachment(ui: &mut Ui, a: &Attachment) {
+    if a.url.is_empty() {
+        // Still uploading.
+        ui.label(RichText::new(format!("{} ({})", a.filename, widgets::human_size(a.size))).color(theme::MUTED));
+        return;
+    }
+    if a.is_image() || (a.is_video() && a.width.is_some()) {
+        let size = fit(a.width, a.height, MAX_MEDIA);
+        let gif = a.content_type.as_deref() == Some("image/gif");
+        media(ui, &a.proxy_url, &a.url, size, gif, a.is_video(), a.description.as_deref());
+        return;
+    }
+    egui::Frame::new().fill(theme::EMBED_BG).corner_radius(6).inner_margin(10).stroke(egui::Stroke::new(1.0, theme::RAIL)).show(ui, |ui| {
+        ui.set_width(380.0_f32.min(ui.available_width()));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(icon::FILE).font(theme::icon_font(28.0)).color(theme::BLURPLE));
+            ui.vertical(|ui| {
+                if ui.link(&a.filename).clicked() {
+                    crate::platform::open_url(&a.url);
+                }
+                ui.label(RichText::new(widgets::human_size(a.size)).size(12.0).color(theme::MUTED));
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if widgets::icon_button(ui, icon::DOWNLOAD, "Download").clicked() {
+                    crate::platform::open_url(&a.url);
+                }
+            });
+        });
+    });
+}
+
+fn embed(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
+    let kind = e.kind.as_deref().unwrap_or("rich");
+    // Bare media links (images, GIFV) render as the media alone.
+    if matches!(kind, "image" | "gifv") {
+        if let Some(m) = e.thumbnail.as_ref().or(e.image.as_ref()) {
+            let size = fit(m.width, m.height, MAX_MEDIA);
+            let proxy = m.proxy_url.clone().unwrap_or_else(|| m.url.clone());
+            media(ui, &proxy, e.url.as_deref().unwrap_or(&m.url), size, false, kind == "gifv", None);
+        }
+        return;
+    }
+    let bar = e.color.map_or(theme::RAIL, |c| theme::role_color(Some(c)));
+    let r = egui::Frame::new().fill(theme::EMBED_BG).corner_radius(4).inner_margin(egui::Margin { left: 14, right: 14, top: 10, bottom: 12 }).show(ui, |ui| {
+        ui.set_max_width(500.0_f32.min(ui.available_width() - 8.0));
+        ui.spacing_mut().item_spacing.y = 6.0;
+        if let Some(p) = &e.provider {
+            if !p.name.is_empty() {
+                ui.label(RichText::new(&p.name).size(12.0).color(theme::MUTED));
+            }
+        }
+        if let Some(a) = &e.author {
+            ui.horizontal(|ui| {
+                if let Some(icon) = &a.icon_url {
+                    widgets::avatar(ui, icon, 20.0);
+                }
+                ui.label(RichText::new(&a.name).font(theme::font_semibold(13.5)).color(theme::HEADER));
+            });
+        }
+        if let Some(t) = &e.title {
+            let rt = RichText::new(t).font(theme::font_semibold(15.5));
+            match &e.url {
+                Some(u) => {
+                    if ui.add(egui::Label::new(rt.color(theme::LINK)).sense(Sense::click())).clicked() {
+                        crate::platform::open_url(u);
+                    }
+                }
+                None => {
+                    ui.label(rt.color(theme::HEADER));
+                }
+            }
+        }
+        let mut mcx = Cx { state: cx.state, guild: cx.guild, message: msg_id, revealed: &mut cx.uis.revealed, actions: cx.actions, size: 14.0, color: theme::TEXT, jumbo: false };
+        if let Some(d) = &e.description {
+            md::blocks(ui, &markdown::parse(d), &mut mcx);
+        }
+        // Fields: inline ones share rows of up to three.
+        let mut i = 0;
+        while i < e.fields.len() {
+            let n = if e.fields[i].inline { e.fields[i..].iter().take(3).take_while(|f| f.inline).count().max(1) } else { 1 };
+            ui.columns(n, |cols| {
+                for (j, col) in cols.iter_mut().enumerate() {
+                    let f = &e.fields[i + j];
+                    col.label(RichText::new(&f.name).font(theme::font_semibold(13.5)).color(theme::HEADER));
+                    md::blocks(col, &markdown::parse(&f.value), &mut mcx);
+                }
+            });
+            i += n;
+        }
+        if let Some(img) = &e.image {
+            let size = fit(img.width, img.height, Vec2::new(468.0, 300.0));
+            media(ui, img.proxy_url.as_deref().unwrap_or(&img.url), &img.url, size, false, false, None);
+        } else if let Some(t) = &e.thumbnail {
+            let video = e.video.is_some();
+            let max = if video { Vec2::new(468.0, 264.0) } else { Vec2::splat(80.0) };
+            let size = fit(t.width, t.height, max);
+            let target = e.url.as_deref().unwrap_or(&t.url);
+            media(ui, t.proxy_url.as_deref().unwrap_or(&t.url), target, size, false, video, None);
+        }
+        if let Some(f) = &e.footer {
+            ui.horizontal(|ui| {
+                if let Some(icon) = &f.icon_url {
+                    widgets::avatar(ui, icon, 16.0);
+                }
+                let mut text = f.text.clone();
+                if let Some(ts) = e.timestamp {
+                    text = format!("{text} • {}", time_label(ts));
+                }
+                ui.label(RichText::new(text).size(11.5).color(theme::MUTED));
+            });
+        }
+    });
+    let rect = r.response.rect;
+    ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(4.0, rect.height())), egui::CornerRadius { nw: 4, sw: 4, ne: 0, se: 0 }, bar);
+}
+
+fn reactions(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
+    ui.add_space(2.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+        for r in &msg.reactions {
+            let (fill, stroke) = if r.me { (theme::BLURPLE.gamma_multiply(0.25), theme::BLURPLE) } else { (theme::SIDEBAR, theme::SIDEBAR) };
+            let resp = egui::Frame::new().fill(fill).stroke(egui::Stroke::new(1.0, stroke)).corner_radius(8).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    let url = match (r.emoji.id, &r.emoji.name) {
+                        (Some(id), _) => swiftcord_core::cdn::emoji(id, r.emoji.animated, 48),
+                        (None, Some(n)) => swiftcord_core::cdn::twemoji(n),
+                        _ => String::new(),
+                    };
+                    ui.add(egui::Image::from_uri(url).fit_to_exact_size(Vec2::splat(18.0)).show_loading_spinner(false));
+                    ui.label(RichText::new(r.count.to_string()).font(theme::font_semibold(13.0)).color(if r.me { theme::MENTION_TEXT } else { theme::MUTED }));
+                });
+            });
+            let resp = ui.interact(resp.response.rect, egui::Id::unique(("react", msg.id, r.emoji.reaction_key())), Sense::click());
+            let name = r.emoji.name.clone().unwrap_or_default();
+            if resp.on_hover_text(format!(":{name}:")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && cx.perms & perm::ADD_REACTIONS != 0 {
+                cx.actions.push(Action::React { channel: msg.channel_id, message: msg.id, emoji: r.emoji.clone(), add: !r.me });
+            }
+        }
+        if cx.perms & perm::ADD_REACTIONS != 0 {
+            let add = ui.add(egui::Button::new(RichText::new(icon::EMOJI).font(theme::icon_font(14.0)).color(theme::MUTED)).fill(theme::SIDEBAR).corner_radius(8));
+            if add.clicked() {
+                cx.uis.emoji_picker = Some(PickerTarget::Reaction { channel: msg.channel_id, message: msg.id, at: add.rect.left_bottom() });
+            }
+        }
+    });
+}
+
+fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, cx: &mut Ctx) {
+    let mine = cx.state.me.as_ref().is_some_and(|m| m.id == msg.author.id);
+    let can_delete = mine || cx.perms & perm::MANAGE_MESSAGES != 0;
+    let mut buttons: Vec<(&str, &str, u8)> = Vec::new();
+    if cx.perms & perm::ADD_REACTIONS != 0 {
+        buttons.push((icon::EMOJI, "Add Reaction", 0));
+    }
+    if cx.perms & perm::SEND_MESSAGES != 0 && msg.is_regular() {
+        buttons.push((icon::REPLY, "Reply", 1));
+    }
+    if mine && msg.is_regular() {
+        buttons.push((icon::EDIT, "Edit", 2));
+    }
+    if can_delete {
+        buttons.push((icon::DELETE, "Delete", 3));
+    }
+    let w = buttons.len() as f32 * 32.0 + 8.0;
+    let rect = Rect::from_min_size(egui::pos2(row.right() - w - 16.0, row.top() - 14.0), Vec2::new(w, 32.0));
+    let rect = rect.translate(Vec2::new(0.0, (ui.clip_rect().top() - rect.top()).max(0.0)));
+    ui.painter().rect(rect, 6, theme::SIDEBAR, egui::Stroke::new(1.0, theme::RAIL), egui::StrokeKind::Inside);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(4.0)).layout(Layout::left_to_right(Align::Center)));
+    child.spacing_mut().item_spacing.x = 4.0;
+    for (glyph, tip, kind) in buttons {
+        let color = if kind == 3 { theme::RED } else { theme::MUTED };
+        let r = child.add(egui::Button::new(RichText::new(glyph).font(theme::icon_font(15.0)).color(color)).frame_when_inactive(false).min_size(Vec2::splat(28.0)));
+        let r = r.on_hover_text(tip);
+        if r.clicked() {
+            match kind {
+                0 => cx.uis.emoji_picker = Some(PickerTarget::Reaction { channel: msg.channel_id, message: msg.id, at: r.rect.left_bottom() }),
+                1 => start_reply(msg, cx),
+                2 => cx.uis.editing = Some((msg.id, msg.content.clone())),
+                _ => cx.actions.push(Action::Delete { channel: msg.channel_id, message: msg.id }),
+            }
+        }
+    }
+}
+
+fn start_reply(msg: &Message, cx: &mut Ctx) {
+    let mine = cx.state.me.as_ref().is_some_and(|m| m.id == msg.author.id);
+    cx.uis.drafts.entry(cx.channel).or_default().reply = Some((msg.id, !mine));
+    cx.uis.focus_composer = true;
+}
+
+fn context_menu(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
+    ui.set_min_width(180.0);
+    let mine = cx.state.me.as_ref().is_some_and(|m| m.id == msg.author.id);
+    if cx.perms & perm::SEND_MESSAGES != 0 && ui.button("Reply").clicked() {
+        start_reply(msg, cx);
+        ui.close();
+    }
+    if mine && msg.is_regular() && ui.button("Edit Message").clicked() {
+        cx.uis.editing = Some((msg.id, msg.content.clone()));
+        ui.close();
+    }
+    if cx.perms & perm::ADD_REACTIONS != 0 && ui.button("Add Reaction").clicked() {
+        let at = ui.ctx().pointer_latest_pos().unwrap_or_default();
+        cx.uis.emoji_picker = Some(PickerTarget::Reaction { channel: msg.channel_id, message: msg.id, at });
+        ui.close();
+    }
+    ui.separator();
+    if !msg.content.is_empty() && ui.button("Copy Text").clicked() {
+        cx.actions.push(Action::Copy(msg.content.clone()));
+        ui.close();
+    }
+    if ui.button("Copy Message Link").clicked() {
+        let g = cx.guild.map_or("@me".to_owned(), |g| g.to_string());
+        cx.actions.push(Action::Copy(format!("https://discord.com/channels/{g}/{}/{}", msg.channel_id, msg.id)));
+        ui.close();
+    }
+    if ui.button("Copy Message ID").clicked() {
+        cx.actions.push(Action::Copy(msg.id.to_string()));
+        ui.close();
+    }
+    if mine || cx.perms & perm::MANAGE_MESSAGES != 0 {
+        ui.separator();
+        if ui.button(RichText::new("Delete Message").color(theme::RED)).clicked() {
+            cx.actions.push(Action::Delete { channel: msg.channel_id, message: msg.id });
+            ui.close();
+        }
+    }
+}
+
+/// A rough height before a message has been laid out, so the scroll bar is about right.
+pub fn estimate_height(msg: &Message, compact: bool) -> f32 {
+    let mut h = if compact { 24.0 } else { 46.0 };
+    let lines = msg.content.lines().map(|l| 1 + l.len() / 90).sum::<usize>().max(1);
+    h += (lines.saturating_sub(1)) as f32 * 21.0;
+    for a in &msg.attachments {
+        h += if a.is_image() { fit(a.width, a.height, MAX_MEDIA).y + 6.0 } else { 64.0 };
+    }
+    h += msg.embeds.len() as f32 * 120.0;
+    if !msg.reactions.is_empty() {
+        h += 30.0;
+    }
+    if msg.is_reply() {
+        h += 22.0;
+    }
+    h
+}

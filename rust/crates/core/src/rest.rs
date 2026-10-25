@@ -320,6 +320,11 @@ impl Rest {
         Ok(page.items.into_iter().map(|i| i.message).collect())
     }
 
+    /// Rings everyone in a DM or group DM call.
+    pub async fn ring(&self, channel: Snowflake) -> Result<()> {
+        self.empty(Method::POST, &format!("channels/{channel}/call/ring"), Body::Json(json!({ "recipients": null }))).await
+    }
+
     pub async fn typing(&self, channel: Snowflake) -> Result<()> {
         self.empty(Method::POST, &format!("channels/{channel}/typing"), Body::None).await
     }

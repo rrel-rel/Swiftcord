@@ -1,0 +1,23 @@
+[package]
+name = "swiftcord-voice"
+description = "Discord voice: voice gateway v8 with DAVE end-to-end encryption, RTP over UDP, Opus and WASAPI audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+futures-util.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
+cpal = "0.18"
+davey = "0.1.5"
+# libopus transpiled to Rust: no C toolchain or CMake needed, which matters on ARM64 Windows.
+unsafe-libopus = "0.2"

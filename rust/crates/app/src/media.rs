@@ -1,0 +1,162 @@
+//! An egui bytes loader for http(s) images on the shared reqwest client. Immutable CDN assets (avatars,
+//! icons, emoji, stickers) are also cached on disk so they don't hit the network on every launch.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::task::Poll;
+
+use eframe::egui::load::{Bytes, BytesLoadResult, BytesLoader, BytesPoll, LoadError};
+use eframe::egui::{self, mutex::Mutex};
+use tokio::sync::Semaphore;
+
+#[derive(Clone)]
+struct File {
+    bytes: Arc<[u8]>,
+    mime: Option<String>,
+}
+
+type Entry = Poll<Result<File, String>>;
+
+pub struct MediaLoader {
+    cache: Arc<Mutex<HashMap<String, Entry>>>,
+    http: reqwest::Client,
+    rt: tokio::runtime::Handle,
+    limit: Arc<Semaphore>,
+    disk: PathBuf,
+}
+
+impl MediaLoader {
+    pub const ID: &'static str = egui::generate_loader_id!(MediaLoader);
+
+    pub fn new(rt: tokio::runtime::Handle, disk: PathBuf) -> Self {
+        let http = reqwest::Client::builder()
+            .user_agent(swiftcord_core::rest::USER_AGENT)
+            .build()
+            .expect("HTTP client");
+        let _ = std::fs::create_dir_all(&disk);
+        Self { cache: Arc::default(), http, rt, limit: Arc::new(Semaphore::new(8)), disk }
+    }
+}
+
+/// Content-addressed assets whose URL changes whenever the content does.
+fn is_immutable(uri: &str) -> bool {
+    const PREFIXES: &[&str] = &[
+        "https://cdn.discordapp.com/avatars/",
+        "https://cdn.discordapp.com/icons/",
+        "https://cdn.discordapp.com/emojis/",
+        "https://cdn.discordapp.com/embed/avatars/",
+        "https://cdn.discordapp.com/channel-icons/",
+        "https://cdn.discordapp.com/guilds/",
+        "https://media.discordapp.net/stickers/",
+        "https://cdn.jsdelivr.net/gh/jdecked/twemoji",
+    ];
+    PREFIXES.iter().any(|p| uri.starts_with(p))
+}
+
+/// FNV-1a, stable across Rust versions (unlike `DefaultHasher`), for cache file names.
+fn cache_name(uri: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in uri.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{h:016x}")
+}
+
+fn mime_from_bytes(b: &[u8]) -> Option<String> {
+    let m = if b.starts_with(b"\x89PNG") {
+        "image/png"
+    } else if b.starts_with(b"GIF8") {
+        "image/gif"
+    } else if b.len() > 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        "image/webp"
+    } else if b.starts_with(&[0xff, 0xd8]) {
+        "image/jpeg"
+    } else {
+        return None;
+    };
+    Some(m.to_owned())
+}
+
+async fn fetch(http: &reqwest::Client, uri: &str, disk: Option<PathBuf>) -> Result<File, String> {
+    if let Some(path) = &disk {
+        if let Ok(bytes) = tokio::fs::read(path).await {
+            let mime = mime_from_bytes(&bytes);
+            return Ok(File { bytes: bytes.into(), mime });
+        }
+    }
+    let resp = http.get(uri).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("{} for {uri}", resp.status()));
+    }
+    let header_mime = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).map(str::to_owned);
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    if let Some(path) = disk {
+        let b = bytes.clone();
+        tokio::spawn(async move {
+            let _ = tokio::fs::write(path, b).await;
+        });
+    }
+    // Trust the bytes over the header: the CDN sometimes labels WebP as something else.
+    let mime = mime_from_bytes(&bytes).or(header_mime);
+    Ok(File { bytes: bytes.to_vec().into(), mime })
+}
+
+impl BytesLoader for MediaLoader {
+    fn id(&self) -> &str {
+        Self::ID
+    }
+
+    fn load(&self, ctx: &egui::Context, uri: &str) -> BytesLoadResult {
+        if !(uri.starts_with("https://") || uri.starts_with("http://")) {
+            return Err(LoadError::NotSupported);
+        }
+        let mut cache = self.cache.lock();
+        if let Some(entry) = cache.get(uri) {
+            return match entry {
+                Poll::Ready(Ok(f)) => Ok(BytesPoll::Ready { size: None, bytes: Bytes::Shared(f.bytes.clone()), mime: f.mime.clone() }),
+                Poll::Ready(Err(e)) => Err(LoadError::Loading(e.clone())),
+                Poll::Pending => Ok(BytesPoll::Pending { size: None }),
+            };
+        }
+        cache.insert(uri.to_owned(), Poll::Pending);
+        drop(cache);
+
+        let uri = uri.to_owned();
+        let disk = is_immutable(&uri).then(|| self.disk.join(cache_name(&uri)));
+        let (http, cache, limit, ctx) = (self.http.clone(), self.cache.clone(), self.limit.clone(), ctx.clone());
+        self.rt.spawn(async move {
+            let _permit = limit.acquire().await;
+            let result = fetch(&http, &uri, disk).await;
+            if let Err(e) = &result {
+                tracing::debug!("image load failed: {e}");
+            }
+            let repaint = {
+                let mut cache = cache.lock();
+                // Absent if the image was forgotten while loading.
+                cache.get_mut(&uri).map(|e| *e = Poll::Ready(result)).is_some()
+            };
+            if repaint {
+                ctx.request_repaint();
+            }
+        });
+        Ok(BytesPoll::Pending { size: None })
+    }
+
+    fn forget(&self, uri: &str) {
+        self.cache.lock().remove(uri);
+    }
+
+    fn forget_all(&self) {
+        self.cache.lock().clear();
+    }
+
+    fn byte_size(&self) -> usize {
+        self.cache.lock().values().map(|e| if let Poll::Ready(Ok(f)) = e { f.bytes.len() } else { 0 }).sum()
+    }
+
+    fn has_pending(&self) -> bool {
+        self.cache.lock().values().any(Poll::is_pending)
+    }
+}

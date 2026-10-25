@@ -1,0 +1,258 @@
+//! The channel sidebar: a guild's channel tree or the DM list, then voice status and the user panel.
+
+use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Ui, Vec2};
+use swiftcord_core::models::{Channel, ChannelType};
+use swiftcord_core::state::State;
+use swiftcord_core::Snowflake;
+
+use crate::app::{Action, Session, UiState};
+use crate::theme::{self, icon};
+use crate::ui::widgets;
+
+pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) {
+    let state = &s.state;
+    let title = match uis.guild.and_then(|g| state.guild(g)) {
+        Some(g) => g.name.clone(),
+        None => "Direct Messages".to_owned(),
+    };
+
+    // Header.
+    egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 0)).show(ui, |ui| {
+        ui.set_height(48.0);
+        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            ui.add(egui::Label::new(RichText::new(title).font(theme::font_semibold(15.0)).color(theme::HEADER)).truncate());
+        });
+    });
+    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), egui::Stroke::new(1.0, theme::RAIL));
+
+    // Bottom panels first so the list takes the remaining space.
+    egui::Panel::bottom("user-panel").frame(egui::Frame::new().fill(Color32::from_rgb(0x23, 0x24, 0x28))).show(ui, |ui| {
+        crate::voice_glue::status_panel(ui, s, uis, actions);
+        user_panel(ui, state, uis, actions);
+    });
+
+    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        ui.add_space(8.0);
+        match uis.guild {
+            Some(g) => guild_channels(ui, state, uis, g, actions),
+            None => dm_list(ui, state, uis, actions),
+        }
+        ui.add_space(8.0);
+    });
+}
+
+fn row(ui: &mut Ui, selected: bool, height: f32, add: impl FnOnce(&mut Ui, bool)) -> egui::Response {
+    let width = ui.available_width() - 8.0;
+    let (rect, r) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    let rect = rect.translate(Vec2::new(4.0, 0.0));
+    let hovered = r.hovered();
+    if selected || hovered {
+        ui.painter().rect_filled(rect, 4, if selected { theme::SELECTED } else { theme::HOVER });
+    }
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(8.0, 0.0))).layout(Layout::left_to_right(Align::Center)));
+    add(&mut child, hovered);
+    ui.add_space(2.0);
+    r
+}
+
+fn guild_channels(ui: &mut Ui, state: &State, uis: &mut UiState, guild: Snowflake, actions: &mut Vec<Action>) {
+    let selected = uis.channel();
+    let my_voice = state.my_voice_state().and_then(|v| v.channel_id);
+    for (category, channels) in state.channel_tree(guild) {
+        let collapsed = category.is_some_and(|c| uis.collapsed.contains(&c.id));
+        if let Some(cat) = category {
+            ui.add_space(12.0);
+            let r = row(ui, false, 22.0, |ui, hovered| {
+                let color = if hovered { theme::TEXT } else { theme::MUTED };
+                ui.label(RichText::new(if collapsed { icon::CHEVRON_RIGHT } else { icon::CHEVRON_DOWN }).font(theme::icon_font(9.0)).color(color));
+                ui.add(egui::Label::new(RichText::new(cat.label().to_uppercase()).font(theme::font_semibold(12.0)).color(color)).truncate().selectable(false));
+            });
+            if r.clicked() {
+                if collapsed {
+                    uis.collapsed.remove(&cat.id);
+                } else {
+                    uis.collapsed.insert(cat.id);
+                }
+            }
+        }
+        for c in channels {
+            let is_selected = selected == Some(c.id);
+            let unread = state.is_unread(c.id) && !state.is_channel_muted(c);
+            // Collapsed categories still show the open channel, unread channels and the voice channel you're in.
+            if collapsed && !is_selected && !unread && my_voice != Some(c.id) {
+                continue;
+            }
+            channel_row(ui, state, c, is_selected, unread, actions);
+            if c.is_voice() {
+                voice_members(ui, state, uis, c);
+            }
+        }
+    }
+}
+
+fn channel_row(ui: &mut Ui, state: &State, c: &Channel, selected: bool, unread: bool, actions: &mut Vec<Action>) {
+    let mentions = state.mention_count(c.id);
+    let muted = state.is_channel_muted(c);
+    let r = row(ui, selected, 32.0, |ui, hovered| {
+        let color = if selected || unread { theme::HEADER } else if hovered { theme::TEXT } else if muted { theme::FAINT } else { theme::MUTED };
+        let glyph = match c.kind {
+            ChannelType::Voice | ChannelType::Stage => RichText::new(icon::SPEAKER).font(theme::icon_font(15.0)),
+            ChannelType::Announcement => RichText::new("📣").size(14.0),
+            ChannelType::Forum | ChannelType::Media => RichText::new("💬").size(14.0),
+            _ => RichText::new("#").font(theme::font(20.0)),
+        };
+        ui.add_sized(Vec2::new(20.0, 24.0), egui::Label::new(glyph.color(theme::FAINT)).selectable(false));
+        let font = if unread || selected { theme::font_semibold(15.0) } else { theme::font(15.0) };
+        ui.add(egui::Label::new(RichText::new(c.label()).font(font).color(color)).truncate().selectable(false));
+        if mentions > 0 {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(22.0, 16.0), Sense::hover());
+                widgets::badge(ui, rect.center(), mentions, Color32::TRANSPARENT);
+            });
+        }
+    });
+    if unread && !selected {
+        let x = ui.max_rect().left();
+        let y = r.rect.center().y;
+        ui.painter().rect_filled(egui::Rect::from_min_size(egui::pos2(x - 4.0, y - 4.0), Vec2::new(8.0, 8.0)), 4, theme::HEADER);
+    }
+    let r = r.on_hover_text(c.topic.clone().unwrap_or_default());
+    if r.clicked() {
+        if c.is_voice() {
+            actions.push(Action::JoinVoice { guild: c.guild_id, channel: c.id });
+        } else {
+            actions.push(Action::SelectChannel(c.id));
+        }
+    }
+    if c.is_voice() && r.double_clicked() {
+        actions.push(Action::SelectChannel(c.id));
+    }
+    r.context_menu(|ui| {
+        if ui.button("Copy channel ID").clicked() {
+            actions.push(Action::Copy(c.id.to_string()));
+            ui.close();
+        }
+        if !c.is_voice() && ui.button("Mark as read").clicked() {
+            actions.push(Action::Ack(c.id));
+            ui.close();
+        }
+    });
+}
+
+fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel) {
+    for vs in state.voice_members(c) {
+        let name = state.display_name(vs.user_id, c.guild_id);
+        let speaking = crate::voice_glue::is_speaking(uis, vs.user_id);
+        ui.horizontal(|ui| {
+            ui.add_space(36.0);
+            let r = match state.user(vs.user_id) {
+                Some(u) => widgets::user_avatar(ui, u, 22.0),
+                None => ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover()).1,
+            };
+            if speaking {
+                ui.painter().circle_stroke(r.rect.center(), 12.0, egui::Stroke::new(2.0, theme::GREEN));
+            }
+            ui.add(egui::Label::new(RichText::new(name).size(14.0).color(theme::MUTED)).truncate().selectable(false));
+            if vs.self_stream {
+                ui.label(RichText::new("LIVE").font(theme::font_bold(10.0)).color(Color32::WHITE).background_color(theme::RED));
+            }
+            if vs.self_deaf || vs.deaf {
+                ui.label(RichText::new(icon::DEAFENED).font(theme::icon_font(12.0)).color(theme::RED));
+            } else if vs.self_mute || vs.mute {
+                ui.label(RichText::new(icon::MIC_OFF).font(theme::icon_font(12.0)).color(theme::RED));
+            }
+        });
+    }
+}
+
+fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Action>) {
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        ui.label(RichText::new("DIRECT MESSAGES").font(theme::font_semibold(12.0)).color(theme::MUTED));
+    });
+    ui.add_space(4.0);
+    let selected = uis.channel();
+    for c in state.private_channels() {
+        let is_selected = selected == Some(c.id);
+        let unread = state.is_unread(c.id);
+        let mentions = state.mention_count(c.id);
+        let r = row(ui, is_selected, 42.0, |ui, hovered| {
+            if c.kind == ChannelType::Dm {
+                if let Some(u) = c.recipients.first() {
+                    widgets::avatar_with_status(ui, u, 32.0, state.presence(u.id), if is_selected { theme::SELECTED } else if hovered { theme::HOVER } else { theme::SIDEBAR });
+                }
+            } else {
+                match swiftcord_core::cdn::group_dm_icon(c, 64) {
+                    Some(url) => {
+                        widgets::avatar(ui, &url, 32.0);
+                    }
+                    None => {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
+                        ui.painter().circle_filled(rect.center(), 16.0, theme::BLURPLE);
+                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::PEOPLE, theme::icon_font(15.0), Color32::WHITE);
+                    }
+                }
+            }
+            let color = if is_selected || unread { theme::HEADER } else if hovered { theme::TEXT } else { theme::MUTED };
+            ui.vertical(|ui| {
+                ui.add(egui::Label::new(RichText::new(c.label()).size(15.0).color(color)).truncate().selectable(false));
+                if c.kind == ChannelType::GroupDm {
+                    ui.label(RichText::new(format!("{} Members", c.recipients.len() + 1)).small().color(theme::FAINT));
+                }
+            });
+            if mentions > 0 {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(22.0, 16.0), Sense::hover());
+                    widgets::badge(ui, rect.center(), mentions, Color32::TRANSPARENT);
+                });
+            }
+        });
+        if r.clicked() {
+            actions.push(Action::SelectChannel(c.id));
+        }
+        r.context_menu(|ui| {
+            if ui.button("Copy channel ID").clicked() {
+                actions.push(Action::Copy(c.id.to_string()));
+                ui.close();
+            }
+        });
+    }
+}
+
+fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Action>) {
+    let Some(me) = &state.me else { return };
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        widgets::avatar_with_status(ui, me, 32.0, swiftcord_core::models::PresenceStatus::Online, Color32::from_rgb(0x23, 0x24, 0x28));
+        ui.vertical(|ui| {
+            ui.set_max_width(ui.available_width() - 100.0);
+            ui.add(egui::Label::new(RichText::new(me.display_name()).font(theme::font_semibold(14.0)).color(theme::HEADER)).truncate());
+            ui.add(egui::Label::new(RichText::new(me.tag()).size(12.0).color(theme::MUTED)).truncate());
+        });
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.add_space(4.0);
+            let settings = widgets::icon_button(ui, icon::SETTINGS, "Settings");
+            egui::Popup::menu(&settings).show(|ui| {
+                ui.set_min_width(160.0);
+                if ui.button("Settings…").clicked() {
+                    actions.push(Action::OpenSettings);
+                }
+                if ui.button("Copy user ID").clicked() {
+                    actions.push(Action::Copy(me.id.to_string()));
+                }
+                ui.separator();
+                if ui.button(RichText::new("Log out").color(theme::RED)).clicked() {
+                    actions.push(Action::LogOut);
+                }
+            });
+            if widgets::toggle_icon(ui, if uis.self_deaf { icon::DEAFENED } else { icon::HEADPHONES }, uis.self_deaf, "Deafen").clicked() {
+                actions.push(Action::ToggleDeafen);
+            }
+            if widgets::toggle_icon(ui, if uis.self_mute { icon::MIC_OFF } else { icon::MIC }, uis.self_mute, "Mute").clicked() {
+                actions.push(Action::ToggleMute);
+            }
+        });
+    });
+    ui.add_space(6.0);
+}

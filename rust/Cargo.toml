@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/app"]
+members = ["crates/core", "crates/voice", "crates/app"]
 resolver = "3"
 
 [workspace.package]
@@ -9,6 +9,7 @@ license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
 swiftcord-core = { path = "crates/core" }
+swiftcord-voice = { path = "crates/voice" }
 anyhow = "1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }

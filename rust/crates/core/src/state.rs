@@ -23,7 +23,8 @@ pub enum RailItem {
 /// What a client might react to after an event, beyond redrawing.
 #[derive(Debug)]
 pub enum Notice {
-    MessageCreated { channel_id: Snowflake, message_id: Snowflake, notify: bool },
+    /// Carries a copy of the message, since channels without loaded history don't keep it.
+    MessageCreated { message: Box<Message>, notify: bool },
     /// The current user's voice state changed (joined, moved, left, muted…).
     OwnVoiceState,
     VoiceServer(VoiceServerUpdate),
@@ -208,6 +209,31 @@ impl State {
 
     pub fn guild_mentions(&self, guild: Snowflake) -> u32 {
         self.channels.values().filter(|c| c.guild_id == Some(guild)).map(|c| self.mention_count(c.id)).sum()
+    }
+
+    /// Unread flag and mention count for every guild, in one pass over the channels.
+    pub fn guild_badges(&self) -> HashMap<Snowflake, (bool, u32)> {
+        let mut out: HashMap<Snowflake, (bool, u32)> = HashMap::new();
+        for c in self.channels.values() {
+            let Some(g) = c.guild_id else { continue };
+            let mentions = self.mention_count(c.id);
+            let unread = c.is_text_based() && !c.is_thread() && self.is_unread(c.id) && !self.is_channel_muted(c);
+            if mentions == 0 && !unread {
+                continue;
+            }
+            if unread && self.permissions_for(c) & perm::VIEW_CHANNEL == 0 {
+                continue;
+            }
+            let e = out.entry(g).or_default();
+            e.0 |= unread;
+            e.1 += mentions;
+        }
+        out
+    }
+
+    /// Total mentions across DMs, for the Home button.
+    pub fn dm_mentions(&self) -> u32 {
+        self.channels.values().filter(|c| c.is_private()).map(|c| self.mention_count(c.id)).sum()
     }
 
     pub fn is_guild_muted(&self, guild: Snowflake) -> bool {
@@ -649,6 +675,7 @@ impl State {
         let notify = self.should_notify(&m);
         let mentions_me = self.mentions_me(&m) || self.channels.get(&m.channel_id).is_some_and(|c| c.is_private());
         let (channel_id, message_id) = (m.channel_id, m.id);
+        let copy = Box::new(m.clone());
 
         if let Some(c) = self.channels.get_mut(&channel_id) {
             c.last_message_id = Some(message_id);
@@ -677,7 +704,7 @@ impl State {
                 list.reached_start = false;
             }
         }
-        Notice::MessageCreated { channel_id, message_id, notify }
+        Notice::MessageCreated { message: copy, notify }
     }
 
     fn on_message_update(&mut self, u: MessageUpdate) {
