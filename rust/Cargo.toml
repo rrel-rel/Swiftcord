@@ -1,0 +1,36 @@
+[workspace]
+members = ["crates/core", "crates/app"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[workspace.dependencies]
+swiftcord-core = { path = "crates/core" }
+anyhow = "1"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+flate2 = "1"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+parking_lot = "0.12"
+rand = "0.8"
+# Native TLS (SChannel on Windows) keeps the binary small and needs no C toolchain for crypto.
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "json", "multipart", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "fs"] }
+tokio-tungstenite = { version = "0.30", features = ["native-tls"] }
+tracing = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# Image decoding is painfully slow unoptimized; keep debug builds usable.
+[profile.dev.package."*"]
+opt-level = 2

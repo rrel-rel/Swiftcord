@@ -1,0 +1,23 @@
+[package]
+name = "swiftcord-core"
+description = "Platform-independent Discord client: REST, gateway, state cache, markdown, permissions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+base64.workspace = true
+chrono.workspace = true
+flate2.workspace = true
+futures-util.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+rsa = "0.9"
+sha2 = "0.10"
+unicode-segmentation = "1"

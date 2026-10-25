@@ -1,0 +1,8 @@
+[package]
+name = "swiftcord"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+swiftcord-core.workspace = true
