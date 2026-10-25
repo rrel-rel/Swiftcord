@@ -1,6 +1,7 @@
 pub mod call;
 pub mod chat;
 pub mod emoji;
+pub mod gif;
 pub mod login;
 pub mod markdown;
 pub mod message;

@@ -523,7 +523,7 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
             if perms & perm::ATTACH_FILES != 0 && widgets::icon_button(ui, icon::ADD, "Upload a file").clicked() {
                 actions.push(Action::PickFiles(c.id));
             }
-            let emoji_w = 36.0;
+            let emoji_w = 76.0;
             let draft = uis.drafts.entry(c.id).or_default();
             let hint = match c.kind {
                 ChannelType::Dm | ChannelType::GroupDm => format!("Message @{}", c.label()),
@@ -558,6 +558,11 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
             if uis.focus_composer {
                 r.request_focus();
                 uis.focus_composer = false;
+            }
+            let gr = ui.add(egui::Button::new(RichText::new("GIF").font(theme::font_bold(11.5)).color(theme::MUTED)).frame_when_inactive(false).min_size(Vec2::new(34.0, 28.0)));
+            let gif_at = gr.rect.right_top();
+            if gr.on_hover_text("GIFs").clicked() {
+                actions.push(Action::OpenGifPicker { channel: c.id, at: gif_at });
             }
             let er = widgets::icon_button(ui, icon::EMOJI, "Emoji");
             if er.clicked() {

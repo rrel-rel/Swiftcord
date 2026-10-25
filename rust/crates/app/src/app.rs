@@ -35,6 +35,9 @@ pub enum AppEvent {
     DmOpened(swiftcord_core::models::Channel),
     Folders(Option<Vec<swiftcord_core::models::GuildFolder>>),
     Voice { generation: u64, event: swiftcord_voice::Event },
+    /// GIF results for a search (an empty query is trending).
+    Gifs { query: String, result: Result<Vec<swiftcord_core::rest::Gif>, String> },
+    GifCategories(Result<Vec<String>, String>),
     Stream { generation: u64, event: swiftcord_voice::Event },
 }
 
@@ -54,6 +57,12 @@ pub enum Action {
     AddFiles { channel: Snowflake, files: Vec<FileUpload> },
     Notice(String),
     SearchMembers { guild: Snowflake, query: String },
+    OpenGifPicker { channel: Snowflake, at: egui::Pos2 },
+    /// Search GIFs; an empty query loads trending ones.
+    GifSearch(String),
+    GifCategories,
+    SendGif { channel: Snowflake, url: String },
+    CloseGifPicker,
     OpenDm(Snowflake),
     ShowPins(Snowflake),
     Ack(Snowflake),
@@ -144,6 +153,7 @@ pub struct UiState {
     pub settings_draft: Option<ui::settings::Draft>,
     /// A pending member search (guild, query, when it changed, sent yet).
     pub member_query: Option<(Snowflake, String, Instant, bool)>,
+    pub gif_picker: Option<ui::gif::GifPicker>,
 }
 
 impl UiState {
@@ -375,6 +385,22 @@ impl App {
             },
             AppEvent::Voice { generation, event } => crate::voice_glue::on_event(self, generation, event),
             AppEvent::Stream { generation, event } => crate::stream_glue::on_event(self, generation, event),
+            AppEvent::Gifs { query, result } => {
+                if let Some(p) = self.ui.gif_picker.as_mut().filter(|p| p.requested.as_deref() == Some(query.as_str())) {
+                    match result {
+                        Ok(gifs) => p.results = Some(gifs),
+                        Err(e) => {
+                            p.results = Some(Vec::new());
+                            self.banner(format!("Couldn't load GIFs: {e}"));
+                        }
+                    }
+                }
+            }
+            AppEvent::GifCategories(result) => {
+                if let Some(p) = &mut self.ui.gif_picker {
+                    p.categories = Some(result.unwrap_or_default());
+                }
+            }
             AppEvent::Folders(folders) => {
                 if let (Some(f), Some(s)) = (folders, &mut self.session) {
                     s.state.set_folders(f);
@@ -560,7 +586,6 @@ impl App {
 
     fn send(&mut self, channel: Snowflake) {
         let Some(s) = &mut self.session else { return };
-        let Some(me) = s.state.me.clone() else { return };
         let draft = self.ui.drafts.entry(channel).or_default();
         if draft.text.trim().is_empty() && draft.files.is_empty() {
             return;
@@ -581,7 +606,13 @@ impl App {
         let files = std::mem::take(&mut draft.files);
         let reply = draft.reply.take();
         draft.text.clear();
+        self.post(channel, content, files, reply);
+    }
 
+    /// Sends a message, showing it straight away as pending.
+    fn post(&mut self, channel: Snowflake, content: String, files: Vec<FileUpload>, reply: Option<(Snowflake, bool)>) {
+        let Some(s) = &mut self.session else { return };
+        let Some(me) = s.state.me.clone() else { return };
         let nonce = nonce_now();
         let mut msg = NewMessage { content: content.clone(), nonce: Some(nonce.to_string()), ..Default::default() };
         if let Some((id, ping)) = reply {
@@ -664,6 +695,36 @@ impl App {
             }
             Action::AddFiles { channel, files } => self.add_files(channel, files),
             Action::Notice(text) => self.banner(text),
+            Action::OpenGifPicker { channel, at } => {
+                self.ui.emoji_picker = None;
+                self.ui.gif_picker = Some(ui::gif::GifPicker::new(channel, at));
+            }
+            Action::GifSearch(query) => {
+                let Some(s) = &self.session else { return };
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    let result = if query.is_empty() { rest.gif_trending().await } else { rest.gif_search(&query).await };
+                    AppEvent::Gifs { query, result: result.map_err(|e| e.to_string()) }
+                });
+            }
+            Action::GifCategories => {
+                let Some(s) = &self.session else { return };
+                let rest = s.rest.clone();
+                self.spawn(async move { AppEvent::GifCategories(rest.gif_categories().await.map_err(|e| e.to_string())) });
+            }
+            Action::SendGif { channel, url } => {
+                self.apply(Action::CloseGifPicker);
+                let reply = self.ui.drafts.entry(channel).or_default().reply.take();
+                self.post(channel, url, Vec::new(), reply);
+            }
+            Action::CloseGifPicker => {
+                // Animated GIFs are heavy once decoded; let them go.
+                if let Some(p) = self.ui.gif_picker.take() {
+                    for uri in p.animated {
+                        self.ctx.forget_image(&uri);
+                    }
+                }
+            }
             Action::SearchMembers { guild, query } => {
                 if let Some(s) = &self.session {
                     s.gateway.search_members(guild, &query, 10);

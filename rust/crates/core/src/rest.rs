@@ -350,6 +350,42 @@ impl Rest {
             .await
     }
 
+    // MARK: GIFs (Tenor, through Discord)
+
+    pub async fn gif_search(&self, query: &str) -> Result<Vec<Gif>> {
+        let q = urlencode(query);
+        let text = self
+            .send(Method::GET, &format!("gifs/search?q={q}&media_format=mp4&provider=tenor&locale=en-US&limit=50"), Body::None)
+            .await?
+            .text()
+            .await?;
+        Ok(parse_lenient_list(&text)?)
+    }
+
+    pub async fn gif_trending(&self) -> Result<Vec<Gif>> {
+        let text = self
+            .send(Method::GET, "gifs/trending-gifs?media_format=mp4&provider=tenor&locale=en-US&limit=50", Body::None)
+            .await?
+            .text()
+            .await?;
+        Ok(parse_lenient_list(&text)?)
+    }
+
+    /// Trending search categories (names are what to search for).
+    pub async fn gif_categories(&self) -> Result<Vec<String>> {
+        #[derive(Deserialize)]
+        struct Category {
+            name: String,
+        }
+        #[derive(Deserialize)]
+        struct Trending {
+            #[serde(default)]
+            categories: Vec<Category>,
+        }
+        let t: Trending = self.json(Method::GET, "gifs/trending?media_format=mp4&provider=tenor&locale=en-US", Body::None).await?;
+        Ok(t.categories.into_iter().map(|c| c.name).collect())
+    }
+
     // MARK: Remote auth (QR login)
 
     /// Exchanges a remote-auth ticket for the encrypted token. Called on a client without a token.
@@ -361,6 +397,20 @@ impl Rest {
         let r: R = self.json(Method::POST, "users/@me/remote-auth/login", Body::Json(json!({ "ticket": ticket }))).await?;
         Ok(r.encrypted_token)
     }
+}
+
+/// A GIF from Discord's Tenor search. Sending one means sending its `url`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Gif {
+    pub url: String,
+    pub title: String,
+    /// The animated GIF.
+    pub gif_src: String,
+    /// A still frame.
+    pub preview: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 enum Body<'a> {

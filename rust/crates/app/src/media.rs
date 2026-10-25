@@ -79,7 +79,25 @@ fn mime_from_bytes(b: &[u8]) -> Option<String> {
     Some(m.to_owned())
 }
 
+/// URIs starting with this load only the first frame of an animated image (as a PNG), for still previews
+/// that don't hold every frame in memory.
+pub const STILL: &str = "still+";
+
+fn first_frame_png(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
+    // Previews are small on screen; cap their size too.
+    let img = if img.width() > 320 { img.thumbnail(320, 320) } else { img };
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    Ok(out.into_inner())
+}
+
 async fn fetch(http: &reqwest::Client, uri: &str, disk: Option<PathBuf>) -> Result<File, String> {
+    if let Some(real) = uri.strip_prefix(STILL) {
+        let full = Box::pin(fetch(http, real, None)).await?;
+        let png = tokio::task::spawn_blocking(move || first_frame_png(&full.bytes)).await.map_err(|e| e.to_string())??;
+        return Ok(File { bytes: png.into(), mime: Some("image/png".into()) });
+    }
     if let Some(path) = &disk {
         if let Ok(bytes) = tokio::fs::read(path).await {
             let mime = mime_from_bytes(&bytes);
@@ -109,7 +127,8 @@ impl BytesLoader for MediaLoader {
     }
 
     fn load(&self, ctx: &egui::Context, uri: &str) -> BytesLoadResult {
-        if !(uri.starts_with("https://") || uri.starts_with("http://")) {
+        let real = uri.strip_prefix(STILL).unwrap_or(uri);
+        if !(real.starts_with("https://") || real.starts_with("http://")) {
             return Err(LoadError::NotSupported);
         }
         let mut cache = self.cache.lock();
