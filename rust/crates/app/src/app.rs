@@ -154,6 +154,8 @@ pub struct UiState {
     /// A pending member search (guild, query, when it changed, sent yet).
     pub member_query: Option<(Snowflake, String, Instant, bool)>,
     pub gif_picker: Option<ui::gif::GifPicker>,
+    /// Players for GIF-style video clips on screen.
+    pub clips: crate::clip::Clips,
 }
 
 impl UiState {
@@ -982,6 +984,7 @@ impl eframe::App for App {
             self.ui.banner = None;
         }
         crate::voice_glue::tick(self);
+        self.ui.clips.tick();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

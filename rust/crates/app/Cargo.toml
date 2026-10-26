@@ -30,4 +30,4 @@ tauri-winrt-notification = "0.8"
 wry = "0.57"
 tao = "0.37"
 
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_WindowsAndMessaging", "Win32_System_Console", "Win32_System_Registry"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_WindowsAndMessaging", "Win32_System_Console", "Win32_System_Registry", "Win32_System_Com", "Win32_Media_MediaFoundation", "Win32_UI_Shell"] }

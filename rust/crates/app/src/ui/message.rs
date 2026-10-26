@@ -208,7 +208,7 @@ fn body(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     let editing = cx.uis.editing.as_ref().is_some_and(|(id, _)| *id == msg.id);
     if editing {
         edit_box(ui, msg, cx);
-    } else if !msg.content.is_empty() {
+    } else if !msg.content.is_empty() && !is_lone_media_link(msg) {
         let blocks = parsed(msg.id, &msg.content);
         let jumbo = markdown::is_emoji_only(&blocks);
         let mut mcx = Cx {
@@ -475,12 +475,21 @@ fn embed(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
     let kind = e.kind.as_deref().unwrap_or("rich");
     // Bare media links (images, GIFs) render as the media alone.
     if matches!(kind, "image" | "gifv") {
-        let Some(m) = e.thumbnail.as_ref().or(e.image.as_ref()) else { return };
+        let Some(m) = e.thumbnail.as_ref().or(e.image.as_ref()).or(e.video.as_ref()) else { return };
         let size = fit(m.width, m.height, MAX_MEDIA);
-        let target = e.url.as_deref().unwrap_or(&m.url);
+        let target = e.url.as_deref().unwrap_or(&m.url).to_owned();
+        // GIFs are usually MP4s now: play them as looping clips, with the still until the first frame.
+        if let Some(video) = e.video.as_ref().filter(|_| kind == "gifv" && !e.video.as_ref().unwrap().url.is_empty()) {
+            let still = e.thumbnail.as_ref().map(|t| swiftcord_core::cdn::media_proxy(t.proxy_url.as_deref().unwrap_or(&t.url), size.x as u32, size.y as u32));
+            let r = cx.uis.clips.show(ui, &video.url, still.as_deref(), size);
+            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                crate::platform::open_url(&target);
+            }
+            return;
+        }
         match animated_gif(e) {
-            Some(gif) => media(ui, &gif, target, size, true, false, None),
-            None => media(ui, m.proxy_url.as_deref().unwrap_or(&m.url), target, size, false, kind == "gifv", None),
+            Some(gif) => media(ui, &gif, &target, size, true, false, None),
+            None => media(ui, m.proxy_url.as_deref().unwrap_or(&m.url), &target, size, false, kind == "gifv", None),
         }
         return;
     }
@@ -661,4 +670,12 @@ pub fn estimate_height(msg: &Message, compact: bool) -> f32 {
         h += 22.0;
     }
     h
+}
+
+/// A message that's nothing but a link to a GIF or image shows just the media, as in Discord.
+fn is_lone_media_link(msg: &Message) -> bool {
+    let text = msg.content.trim();
+    (text.starts_with("https://") || text.starts_with("http://"))
+        && !text.contains(char::is_whitespace)
+        && msg.embeds.iter().any(|e| matches!(e.kind.as_deref(), Some("gifv" | "image")) && e.url.as_deref() == Some(text))
 }

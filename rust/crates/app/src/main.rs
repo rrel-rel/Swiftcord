@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod clip;
 mod demo;
 mod media;
 mod settings;
@@ -62,6 +63,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     let handle = rt.handle().clone();
+    let _ = clip::RUNTIME.set(handle.clone());
     let result = eframe::run_native("Swiftcord", options, Box::new(move |cc| Ok(Box::new(app::App::new(cc, handle)))));
     tracing::info!("exiting");
     rt.shutdown_timeout(std::time::Duration::from_millis(500));
