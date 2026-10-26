@@ -1029,6 +1029,9 @@ impl State {
         if let Some(v) = u.embeds {
             m.embeds = v;
         }
+        if let Some(v) = u.components {
+            m.components = v;
+        }
         if let Some(v) = u.flags {
             m.flags = v;
         }

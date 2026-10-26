@@ -22,6 +22,8 @@ use crate::ui::widgets;
 
 pub const GUTTER: f32 = 72.0;
 const MAX_MEDIA: Vec2 = Vec2::new(420.0, 320.0);
+/// Revealed-spoiler keys for gallery items start here, clear of the markdown spoilers counted from 0.
+pub(crate) const GALLERY_SPOILERS: u16 = 0x8000;
 
 thread_local! {
     static PARSED: RefCell<HashMap<(Snowflake, u64), Rc<Vec<Block>>>> = RefCell::new(HashMap::new());
@@ -249,8 +251,12 @@ fn body(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         }
     }
 
-    for a in &msg.attachments {
-        attachment(ui, a, cx);
+    // Components V2 messages place their attachments themselves (file components, galleries).
+    let v2 = msg.flags & swiftcord_core::models::message_flags::IS_COMPONENTS_V2 != 0;
+    if !v2 {
+        for a in &msg.attachments {
+            attachment(ui, a, cx);
+        }
     }
     if msg.flags & swiftcord_core::models::message_flags::SUPPRESS_EMBEDS == 0 {
         let mut i = 0;
@@ -260,6 +266,9 @@ fn body(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
             embed(ui, e, &extra, msg.id, cx);
             i += 1 + extra.len();
         }
+    }
+    if !msg.components.is_empty() {
+        crate::ui::components::show(ui, &msg.components, msg, cx);
     }
     for s in &msg.sticker_items {
         match swiftcord_core::cdn::sticker(s.id, s.format_type) {
@@ -353,7 +362,7 @@ fn system_line(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     });
 }
 
-fn fit(w: Option<u32>, h: Option<u32>, max: Vec2) -> Vec2 {
+pub(crate) fn fit(w: Option<u32>, h: Option<u32>, max: Vec2) -> Vec2 {
     let (w, h) = (w.unwrap_or(300).max(1) as f32, h.unwrap_or(200).max(1) as f32);
     let scale = (max.x / w).min(max.y / h).min(1.0);
     Vec2::new((w * scale).round(), (h * scale).round())
@@ -418,7 +427,7 @@ fn media_response(ui: &mut Ui, proxy_url: &str, size: Vec2, gif: bool, video: bo
     }
 }
 
-fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
+pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
     if a.url.is_empty() {
         // Still uploading.
         ui.label(RichText::new(format!("{} ({})", a.filename, widgets::human_size(a.size))).color(theme::MUTED));
@@ -536,38 +545,101 @@ fn gallery_extras<'a>(first: &Embed, rest: &'a [Embed]) -> Vec<&'a EmbedMedia> {
         .collect()
 }
 
-/// Up to four pictures in a grid, cropped to fill their cells: two side by side, three as one tall and two
-/// stacked, four as two rows.
-fn gallery(ui: &mut Ui, images: &[&EmbedMedia]) {
+/// A picture or video in a gallery.
+pub(crate) struct GalleryMedia<'a> {
+    pub url: &'a str,
+    pub proxy_url: Option<&'a str>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub video: bool,
+    pub spoiler: bool,
+    pub alt: Option<&'a str>,
+}
+
+impl<'a> From<&'a EmbedMedia> for GalleryMedia<'a> {
+    fn from(m: &'a EmbedMedia) -> Self {
+        GalleryMedia { url: &m.url, proxy_url: m.proxy_url.as_deref(), width: m.width, height: m.height, video: false, spoiler: false, alt: None }
+    }
+}
+
+/// Pictures in a grid, cropped to fill their cells: one alone at its own shape, two side by side, three as
+/// one tall and two stacked, four as two rows, and more in rows of three. Spoilers stay hidden until clicked
+/// (remembered per message under `key`).
+pub(crate) fn gallery(ui: &mut Ui, items: &[GalleryMedia], msg_id: Snowflake, key: u16, cx: &mut Ctx) {
     const GAP: f32 = 4.0;
     let width = 480.0_f32.min(ui.available_width());
-    let height = if images.len() == 2 { 240.0 } else { 320.0 };
-    let (area, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    // Cells are laid out from the origin, then moved to wherever the gallery is allocated (the cursor can't
+    // be used: in right-to-left layouts its left edge is unbounded).
+    let mut cells: Vec<Rect> = Vec::new();
+    let cell = |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(egui::pos2(x, y), Vec2::new(w, h));
     let half_w = (width - GAP) / 2.0;
-    let half_h = (height - GAP) / 2.0;
-    let cell = |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(area.min + Vec2::new(x, y), Vec2::new(w, h));
-    let cells: Vec<Rect> = match images.len() {
-        2 => vec![cell(0.0, 0.0, half_w, height), cell(half_w + GAP, 0.0, half_w, height)],
-        3 => vec![cell(0.0, 0.0, half_w, height), cell(half_w + GAP, 0.0, half_w, half_h), cell(half_w + GAP, half_h + GAP, half_w, half_h)],
-        _ => vec![
-            cell(0.0, 0.0, half_w, half_h),
-            cell(half_w + GAP, 0.0, half_w, half_h),
-            cell(0.0, half_h + GAP, half_w, half_h),
-            cell(half_w + GAP, half_h + GAP, half_w, half_h),
-        ],
+    let height = match items.len() {
+        0 => return,
+        1 => {
+            let size = fit(items[0].width, items[0].height, Vec2::new(width, 480.0));
+            cells.push(cell(0.0, 0.0, size.x, size.y));
+            size.y
+        }
+        2 => {
+            cells.extend([cell(0.0, 0.0, half_w, 240.0), cell(half_w + GAP, 0.0, half_w, 240.0)]);
+            240.0
+        }
+        3 => {
+            let half_h = (320.0 - GAP) / 2.0;
+            cells.extend([cell(0.0, 0.0, half_w, 320.0), cell(half_w + GAP, 0.0, half_w, half_h), cell(half_w + GAP, half_h + GAP, half_w, half_h)]);
+            320.0
+        }
+        4 => {
+            let half_h = (320.0 - GAP) / 2.0;
+            for (x, y) in [(0.0, 0.0), (half_w + GAP, 0.0), (0.0, half_h + GAP), (half_w + GAP, half_h + GAP)] {
+                cells.push(cell(x, y, half_w, half_h));
+            }
+            320.0
+        }
+        n => {
+            let side = (width - 2.0 * GAP) / 3.0;
+            for i in 0..n {
+                let (col, row) = ((i % 3) as f32, (i / 3) as f32);
+                cells.push(cell(col * (side + GAP), row * (side + GAP), side, side));
+            }
+            n.div_ceil(3) as f32 * (side + GAP) - GAP
+        }
     };
+    // A lone picture may be narrower than the gallery.
+    let used_w = cells.iter().map(|c| c.right()).fold(0.0, f32::max);
+    let (area, _) = ui.allocate_exact_size(Vec2::new(used_w, height), Sense::hover());
     let ppp = ui.ctx().pixels_per_point();
-    for (m, rect) in images.iter().zip(cells) {
+    for (i, (m, rect)) in items.iter().zip(cells).enumerate() {
+        let rect = rect.translate(area.min.to_vec2());
+        let reveal_key = (msg_id, key.wrapping_add(i as u16));
+        if m.spoiler && !cx.uis.revealed.contains(&reveal_key) {
+            let r = ui.interact(rect, egui::Id::unique(("gallery-spoiler", reveal_key)), Sense::click());
+            ui.painter().rect_filled(rect, 4, Color32::from_rgb(0x1e, 0x1f, 0x22));
+            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "SPOILER", theme::font_bold(14.0), Color32::WHITE);
+            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                cx.uis.revealed.insert(reveal_key);
+            }
+            continue;
+        }
         // Crop to cover the cell, keeping the middle.
         let (iw, ih) = (m.width.unwrap_or(1).max(1) as f32, m.height.unwrap_or(1).max(1) as f32);
         let scale = (rect.width() / iw).max(rect.height() / ih);
         let (u, v) = ((rect.width() / (iw * scale)).min(1.0), (rect.height() / (ih * scale)).min(1.0));
         let uv = Rect::from_min_max(egui::pos2((1.0 - u) / 2.0, (1.0 - v) / 2.0), egui::pos2((1.0 + u) / 2.0, (1.0 + v) / 2.0));
         let (pw, ph) = ((iw * scale * ppp) as u32, (ih * scale * ppp) as u32);
-        let url = swiftcord_core::cdn::media_proxy(m.proxy_url.as_deref().unwrap_or(&m.url), pw, ph);
+        let url = swiftcord_core::cdn::media_proxy(m.proxy_url.unwrap_or(m.url), pw, ph);
         let r = ui.put(rect, egui::Image::from_uri(url).uv(uv).maintain_aspect_ratio(false).fit_to_exact_size(rect.size()).corner_radius(4).sense(Sense::click()));
-        if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-            crate::platform::open_url(&m.url);
+        if m.video {
+            ui.painter().circle_filled(rect.center(), 24.0, Color32::from_black_alpha(160));
+            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::PLAY, theme::icon_font(20.0), Color32::WHITE);
+        }
+        let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let r = match m.alt {
+            Some(a) if !a.is_empty() => r.on_hover_text(a),
+            _ => r,
+        };
+        if r.clicked() {
+            crate::platform::open_url(m.url);
         }
     }
 }
@@ -648,8 +720,8 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
                 let size = fit(img.width, img.height, Vec2::new(480.0, 300.0));
                 media(ui, img.proxy_url.as_deref().unwrap_or(&img.url), &img.url, size, false, false, None);
             } else {
-                let images: Vec<&EmbedMedia> = std::iter::once(img).chain(extra_images.iter().copied()).collect();
-                gallery(ui, &images);
+                let images: Vec<GalleryMedia> = std::iter::once(img).chain(extra_images.iter().copied()).map(GalleryMedia::from).collect();
+                gallery(ui, &images, msg_id, GALLERY_SPOILERS, cx);
             }
         }
         if let Some(f) = &e.footer {
@@ -794,6 +866,7 @@ pub fn estimate_height(msg: &Message, compact: bool) -> f32 {
         h += if a.is_image() { fit(a.width, a.height, MAX_MEDIA).y + 6.0 } else { 64.0 };
     }
     h += msg.embeds.len() as f32 * 120.0;
+    h += msg.components.len() as f32 * 160.0;
     if !msg.reactions.is_empty() {
         h += 30.0;
     }

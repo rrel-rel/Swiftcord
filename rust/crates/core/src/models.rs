@@ -485,6 +485,91 @@ pub mod message_type {
 pub mod message_flags {
     pub const SUPPRESS_EMBEDS: u64 = 1 << 2;
     pub const SUPPRESS_NOTIFICATIONS: u64 = 1 << 12;
+    /// The message is laid out entirely by `components`; `content` and `embeds` are unused.
+    pub const IS_COMPONENTS_V2: u64 = 1 << 15;
+}
+
+pub mod component_type {
+    pub const ACTION_ROW: u8 = 1;
+    pub const BUTTON: u8 = 2;
+    pub const SECTION: u8 = 9;
+    pub const TEXT_DISPLAY: u8 = 10;
+    pub const THUMBNAIL: u8 = 11;
+    pub const MEDIA_GALLERY: u8 = 12;
+    pub const FILE: u8 = 13;
+    pub const SEPARATOR: u8 = 14;
+    pub const CONTAINER: u8 = 17;
+
+    /// String, user, role, mentionable and channel select menus.
+    pub fn is_select(kind: u8) -> bool {
+        matches!(kind, 3 | 5..=8)
+    }
+}
+
+/// A message component: buttons and menus in action rows, and (Components V2) the layout of a whole message:
+/// containers, sections, text, thumbnails, galleries, files and separators. One struct holds the fields of
+/// every kind; unknown kinds are skipped when drawn.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Component {
+    #[serde(rename = "type")]
+    pub kind: u8,
+    /// Children of containers, sections and action rows.
+    #[serde(deserialize_with = "null_as_default")]
+    pub components: Vec<Component>,
+    /// A section's thumbnail or button.
+    pub accessory: Option<Box<Component>>,
+    /// Text display markdown.
+    pub content: Option<String>,
+    /// A thumbnail's picture.
+    pub media: Option<UnfurledMedia>,
+    /// A media gallery's pictures and videos.
+    #[serde(deserialize_with = "null_as_default")]
+    pub items: Vec<GalleryItem>,
+    /// A file component's attachment (`attachment://name`, or the resolved CDN URL).
+    pub file: Option<UnfurledMedia>,
+    pub accent_color: Option<u32>,
+    #[serde(deserialize_with = "null_as_default")]
+    pub spoiler: bool,
+    /// Separators: whether a line is drawn (default true) and the gap, 1 small or 2 large.
+    pub divider: Option<bool>,
+    pub spacing: Option<u8>,
+    /// Buttons: 1 primary, 2 secondary, 3 success, 4 danger, 5 link, 6 premium.
+    pub style: Option<u8>,
+    pub label: Option<String>,
+    pub url: Option<String>,
+    pub emoji: Option<Emoji>,
+    #[serde(deserialize_with = "null_as_default")]
+    pub disabled: bool,
+    /// Select menus' prompt.
+    pub placeholder: Option<String>,
+    /// Alt text of thumbnails.
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct UnfurledMedia {
+    pub url: String,
+    pub proxy_url: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub content_type: Option<String>,
+}
+
+impl UnfurledMedia {
+    pub fn is_video(&self) -> bool {
+        self.content_type.as_deref().is_some_and(|t| t.starts_with("video/"))
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct GalleryItem {
+    pub media: UnfurledMedia,
+    pub description: Option<String>,
+    #[serde(deserialize_with = "null_as_default")]
+    pub spoiler: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -515,6 +600,8 @@ pub struct Message {
     pub reactions: Vec<Reaction>,
     #[serde(deserialize_with = "null_as_default")]
     pub sticker_items: Vec<StickerItem>,
+    #[serde(deserialize_with = "null_as_default")]
+    pub components: Vec<Component>,
     pub message_reference: Option<MessageReference>,
     pub referenced_message: Option<Box<Message>>,
     #[serde(deserialize_with = "null_as_default")]
@@ -667,6 +754,33 @@ impl PresenceStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_components_v2_messages() {
+        // Trimmed from a real embed bot post: a container holding a section with a thumbnail, a gallery and text.
+        let json = r#"{"id":"1","channel_id":"2","author":{"id":"3","username":"Embedded","bot":true},"content":"",
+            "flags":36868,"embeds":[],
+            "components":[{"type":17,"id":2,"accent_color":null,"spoiler":false,"components":[
+              {"type":9,"id":3,"components":[{"type":10,"id":4,"content":"**ENCE**"},{"type":10,"id":1,"content":"End of an era"}],
+               "accessory":{"type":11,"id":5,"media":{"url":"https://pbs.twimg.com/a.png","width":200,"height":200,"content_type":"image/png","flags":0},
+                            "description":null,"spoiler":false}},
+              {"type":12,"id":7,"items":[{"media":{"url":"https://pbs.twimg.com/b.jpg","width":2000,"height":2500},"description":null,"spoiler":false}]},
+              {"type":14,"divider":false,"spacing":2},
+              {"type":1,"components":[{"type":2,"style":5,"label":"Open","url":"https://x.com"},{"type":3,"custom_id":"m","options":[],"placeholder":"Pick"}]},
+              {"type":10,"id":6,"content":"-# <t:1793023201:R> • [Link](https://x.com/ence)"}]}]}"#;
+        let m: Message = serde_json::from_str(json).unwrap();
+        assert!(m.flags & message_flags::IS_COMPONENTS_V2 != 0);
+        let container = &m.components[0];
+        assert_eq!(container.kind, component_type::CONTAINER);
+        let section = &container.components[0];
+        assert_eq!(section.components[1].content.as_deref(), Some("End of an era"));
+        assert_eq!(section.accessory.as_ref().unwrap().media.as_ref().unwrap().width, Some(200));
+        assert_eq!(container.components[1].items[0].media.height, Some(2500));
+        assert_eq!(container.components[2].divider, Some(false));
+        let row = &container.components[3];
+        assert_eq!(row.components[0].url.as_deref(), Some("https://x.com"));
+        assert!(component_type::is_select(row.components[1].kind));
+    }
 
     #[test]
     fn tolerates_nulls_and_missing_fields() {

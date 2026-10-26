@@ -199,6 +199,7 @@ pub struct MessageUpdate {
     pub mention_everyone: Option<bool>,
     pub attachments: Option<Vec<Attachment>>,
     pub embeds: Option<Vec<Embed>>,
+    pub components: Option<Vec<Component>>,
     pub flags: Option<u64>,
     pub pinned: Option<bool>,
 }

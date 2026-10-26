@@ -1,5 +1,6 @@
 pub mod call;
 pub mod chat;
+pub mod components;
 pub mod emoji;
 pub mod gif;
 pub mod login;

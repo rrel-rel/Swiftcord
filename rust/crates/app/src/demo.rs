@@ -87,5 +87,20 @@ const SAMPLES: &str = r##"[
  "timestamp":"2026-10-25T10:07:00+00:00","content":"",
  "embeds":[{"type":"video","url":"https://fxtwitter.com/demo/status/2","color":1942002,"description":"A post with a video and no thumbnail",
    "author":{"name":"Demo (@demo)","url":"https://x.com/demo"},
-   "video":{"url":"https://static.klipy.com/ii/c3a19a0b747a76e98651f2b9a3cca5ff/8a/b1/A0uhZl0BSvMFS.mp4","width":498,"height":280}}]}
+   "video":{"url":"https://static.klipy.com/ii/c3a19a0b747a76e98651f2b9a3cca5ff/8a/b1/A0uhZl0BSvMFS.mp4","width":498,"height":280}}]},
+{"id":"1400000000000000009","channel_id":"{CH}","author":{"id":"2","username":"Demo Bot","bot":true},
+ "timestamp":"2026-10-25T10:08:00+00:00","content":"","flags":36868,"embeds":[],
+ "components":[{"type":17,"accent_color":null,"components":[
+   {"type":9,"components":[{"type":10,"content":"**ENCE ([@ENCE](https://x.com/ence))**"},{"type":10,"content":"End of an era 💔"}],
+    "accessory":{"type":11,"media":{"url":"https://pbs.twimg.com/profile_images/2039244530504089600/UQhd8MUj_200x200.png",
+      "proxy_url":"https://images-ext-1.discordapp.net/external/n-CEjCguGStmPhEFtLrEj_BU-rC0kdLItnU136BjeAs/https/pbs.twimg.com/profile_images/2039244530504089600/UQhd8MUj_200x200.png",
+      "width":200,"height":200,"content_type":"image/png"}}},
+   {"type":12,"items":[{"media":{"url":"https://pbs.twimg.com/media/HVj6mU8WsAEzNmB.jpg?name=orig",
+      "proxy_url":"https://images-ext-1.discordapp.net/external/hDG2OBiqL61eThZSZq2ftymaSiYiyE7RYx12HBYk5_I/%3Fname%3Dorig/https/pbs.twimg.com/media/HVj6mU8WsAEzNmB.jpg",
+      "width":2000,"height":2500,"content_type":"image/jpeg"}}]},
+   {"type":10,"content":"-# 💬 218  🔁 219  ❤️ 3.61K  📊 77.08K"},
+   {"type":10,"content":"-# <t:1793023201:R> • [Link](https://x.com/ence/status/2114718698422284713)"},
+   {"type":14,"divider":true,"spacing":1},
+   {"type":1,"components":[{"type":2,"style":5,"label":"Open post","url":"https://x.com/ence/status/2114718698422284713"},
+     {"type":2,"style":1,"label":"Translate","custom_id":"t"},{"type":3,"custom_id":"m","options":[],"placeholder":"More options"}]}]}]}
 ]"##;
