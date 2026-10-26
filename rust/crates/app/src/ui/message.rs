@@ -8,7 +8,7 @@ use std::rc::Rc;
 use chrono::{DateTime, Local, Utc};
 use eframe::egui::{self, Align, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
 use swiftcord_core::markdown::{self, Block};
-use swiftcord_core::models::{message_type, Attachment, Embed, Message, PendingState};
+use swiftcord_core::models::{message_type, Attachment, Embed, EmbedMedia, Message, PendingState};
 use swiftcord_core::permissions::perm;
 use swiftcord_core::proto::FavoriteGif;
 use swiftcord_core::state::State;
@@ -241,7 +241,7 @@ fn body(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
                     attachment(ui, a, cx);
                 }
                 for e in &snap.message.embeds {
-                    embed(ui, e, msg.id, cx);
+                    embed(ui, e, &[], msg.id, cx);
                 }
             });
             let rect = r.response.rect;
@@ -253,8 +253,12 @@ fn body(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         attachment(ui, a, cx);
     }
     if msg.flags & swiftcord_core::models::message_flags::SUPPRESS_EMBEDS == 0 {
-        for e in &msg.embeds {
-            embed(ui, e, msg.id, cx);
+        let mut i = 0;
+        while i < msg.embeds.len() {
+            let e = &msg.embeds[i];
+            let extra = gallery_extras(e, &msg.embeds[i + 1..]);
+            embed(ui, e, &extra, msg.id, cx);
+            i += 1 + extra.len();
         }
     }
     for s in &msg.sticker_items {
@@ -519,7 +523,76 @@ fn animated_gif(e: &Embed) -> Option<String> {
     None
 }
 
-fn embed(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
+/// A post with several pictures (as embed bots and Twitter links send them) arrives as one embed followed by
+/// embeds with the same URL holding only an image; Discord shows those images together in the first one.
+fn gallery_extras<'a>(first: &Embed, rest: &'a [Embed]) -> Vec<&'a EmbedMedia> {
+    if first.url.is_none() || !matches!(first.kind.as_deref(), None | Some("rich" | "article" | "link")) {
+        return Vec::new();
+    }
+    rest.iter()
+        .take_while(|x| x.url == first.url && x.title.is_none() && x.description.is_none() && x.image.is_some())
+        .filter_map(|x| x.image.as_ref())
+        .take(3)
+        .collect()
+}
+
+/// Up to four pictures in a grid, cropped to fill their cells: two side by side, three as one tall and two
+/// stacked, four as two rows.
+fn gallery(ui: &mut Ui, images: &[&EmbedMedia]) {
+    const GAP: f32 = 4.0;
+    let width = 480.0_f32.min(ui.available_width());
+    let height = if images.len() == 2 { 240.0 } else { 320.0 };
+    let (area, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let half_w = (width - GAP) / 2.0;
+    let half_h = (height - GAP) / 2.0;
+    let cell = |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(area.min + Vec2::new(x, y), Vec2::new(w, h));
+    let cells: Vec<Rect> = match images.len() {
+        2 => vec![cell(0.0, 0.0, half_w, height), cell(half_w + GAP, 0.0, half_w, height)],
+        3 => vec![cell(0.0, 0.0, half_w, height), cell(half_w + GAP, 0.0, half_w, half_h), cell(half_w + GAP, half_h + GAP, half_w, half_h)],
+        _ => vec![
+            cell(0.0, 0.0, half_w, half_h),
+            cell(half_w + GAP, 0.0, half_w, half_h),
+            cell(0.0, half_h + GAP, half_w, half_h),
+            cell(half_w + GAP, half_h + GAP, half_w, half_h),
+        ],
+    };
+    let ppp = ui.ctx().pixels_per_point();
+    for (m, rect) in images.iter().zip(cells) {
+        // Crop to cover the cell, keeping the middle.
+        let (iw, ih) = (m.width.unwrap_or(1).max(1) as f32, m.height.unwrap_or(1).max(1) as f32);
+        let scale = (rect.width() / iw).max(rect.height() / ih);
+        let (u, v) = ((rect.width() / (iw * scale)).min(1.0), (rect.height() / (ih * scale)).min(1.0));
+        let uv = Rect::from_min_max(egui::pos2((1.0 - u) / 2.0, (1.0 - v) / 2.0), egui::pos2((1.0 + u) / 2.0, (1.0 + v) / 2.0));
+        let (pw, ph) = ((iw * scale * ppp) as u32, (ih * scale * ppp) as u32);
+        let url = swiftcord_core::cdn::media_proxy(m.proxy_url.as_deref().unwrap_or(&m.url), pw, ph);
+        let r = ui.put(rect, egui::Image::from_uri(url).uv(uv).maintain_aspect_ratio(false).fit_to_exact_size(rect.size()).corner_radius(4).sense(Sense::click()));
+        if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            crate::platform::open_url(&m.url);
+        }
+    }
+}
+
+/// A video that can't play here: its poster (or a blank tile) with a play button, opening `target`.
+fn video_poster(ui: &mut Ui, poster: Option<&EmbedMedia>, video: &EmbedMedia, target: &str) {
+    match poster {
+        Some(p) => {
+            let size = fit(p.width.or(video.width), p.height.or(video.height), Vec2::new(480.0, 270.0));
+            media(ui, p.proxy_url.as_deref().unwrap_or(&p.url), target, size, false, true, None);
+        }
+        None => {
+            let size = fit(video.width.or(Some(480)), video.height.or(Some(270)), Vec2::new(480.0, 270.0));
+            let (rect, r) = ui.allocate_exact_size(size, Sense::click());
+            ui.painter().rect_filled(rect, 6, Color32::BLACK);
+            ui.painter().circle_filled(rect.center(), 24.0, Color32::from_white_alpha(40));
+            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::PLAY, theme::icon_font(20.0), Color32::WHITE);
+            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                crate::platform::open_url(target);
+            }
+        }
+    }
+}
+
+fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake, cx: &mut Ctx) {
     let kind = e.kind.as_deref().unwrap_or("rich");
     // Bare media links (images, GIFs) render as the media alone.
     if matches!(kind, "image" | "gifv") {
@@ -547,9 +620,10 @@ fn embed(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
         return;
     }
     let bar = e.color.map_or(theme::RAIL, |c| theme::role_color(Some(c)));
-    // Videos (and images) are shown large below the text; plain thumbnails sit beside it.
-    let video = e.video.is_some() && e.thumbnail.is_some();
-    let side_thumb = e.thumbnail.as_ref().filter(|_| !video && e.image.is_none());
+    // Videos and images are shown large below the text; thumbnails sit beside it, unless they're a video's
+    // poster. Link previews only have room for one picture, so a large image hides their thumbnail.
+    let video = e.video.as_ref().filter(|v| !v.url.is_empty());
+    let side_thumb = e.thumbnail.as_ref().filter(|_| video.is_none() && (e.image.is_none() || kind == "rich"));
     let r = egui::Frame::new().fill(theme::EMBED_BG).corner_radius(4).inner_margin(egui::Margin { left: 16, right: 14, top: 10, bottom: 12 }).show(ui, |ui| {
         ui.set_max_width(520.0_f32.min(ui.available_width() - 8.0));
         ui.spacing_mut().item_spacing.y = 6.0;
@@ -566,13 +640,17 @@ fn embed(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
                 });
             }
         });
-        if let Some(img) = &e.image {
-            let size = fit(img.width, img.height, Vec2::new(480.0, 300.0));
-            media(ui, img.proxy_url.as_deref().unwrap_or(&img.url), &img.url, size, false, false, None);
-        } else if let Some(t) = e.thumbnail.as_ref().filter(|_| video) {
-            let size = fit(t.width, t.height, Vec2::new(480.0, 270.0));
-            let target = e.url.as_deref().unwrap_or(&t.url);
-            media(ui, t.proxy_url.as_deref().unwrap_or(&t.url), target, size, false, true, None);
+        if let Some(v) = video {
+            let target = e.url.as_deref().unwrap_or(&v.url);
+            video_poster(ui, e.thumbnail.as_ref().or(e.image.as_ref()), v, target);
+        } else if let Some(img) = &e.image {
+            if extra_images.is_empty() {
+                let size = fit(img.width, img.height, Vec2::new(480.0, 300.0));
+                media(ui, img.proxy_url.as_deref().unwrap_or(&img.url), &img.url, size, false, false, None);
+            } else {
+                let images: Vec<&EmbedMedia> = std::iter::once(img).chain(extra_images.iter().copied()).collect();
+                gallery(ui, &images);
+            }
         }
         if let Some(f) = &e.footer {
             ui.horizontal(|ui| {

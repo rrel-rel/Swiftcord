@@ -73,5 +73,19 @@ const SAMPLES: &str = r##"[
 {"id":"1400000000000000006","channel_id":"{CH}","author":{"id":"2","username":"Demo Bot","bot":true},
  "timestamp":"2026-10-25T10:05:00+00:00","content":"",
  "embeds":[{"type":"rich","description":"An embed with only a description and a big image.","color":15548997,
-   "image":{"url":"https://cdn.discordapp.com/embed/avatars/0.png","proxy_url":"https://cdn.discordapp.com/embed/avatars/0.png","width":256,"height":256}}]}
+   "image":{"url":"https://cdn.discordapp.com/embed/avatars/0.png","proxy_url":"https://cdn.discordapp.com/embed/avatars/0.png","width":256,"height":256}}]},
+{"id":"1400000000000000007","channel_id":"{CH}","author":{"id":"2","username":"Demo Bot","bot":true},
+ "timestamp":"2026-10-25T10:06:00+00:00","content":"An embed bot's post with four pictures (extra embeds sharing the URL):",
+ "embeds":[{"type":"rich","url":"https://fxtwitter.com/demo/status/1","color":1942002,"description":"Four pictures from one post",
+   "author":{"name":"Demo (@demo)","url":"https://x.com/demo","icon_url":"https://cdn.discordapp.com/embed/avatars/5.png"},
+   "footer":{"text":"FxTwitter"},
+   "image":{"url":"https://cdn.discordapp.com/embed/avatars/0.png","proxy_url":"https://cdn.discordapp.com/embed/avatars/0.png","width":256,"height":256}},
+  {"type":"rich","url":"https://fxtwitter.com/demo/status/1","image":{"url":"https://cdn.discordapp.com/embed/avatars/1.png","proxy_url":"https://cdn.discordapp.com/embed/avatars/1.png","width":256,"height":256}},
+  {"type":"rich","url":"https://fxtwitter.com/demo/status/1","image":{"url":"https://cdn.discordapp.com/embed/avatars/2.png","proxy_url":"https://cdn.discordapp.com/embed/avatars/2.png","width":256,"height":256}},
+  {"type":"rich","url":"https://fxtwitter.com/demo/status/1","image":{"url":"https://cdn.discordapp.com/embed/avatars/3.png","proxy_url":"https://cdn.discordapp.com/embed/avatars/3.png","width":256,"height":256}}]},
+{"id":"1400000000000000008","channel_id":"{CH}","author":{"id":"2","username":"Demo Bot","bot":true},
+ "timestamp":"2026-10-25T10:07:00+00:00","content":"",
+ "embeds":[{"type":"video","url":"https://fxtwitter.com/demo/status/2","color":1942002,"description":"A post with a video and no thumbnail",
+   "author":{"name":"Demo (@demo)","url":"https://x.com/demo"},
+   "video":{"url":"https://static.klipy.com/ii/c3a19a0b747a76e98651f2b9a3cca5ff/8a/b1/A0uhZl0BSvMFS.mp4","width":498,"height":280}}]}
 ]"##;
