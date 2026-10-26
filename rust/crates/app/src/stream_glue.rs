@@ -158,7 +158,7 @@ fn connect(app: &mut App) {
         devices: swiftcord_voice::Devices { input: None, output: app.settings.output_device.clone() },
         vad_threshold_db: app.settings.vad_threshold_db,
         muted: true,
-        deafened: app.ui.self_deaf,
+        deafened: app.ui.self_deaf && !app.settings.stream_audio_when_deafened,
     };
     let sink = app.event_sink();
     let Some(w) = &mut app.watch else { return };
@@ -179,6 +179,7 @@ fn connect(app: &mut App) {
     w.generation += 1;
     let generation = w.generation;
     w.voice = Some(Voice::connect(&app.rt, info, settings, move |e| sink(AppEvent::Stream { generation, event: e })));
+    update_self_state(app);
     if let Some(v) = &mut app.ui.stream {
         v.status = WatchStatus::Connecting;
     }
@@ -211,9 +212,11 @@ pub fn on_event(app: &mut App, generation: u64, event: Event) {
     }
 }
 
-/// Keeps stream audio deafened along with the call.
+/// Applies the stream's sound settings: its volume, and whether deafening silences it too (it does unless
+/// "keep stream sound when deafened" is on).
 pub fn update_self_state(app: &App) {
-    if let Some(v) = app.watch.as_ref().and_then(|w| w.voice.as_ref()) {
-        v.set_deafened(app.ui.self_deaf);
-    }
+    let Some(w) = &app.watch else { return };
+    let Some(v) = &w.voice else { return };
+    v.set_deafened(app.ui.self_deaf && !app.settings.stream_audio_when_deafened);
+    v.set_user_volume(w.owner.0, app.settings.stream_volume.clamp(0.0, 2.0));
 }

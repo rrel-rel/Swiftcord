@@ -12,11 +12,15 @@ pub struct Settings {
     pub notifications: bool,
     /// The member list beside server channels is closed.
     pub hide_members: bool,
+    /// Volume of Go Live streams being watched (1.0 is as sent; up to 2.0).
+    pub stream_volume: f32,
+    /// Keep hearing a watched stream while deafened.
+    pub stream_audio_when_deafened: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { input_device: None, output_device: None, vad_threshold_db: -50.0, notifications: true, hide_members: false }
+        Self { input_device: None, output_device: None, vad_threshold_db: -50.0, notifications: true, hide_members: false, stream_volume: 1.0, stream_audio_when_deafened: false }
     }
 }
 

@@ -58,6 +58,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) 
                     if ui.button("Fullscreen").clicked() {
                         actions.push(Action::ToggleFullscreen);
                     }
+                    sound_menu(ui, uis, actions);
                     if ui.button("Show Chat").clicked() {
                         actions.push(Action::ShowStream(false));
                     }
@@ -95,6 +96,31 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) 
             ui.painter().text(area.right_top() + Vec2::new(-12.0, 12.0), egui::Align2::RIGHT_TOP, "Esc to exit fullscreen", theme::font(12.0), Color32::from_white_alpha(90));
         }
     });
+}
+
+/// The stream's sound: a speaker button (showing the volume) opening a slider, and whether it keeps playing
+/// while you're deafened. Separate from the call's own volume.
+fn sound_menu(ui: &mut Ui, uis: &UiState, actions: &mut Vec<Action>) {
+    let (volume, when_deafened) = uis.stream_audio;
+    let glyph = if volume <= 0.0 || (uis.self_deaf && !when_deafened) { theme::icon::MUTED } else { theme::icon::VOLUME };
+    let label = RichText::new(format!("{glyph}  {}%", (volume * 100.0).round() as i32));
+    ui.menu_button(label.font(theme::icon_font(13.0)), |ui| {
+        ui.set_min_width(240.0);
+        ui.label(RichText::new("Stream Volume").font(theme::font_semibold(13.0)).color(theme::HEADER));
+        let mut v = volume * 100.0;
+        let r = ui.add(egui::Slider::new(&mut v, 0.0..=200.0).suffix("%").step_by(5.0));
+        if r.changed() {
+            actions.push(Action::SetStreamAudio { volume: v / 100.0, when_deafened });
+        }
+        ui.add_space(4.0);
+        let mut keep = when_deafened;
+        if ui.checkbox(&mut keep, "Keep stream sound when deafened").changed() {
+            actions.push(Action::SetStreamAudio { volume, when_deafened: keep });
+        }
+        ui.label(RichText::new("Deafening still silences the call itself.").size(12.0).color(theme::MUTED));
+    })
+    .response
+    .on_hover_text("Stream sound");
 }
 
 /// A bar above the chat while a stream is being watched but not shown.

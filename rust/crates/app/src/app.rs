@@ -122,6 +122,8 @@ pub enum Action {
     SearchMore,
     CloseSearch,
     StopWatching,
+    /// The watched stream's volume (0–2), and whether to keep hearing it while deafened.
+    SetStreamAudio { volume: f32, when_deafened: bool },
     OpenSharePicker,
     CloseSharePicker,
     /// Go live with what the share picker has selected.
@@ -233,6 +235,8 @@ pub struct UiState {
     pub search_box: String,
     /// The open server profile editor.
     pub server_profile: Option<ui::server_profile::Editor>,
+    /// The watched stream's sound: volume (0–2) and whether it plays while deafened (from settings).
+    pub stream_audio: (f32, bool),
     /// Favourite GIFs, most recent first (from the synced frecency settings).
     pub favorite_gifs: Vec<swiftcord_core::proto::FavoriteGif>,
     /// Players for GIF-style video clips on screen.
@@ -293,6 +297,7 @@ impl App {
             frecency: None,
         };
         app.ui.hide_members = app.settings.hide_members;
+        app.ui.stream_audio = (app.settings.stream_volume, app.settings.stream_audio_when_deafened);
         match credentials::load_token() {
             Some(token) => app.start_session(token),
             None => app.start_qr_login(),
@@ -1166,6 +1171,13 @@ impl App {
                         Err(e) => AppEvent::Error(format!("Couldn't save your status: {e}")),
                     }
                 });
+            }
+            Action::SetStreamAudio { volume, when_deafened } => {
+                self.settings.stream_volume = volume.clamp(0.0, 2.0);
+                self.settings.stream_audio_when_deafened = when_deafened;
+                self.settings.save();
+                self.ui.stream_audio = (self.settings.stream_volume, when_deafened);
+                crate::stream_glue::update_self_state(self);
             }
             Action::ToggleMemberList => {
                 self.ui.hide_members = !self.ui.hide_members;
