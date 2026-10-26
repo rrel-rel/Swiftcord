@@ -24,6 +24,12 @@ use std::sync::Mutex;
 
 use eframe::egui;
 
+/// The window and taskbar icon (otherwise eframe shows its own).
+fn window_icon() -> std::sync::Arc<egui::IconData> {
+    let icon = image::load_from_memory(include_bytes!("../assets/icon.png")).map(|i| i.to_rgba8()).ok();
+    std::sync::Arc::new(icon.map_or_else(egui::IconData::default, |i| egui::IconData { width: i.width(), height: i.height(), rgba: i.into_raw() }))
+}
+
 fn init_logging() {
     let dir = platform::data_dir().join("logs");
     let _ = fs::create_dir_all(&dir);
@@ -67,7 +73,8 @@ fn main() -> eframe::Result {
             .with_title("Swiftcord")
             .with_app_id("Swiftcord")
             .with_inner_size([1100.0, 680.0])
-            .with_min_inner_size([760.0, 460.0]),
+            .with_min_inner_size([760.0, 460.0])
+            .with_icon(window_icon()),
         renderer: eframe::Renderer::Wgpu,
         centered: true,
         ..Default::default()

@@ -1,0 +1,21 @@
+Thanks for testing Swiftcord!
+
+Swiftcord is an unofficial, lightweight Discord client for Windows. This is an early test build, so expect rough edges.
+
+Before you install:
+
+- Swiftcord isn't made or approved by Discord. Discord's terms don't allow third-party clients, so using one carries some risk to your account. Consider testing with an account you don't mind that risk for.
+
+- This build isn't code-signed yet, so Windows SmartScreen may say "Windows protected your PC". Click "More info", then "Run anyway".
+
+- It needs Windows 10 (version 1809 or later) or Windows 11. On the "N" editions of Windows, install the Media Feature Pack first (Settings > Apps > Optional features), or Swiftcord won't start.
+
+- It installs just for you (no administrator rights needed), in your user folder. Uninstall it from Settings > Apps like any other app.
+
+If something goes wrong:
+
+- Please send the log file along with what you were doing. It's at:
+  %LOCALAPPDATA%\Swiftcord\data\logs\swiftcord.log
+  (paste that into File Explorer's address bar). The previous run's log is swiftcord.old.log, next to it.
+
+- The log doesn't contain your password or sign-in token, but it does include server and channel IDs.
