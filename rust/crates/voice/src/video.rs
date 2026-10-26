@@ -274,6 +274,44 @@ pub fn nv12_to_rgba(src: &[u8], width: usize, height: usize, stride: usize, uv_o
     out
 }
 
+/// Where the picture sits in a decoded frame, which decoders pad below and to the right.
+#[derive(Clone, Copy, Debug)]
+pub struct Crop {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+/// NV12 → RGBA like [`nv12_to_rgba`], but only the picture in `crop`, shrunk to at most `max_width` wide
+/// (averaging 2×2 pixels when shrinking a lot, so detail doesn't shimmer); only the pixels kept are converted.
+/// `y_plane` and `uv_plane` share the row pitch `stride`. Returns the width, height and pixels.
+pub fn nv12_to_rgba_scaled(y_plane: &[u8], uv_plane: &[u8], stride: usize, crop: Crop, max_width: usize, bt709: bool) -> (usize, usize, Vec<u8>) {
+    let (cw, ch) = (crop.width.max(1), crop.height.max(1));
+    let scale = (cw as f32 / max_width.max(1) as f32).max(1.0);
+    let (w, h) = (((cw as f32 / scale) as usize).max(1), ((ch as f32 / scale) as usize).max(1));
+    let step = usize::from(scale >= 1.5 && cw > 1 && ch > 1);
+    let (rv, gu, gv, bu) = if bt709 { (459, 55, 136, 541) } else { (409, 100, 208, 516) };
+    // Source columns, worked out once.
+    let cols: Vec<usize> = (0..w).map(|x| crop.x + ((x as f32 * scale) as usize).min(cw - 1 - step)).collect();
+    let mut out = vec![255u8; w * h * 4];
+    for (y, orow) in out.chunks_exact_mut(w * 4).enumerate() {
+        let sy = crop.y + ((y as f32 * scale) as usize).min(ch - 1 - step);
+        let (line, next) = (&y_plane[sy * stride..], &y_plane[(sy + step) * stride..]);
+        let uv = &uv_plane[sy / 2 * stride..];
+        for (px, &sx) in orow.chunks_exact_mut(4).zip(&cols) {
+            let luma = (line[sx] as i32 + line[sx + step] as i32 + next[sx] as i32 + next[sx + step] as i32 + 2) / 4;
+            let c = (luma - 16) * 298;
+            let u = uv[sx & !1] as i32 - 128;
+            let v = uv[(sx & !1) + 1] as i32 - 128;
+            px[0] = ((c + rv * v + 128) >> 8).clamp(0, 255) as u8;
+            px[1] = ((c - gu * u - gv * v + 128) >> 8).clamp(0, 255) as u8;
+            px[2] = ((c + bu * u + 128) >> 8).clamp(0, 255) as u8;
+        }
+    }
+    (w, h, out)
+}
+
 /// The NAL units of an Annex-B access unit, split the way WebRTC does (a zero before `00 00 01` belongs to
 /// the start code), so DAVE's unencrypted ranges line up for receivers.
 pub fn nal_units(annexb: &[u8]) -> Vec<&[u8]> {
@@ -768,6 +806,24 @@ mod tests {
         let src = [81, 81, 81, 81, 90, 240];
         let px = &nv12_to_rgba(&src, 2, 2, 2, 4)[..4];
         assert!(px[0] > 200 && px[1] < 60, "{px:?}");
+    }
+
+    #[test]
+    fn nv12_scaled_crops_and_shrinks() {
+        // 8×4 frame with stride 10: the picture is the left 6×4; a bright padding column must not show.
+        let stride = 10;
+        let mut luma = vec![126u8; stride * 4];
+        for row in luma.chunks_mut(stride) {
+            row[6..].fill(235);
+        }
+        let chroma = vec![128u8; stride * 2];
+        let crop = Crop { x: 0, y: 0, width: 6, height: 4 };
+        let (w, h, rgba) = nv12_to_rgba_scaled(&luma, &chroma, stride, crop, 3, false);
+        assert_eq!((w, h), (3, 2));
+        assert!(rgba.chunks(4).all(|p| (p[0] as i32 - 128).abs() <= 2 && p[3] == 255), "{rgba:?}");
+        // Not shrunk: same as the full conversion.
+        let (w, h, rgba) = nv12_to_rgba_scaled(&luma, &chroma, stride, crop, 100, false);
+        assert_eq!((w, h, rgba.len()), (6, 4, 6 * 4 * 4));
     }
 
     /// A minimal H.264 stream of raw-pixel (I_PCM) macroblocks, so the decoder can be tested without a file.

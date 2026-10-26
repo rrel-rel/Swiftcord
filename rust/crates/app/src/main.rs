@@ -10,6 +10,7 @@ mod share_glue;
 mod threads_glue;
 mod stream_glue;
 mod platform;
+mod player;
 mod theme;
 mod ui;
 mod voice_glue;

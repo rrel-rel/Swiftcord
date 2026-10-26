@@ -52,6 +52,12 @@ pub mod icon {
     pub const HOME: &str = "\u{E80F}";
     pub const DOWNLOAD: &str = "\u{E896}";
     pub const PLAY: &str = "\u{E768}";
+    pub const PAUSE: &str = "\u{E769}";
+    pub const VOLUME: &str = "\u{E767}";
+    pub const MUTED: &str = "\u{E74F}";
+    pub const FULL_SCREEN: &str = "\u{E740}";
+    pub const OPEN_EXTERNAL: &str = "\u{E8A7}";
+    pub const REPLAY: &str = "\u{E72C}";
     pub const FOLDER: &str = "\u{E8B7}";
     pub const FILE: &str = "\u{E8A5}";
     pub const SIGNAL: &str = "\u{E701}";

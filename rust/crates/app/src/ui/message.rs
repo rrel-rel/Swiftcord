@@ -452,7 +452,15 @@ pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
         ui.label(RichText::new(format!("{} ({})", a.filename, widgets::human_size(a.size))).color(theme::MUTED));
         return;
     }
-    if a.is_image() || (a.is_video() && a.width.is_some()) {
+    if a.is_video() {
+        let size = fit(a.width.or(Some(480)), a.height.or(Some(270)), MAX_MEDIA);
+        let ppp = ui.ctx().pixels_per_point();
+        let poster = a.width.map(|_| swiftcord_core::cdn::media_proxy(&a.proxy_url, (size.x * ppp) as u32, (size.y * ppp) as u32));
+        let video = crate::player::Video { url: &a.url, link: &a.url, poster, width: a.width, height: a.height };
+        cx.uis.videos.show(ui, &video, size);
+        return;
+    }
+    if a.is_image() {
         let size = fit(a.width, a.height, MAX_MEDIA);
         let gif = a.content_type.as_deref() == Some("image/gif");
         let r = media_response(ui, &a.proxy_url, size, gif, a.is_video(), a.description.as_deref());
@@ -647,6 +655,12 @@ pub(crate) fn gallery(ui: &mut Ui, items: &[GalleryMedia], msg_id: Snowflake, ke
         let uv = Rect::from_min_max(egui::pos2((1.0 - u) / 2.0, (1.0 - v) / 2.0), egui::pos2((1.0 + u) / 2.0, (1.0 + v) / 2.0));
         let (pw, ph) = ((iw * scale * ppp) as u32, (ih * scale * ppp) as u32);
         let url = swiftcord_core::cdn::media_proxy(m.proxy_url.unwrap_or(m.url), pw, ph);
+        // A started video plays in its cell, letterboxed.
+        if m.video && cx.uis.videos.is_open(m.url) {
+            let video = crate::player::Video { url: m.url, link: m.url, poster: Some(url), width: m.width, height: m.height };
+            cx.uis.videos.show_at(ui, rect, &video);
+            continue;
+        }
         let r = ui.put(rect, egui::Image::from_uri(url).uv(uv).maintain_aspect_ratio(false).fit_to_exact_size(rect.size()).corner_radius(4).sense(Sense::click()));
         if m.video {
             ui.painter().circle_filled(rect.center(), 24.0, Color32::from_black_alpha(160));
@@ -658,9 +672,20 @@ pub(crate) fn gallery(ui: &mut Ui, items: &[GalleryMedia], msg_id: Snowflake, ke
             _ => r,
         };
         if r.clicked() {
-            crate::platform::open_url(m.url);
+            if m.video {
+                cx.uis.videos.play(ui.ctx(), m.url, rect.width());
+            } else {
+                crate::platform::open_url(m.url);
+            }
         }
     }
+}
+
+/// Whether an embed's video is a file we can play, rather than a page to embed (YouTube and the like). Discord
+/// proxies the files it can play itself.
+fn playable(v: &EmbedMedia) -> bool {
+    let path = v.url.split(['?', '#']).next().unwrap_or("").to_ascii_lowercase();
+    v.proxy_url.is_some() || [".mp4", ".mov", ".m4v", ".webm"].iter().any(|ext| path.ends_with(ext))
 }
 
 /// A video that can't play here: its poster (or a blank tile) with a play button, opening `target`.
@@ -733,7 +758,16 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
         });
         if let Some(v) = video {
             let target = e.url.as_deref().unwrap_or(&v.url);
-            video_poster(ui, e.thumbnail.as_ref().or(e.image.as_ref()), v, target);
+            let poster = e.thumbnail.as_ref().or(e.image.as_ref());
+            if playable(v) {
+                let size = fit(poster.and_then(|p| p.width).or(v.width), poster.and_then(|p| p.height).or(v.height), Vec2::new(480.0, 270.0));
+                let ppp = ui.ctx().pixels_per_point();
+                let still = poster.map(|p| swiftcord_core::cdn::media_proxy(p.proxy_url.as_deref().unwrap_or(&p.url), (size.x * ppp) as u32, (size.y * ppp) as u32));
+                let video = crate::player::Video { url: &v.url, link: target, poster: still, width: v.width, height: v.height };
+                cx.uis.videos.show(ui, &video, size);
+            } else {
+                video_poster(ui, poster, v, target);
+            }
         } else if let Some(img) = &e.image {
             if extra_images.is_empty() {
                 let size = fit(img.width, img.height, Vec2::new(480.0, 300.0));
@@ -890,7 +924,7 @@ pub fn estimate_height(msg: &Message, compact: bool) -> f32 {
     let lines = msg.content.lines().map(|l| 1 + l.len() / 90).sum::<usize>().max(1);
     h += (lines.saturating_sub(1)) as f32 * 21.0;
     for a in &msg.attachments {
-        h += if a.is_image() { fit(a.width, a.height, MAX_MEDIA).y + 6.0 } else { 64.0 };
+        h += if a.is_image() || a.is_video() { fit(a.width.or(Some(480)), a.height.or(Some(270)), MAX_MEDIA).y + 6.0 } else { 64.0 };
     }
     h += msg.embeds.len() as f32 * 120.0;
     h += msg.components.len() as f32 * 160.0;

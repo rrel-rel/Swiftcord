@@ -204,6 +204,8 @@ pub struct UiState {
     pub favorite_gifs: Vec<swiftcord_core::proto::FavoriteGif>,
     /// Players for GIF-style video clips on screen.
     pub clips: crate::clip::Clips,
+    /// Videos played in chat.
+    pub videos: crate::player::Videos,
 }
 
 impl UiState {
@@ -1157,6 +1159,7 @@ impl eframe::App for App {
         crate::voice_glue::tick(self);
         crate::share_glue::tick(self);
         self.ui.clips.tick();
+        self.ui.videos.tick();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -1164,6 +1167,10 @@ impl eframe::App for App {
         match &self.session {
             None => ui::login::show(ui, &mut self.ui.login, &mut actions),
             Some(s) => ui::shell::show(ui, s, &mut self.ui, &mut self.emoji, &mut actions),
+        }
+        if self.session.is_some() {
+            self.ui.videos.output.clone_from(&self.settings.output_device);
+            self.ui.videos.viewer(ui.ctx());
         }
         for a in actions {
             self.apply(a);

@@ -151,7 +151,7 @@ pub fn first_frame(bytes: &[u8], max_width: u32) -> Option<ColorImage> {
 }
 
 #[cfg(windows)]
-mod decode {
+pub(crate) mod decode {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
@@ -164,12 +164,21 @@ mod decode {
 
     const VIDEO: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
 
-    struct Reader {
-        reader: IMFSourceReader,
+    pub(crate) struct Reader {
+        pub reader: IMFSourceReader,
+        /// The decoded frame, which may have padding below and to the right of the picture.
         width: usize,
         height: usize,
+        /// The picture within the frame.
+        x0: usize,
+        y0: usize,
+        shown_w: usize,
+        shown_h: usize,
         /// Negative for bottom-up rows.
         stride: i32,
+        /// NV12 straight from the decoder (converted here); otherwise RGB32 from the reader's converter.
+        nv12: bool,
+        bt709: bool,
     }
 
     fn open(bytes: &[u8]) -> windows::core::Result<Reader> {
@@ -179,38 +188,98 @@ mod decode {
             let mut attrs = None;
             MFCreateAttributes(&mut attrs, 1)?;
             let attrs = attrs.ok_or_else(windows::core::Error::from_thread)?;
-            // Let the reader convert whatever the codec outputs into RGB32 for us.
+            // Lets the reader convert to RGB32 for codecs that don't output NV12.
             attrs.SetUINT32(&MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, 1)?;
             let reader = MFCreateSourceReaderFromByteStream(&byte_stream, &attrs)?;
             let _ = reader.SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS.0 as u32, false);
-            reader.SetStreamSelection(VIDEO, true)?;
-            let want = MFCreateMediaType()?;
-            want.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-            want.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
-            reader.SetCurrentMediaType(VIDEO, None, &want)?;
-            let got = reader.GetCurrentMediaType(VIDEO)?;
-            let size = got.GetUINT64(&MF_MT_FRAME_SIZE)?;
-            let (width, height) = ((size >> 32) as usize, (size & 0xffff_ffff) as usize);
-            let stride = got.GetUINT32(&MF_MT_DEFAULT_STRIDE).map(|s| s as i32).unwrap_or(width as i32 * 4);
-            Ok(Reader { reader, width, height, stride })
+            select_video(reader)
         }
     }
 
-    /// Converts a BGRX frame to RGBA, scaling down (nearest neighbour) to at most `max_width` wide. `row0` is the
-    /// top row and `pitch` the signed distance between rows, as the buffer reports them.
-    unsafe fn to_image(row0: *const u8, pitch: isize, r: &Reader, max_width: u32) -> ColorImage {
-        let scale = (r.width as f32 / max_width.max(1) as f32).max(1.0);
-        let (w, h) = (((r.width as f32 / scale) as usize).max(1), ((r.height as f32 / scale) as usize).max(1));
+    /// Selects the first video stream. The decoder's own NV12 is preferred: converting a whole frame to RGB32
+    /// costs more than decoding it, and only the pixels shown need converting.
+    pub(crate) fn select_video(reader: IMFSourceReader) -> windows::core::Result<Reader> {
+        unsafe {
+            reader.SetStreamSelection(VIDEO, true)?;
+            let mut last = Ok(());
+            for sub in [MFVideoFormat_NV12, MFVideoFormat_RGB32] {
+                let want = MFCreateMediaType()?;
+                want.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+                want.SetGUID(&MF_MT_SUBTYPE, &sub)?;
+                last = reader.SetCurrentMediaType(VIDEO, None, &want);
+                if last.is_ok() {
+                    break;
+                }
+            }
+            last?;
+            let mut r = Reader { reader, width: 0, height: 0, x0: 0, y0: 0, shown_w: 0, shown_h: 0, stride: 0, nv12: false, bt709: false };
+            r.refresh()?;
+            Ok(r)
+        }
+    }
+
+    impl Reader {
+        /// Reads the frame format, again after the decoder changes it mid-stream.
+        pub fn refresh(&mut self) -> windows::core::Result<()> {
+            unsafe {
+                let got = self.reader.GetCurrentMediaType(VIDEO)?;
+                let size = got.GetUINT64(&MF_MT_FRAME_SIZE)?;
+                (self.width, self.height) = (((size >> 32) as usize).max(1), ((size & 0xffff_ffff) as usize).max(1));
+                self.nv12 = got.GetGUID(&MF_MT_SUBTYPE)? == MFVideoFormat_NV12;
+                let bytes = if self.nv12 { 1 } else { 4 };
+                self.stride = got.GetUINT32(&MF_MT_DEFAULT_STRIDE).map(|s| s as i32).unwrap_or((self.width * bytes) as i32);
+                let mut area = MFVideoArea::default();
+                let blob = std::slice::from_raw_parts_mut(&mut area as *mut MFVideoArea as *mut u8, std::mem::size_of::<MFVideoArea>());
+                (self.x0, self.y0, self.shown_w, self.shown_h) = match got.GetBlob(&MF_MT_MINIMUM_DISPLAY_APERTURE, blob, None) {
+                    Ok(()) if area.Area.cx > 0 && area.Area.cy > 0 => {
+                        let (x0, y0) = (area.OffsetX.value.max(0) as usize, area.OffsetY.value.max(0) as usize);
+                        let (x0, y0) = (x0.min(self.width - 1), y0.min(self.height - 1));
+                        (x0, y0, (area.Area.cx as usize).min(self.width - x0), (area.Area.cy as usize).min(self.height - y0))
+                    }
+                    _ => (0, 0, self.width, self.height),
+                };
+                self.bt709 = got.GetUINT32(&MF_MT_YUV_MATRIX).map_or(self.height >= 720, |m| m == MFVideoTransferMatrix_BT709.0 as u32);
+            }
+            Ok(())
+        }
+
+        /// The output size for `max_width`, the source pixels per output pixel, and whether to average 2×2
+        /// source pixels (when shrinking a lot, so detail doesn't shimmer).
+        fn scaling(&self, max_width: u32) -> (usize, usize, f32, usize) {
+            let scale = (self.shown_w as f32 / max_width.max(1) as f32).max(1.0);
+            let (w, h) = (((self.shown_w as f32 / scale) as usize).max(1), ((self.shown_h as f32 / scale) as usize).max(1));
+            (w, h, scale, usize::from(scale >= 1.5 && self.shown_w > 1 && self.shown_h > 1))
+        }
+    }
+
+    /// Converts a BGRX frame to RGBA at most `max_width` wide. `row0` is the top row and `pitch` the signed
+    /// distance between rows, as the buffer reports them.
+    unsafe fn rgb_image(row0: *const u8, pitch: isize, r: &Reader, max_width: u32) -> ColorImage {
+        let (w, h, scale, step) = r.scaling(max_width);
         let mut px = Vec::with_capacity(w * h);
         for y in 0..h {
-            let sy = ((y as f32 * scale) as usize).min(r.height - 1);
+            let sy = r.y0 + ((y as f32 * scale) as usize).min(r.shown_h - 1 - step);
             let line = unsafe { std::slice::from_raw_parts(row0.offset(sy as isize * pitch), r.width * 4) };
+            let next = unsafe { std::slice::from_raw_parts(row0.offset((sy + step) as isize * pitch), r.width * 4) };
             for x in 0..w {
-                let sx = ((x as f32 * scale) as usize).min(r.width - 1) * 4;
-                px.push(egui::Color32::from_rgb(line[sx + 2], line[sx + 1], line[sx]));
+                let sx = (r.x0 + ((x as f32 * scale) as usize).min(r.shown_w - 1 - step)) * 4;
+                let sx2 = sx + step * 4;
+                let avg = |c: usize| ((line[sx + c] as u16 + line[sx2 + c] as u16 + next[sx + c] as u16 + next[sx2 + c] as u16) / 4) as u8;
+                px.push(egui::Color32::from_rgb(avg(2), avg(1), avg(0)));
             }
         }
         ColorImage::new([w, h], px)
+    }
+
+    /// Converts an NV12 frame (`rows` rows of luma, then half as many of interleaved U and V, `pitch` bytes
+    /// apart) to RGBA at most `max_width` wide. The conversion lives in the voice crate, which debug builds
+    /// optimise.
+    unsafe fn nv12_image(base: *const u8, pitch: usize, rows: usize, r: &Reader, max_width: u32) -> ColorImage {
+        let luma = unsafe { std::slice::from_raw_parts(base, pitch * rows) };
+        let chroma = unsafe { std::slice::from_raw_parts(base.add(pitch * rows), pitch * rows / 2) };
+        let crop = swiftcord_voice::video::Crop { x: r.x0, y: r.y0, width: r.shown_w, height: r.shown_h };
+        let (w, h, rgba) = swiftcord_voice::video::nv12_to_rgba_scaled(luma, chroma, pitch, crop, max_width as usize, r.bt709);
+        ColorImage::from_rgba_unmultiplied([w, h], &rgba)
     }
 
     /// The row pitch of a padded RGB32 buffer. Decoders pad frames to their block size (e.g. 220×164 becomes
@@ -225,16 +294,44 @@ mod decode {
             .unwrap_or(width * 4)
     }
 
+    /// The row pitch and luma rows of an NV12 buffer of `len` bytes (a luma plane and a half-height chroma
+    /// plane), allowing for padded rows and columns.
+    pub(super) fn nv12_layout(len: usize, width: usize, height: usize) -> Option<(usize, usize)> {
+        (height..=height + 64).find_map(|rows| {
+            let pitch = len * 2 / (rows * 3);
+            (pitch * rows * 3 == len * 2 && pitch >= width && pitch <= width + 512).then_some((pitch, rows))
+        })
+    }
+
     /// Reads a decoded sample. Video buffers are usually 2D, which report the real row pitch (rows are often
-    /// padded beyond the width); otherwise the pitch is inferred from the length.
-    unsafe fn frame_image(sample: &IMFSample, r: &Reader, max_width: u32) -> windows::core::Result<Option<ColorImage>> {
+    /// padded beyond the width); otherwise the layout is inferred from the length.
+    pub(crate) unsafe fn frame_image(sample: &IMFSample, r: &Reader, max_width: u32) -> windows::core::Result<Option<ColorImage>> {
         unsafe {
             let buf = sample.GetBufferByIndex(0)?;
+            if r.nv12 {
+                if let Ok(b2) = buf.cast::<IMF2DBuffer2>() {
+                    let (mut row0, mut pitch, mut start, mut len) = (std::ptr::null_mut(), 0i32, std::ptr::null_mut(), 0u32);
+                    b2.Lock2DSize(MF2DBuffer_LockFlags_Read, &mut row0, &mut pitch, &mut start, &mut len)?;
+                    let p = pitch.max(1) as usize;
+                    // The luma plane is two thirds of the rows.
+                    let rows = (len as usize / p) * 2 / 3;
+                    let ok = pitch > 0 && p >= r.width && rows >= r.height;
+                    let img = ok.then(|| nv12_image(row0, p, rows, r, max_width));
+                    b2.Unlock2D()?;
+                    return Ok(img);
+                }
+                let buf = sample.ConvertToContiguousBuffer()?;
+                let (mut ptr, mut len) = (std::ptr::null_mut(), 0u32);
+                buf.Lock(&mut ptr, None, Some(&mut len))?;
+                let img = nv12_layout(len as usize, r.width, r.height).map(|(pitch, rows)| nv12_image(ptr, pitch, rows, r, max_width));
+                buf.Unlock()?;
+                return Ok(img);
+            }
             if let Ok(b2) = buf.cast::<IMF2DBuffer>() {
                 let (mut row0, mut pitch) = (std::ptr::null_mut(), 0i32);
                 b2.Lock2D(&mut row0, &mut pitch)?;
                 let ok = pitch.unsigned_abs() as usize >= r.width * 4;
-                let img = ok.then(|| to_image(row0, pitch as isize, r, max_width));
+                let img = ok.then(|| rgb_image(row0, pitch as isize, r, max_width));
                 b2.Unlock2D()?;
                 return Ok(img);
             }
@@ -245,9 +342,9 @@ mod decode {
             let img = (pitch >= r.width * 4).then(|| {
                 if r.stride < 0 {
                     // Bottom-up: the top row is last.
-                    to_image(ptr.add(pitch * (r.height - 1)), -(pitch as isize), r, max_width)
+                    rgb_image(ptr.add(pitch * (r.height - 1)), -(pitch as isize), r, max_width)
                 } else {
-                    to_image(ptr, pitch as isize, r, max_width)
+                    rgb_image(ptr, pitch as isize, r, max_width)
                 }
             });
             buf.Unlock()?;
@@ -332,6 +429,15 @@ mod tests {
         assert_eq!(infer_pitch(157_696, 220, 164), 896);
         // Unpadded.
         assert_eq!(infer_pitch(880 * 164, 220, 164), 880);
+    }
+
+    #[test]
+    fn infers_nv12_layout() {
+        // 1920×1080 decoded as 1920×1088.
+        assert_eq!(nv12_layout(1920 * 1088 * 3 / 2, 1920, 1088), Some((1920, 1088)));
+        // 220×164 with rows padded to 256 bytes and 176 rows.
+        assert_eq!(nv12_layout(256 * 176 * 3 / 2, 220, 164), Some((256, 176)));
+        assert_eq!(nv12_layout(12345, 220, 164), None);
     }
 
     /// Decodes a local clip (`SWIFTCORD_TEST_CLIP`) and saves its first frame next to it as a PNG.

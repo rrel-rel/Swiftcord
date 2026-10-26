@@ -104,5 +104,11 @@ const SAMPLES: &str = r##"[
    {"type":10,"content":"-# <t:1793023201:R> • [Link](https://x.com/ence/status/2114718698422284713)"},
    {"type":14,"divider":true,"spacing":1},
    {"type":1,"components":[{"type":2,"style":5,"label":"Open post","url":"https://x.com/ence/status/2114718698422284713"},
-     {"type":2,"style":1,"label":"Translate","custom_id":"t"},{"type":3,"custom_id":"m","options":[],"placeholder":"More options"}]}]}]}
+     {"type":2,"style":1,"label":"Translate","custom_id":"t"},{"type":3,"custom_id":"m","options":[],"placeholder":"More options"}]}]}]},
+{"id":"1400000000000000010","channel_id":"{CH}","author":{"id":"{ME}","username":"me"},
+ "timestamp":"2026-10-25T10:09:00+00:00","content":"A video with sound:",
+ "attachments":[{"id":"1","filename":"mov_bbb.mp4","size":788493,"content_type":"video/mp4","width":320,"height":176,
+   "url":"https://www.w3schools.com/html/mov_bbb.mp4","proxy_url":""},
+  {"id":"2","filename":"sample-5s.mp4","size":2848208,"content_type":"video/mp4","width":1920,"height":1080,
+   "url":"https://download.samplelib.com/mp4/sample-5s.mp4","proxy_url":""}]}
 ]"##;

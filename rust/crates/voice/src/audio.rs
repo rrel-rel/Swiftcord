@@ -291,7 +291,7 @@ pub fn start(devices: Devices, mic: Option<SyncSender<Vec<f32>>>, mixer: Arc<Mix
                 .output_devices()
                 .ok()
                 .and_then(|d| pick(d, devices.output.as_deref(), host.default_output_device()))
-                .and_then(|d| build_output(&d, mixer, deafened, err_tx.clone()).map_err(|e| { let _ = err_tx.try_send(format!("Speakers unavailable: {e}")); }).ok());
+                .and_then(|d| build_output(&d, mix_fill(mixer, deafened), err_tx.clone()).map_err(|e| { let _ = err_tx.try_send(format!("Speakers unavailable: {e}")); }).ok());
             for st in input.iter().chain(output.iter()) {
                 let _ = st.play();
             }
@@ -347,7 +347,56 @@ fn build_input(device: &cpal::Device, mic: SyncSender<Vec<f32>>, errors: SyncSen
     stream.map_err(|e| e.to_string())
 }
 
-fn build_output(device: &cpal::Device, mixer: Arc<Mixer>, deafened: Arc<AtomicBool>, errors: SyncSender<String>) -> Result<cpal::Stream, String> {
+fn mix_fill(mixer: Arc<Mixer>, deafened: Arc<AtomicBool>) -> impl FnMut(&mut [f32]) + Send + 'static {
+    move |out| {
+        if deafened.load(Ordering::Relaxed) {
+            out.fill(0.0);
+            mixer.clear();
+        } else {
+            mixer.mix(out);
+        }
+    }
+}
+
+/// Plays sound from somewhere other than a call (a video's soundtrack) on the chosen output device until
+/// dropped. `fill` is asked for interleaved 48 kHz stereo, from the device's own thread.
+pub fn play(output: Option<String>, fill: impl FnMut(&mut [f32]) + Send + 'static) -> Result<AudioIo, String> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+    let s = stop.clone();
+    let thread = std::thread::Builder::new()
+        .name("swiftcord-playback".into())
+        .spawn(move || {
+            let host = cpal::default_host();
+            let (err_tx, _err_rx) = std::sync::mpsc::sync_channel(8);
+            let stream = host
+                .output_devices()
+                .ok()
+                .and_then(|d| pick(d, output.as_deref(), host.default_output_device()))
+                .ok_or_else(|| "no output device".to_owned())
+                .and_then(|d| build_output(&d, fill, err_tx));
+            let stream = match stream.and_then(|st| st.play().map(|()| st).map_err(|e| e.to_string())) {
+                Ok(st) => {
+                    let _ = ready_tx.send(Ok(()));
+                    st
+                }
+                Err(e) => {
+                    let _ = ready_tx.send(Err(e));
+                    return;
+                }
+            };
+            while !s.load(Ordering::Relaxed) {
+                std::thread::park_timeout(Duration::from_millis(100));
+            }
+            drop(stream);
+        })
+        .map_err(|e| e.to_string())?;
+    let io = AudioIo { stop, thread: Some(thread) };
+    ready_rx.recv().map_err(|e| e.to_string())??;
+    Ok(io)
+}
+
+fn build_output(device: &cpal::Device, mut fill: impl FnMut(&mut [f32]) + Send + 'static, errors: SyncSender<String>) -> Result<cpal::Stream, String> {
     let supported = device.default_output_config().map_err(|e| e.to_string())?;
     let format = supported.sample_format();
     let config: StreamConfig = supported.config();
@@ -361,12 +410,7 @@ fn build_output(device: &cpal::Device, mixer: Arc<Mixer>, deafened: Arc<AtomicBo
     let mut render = move |frames: usize| -> Vec<f32> {
         let need = ((frames as f64) * SAMPLE_RATE as f64 / rate as f64).ceil() as usize + 1;
         mixed.resize(need * 2, 0.0);
-        if deafened.load(Ordering::Relaxed) {
-            mixed.fill(0.0);
-            mixer.clear();
-        } else {
-            mixer.mix(&mut mixed);
-        }
+        fill(&mut mixed);
         stereo.clear();
         resampler.process(&mixed, &mut stereo);
         stereo.resize(frames * 2, 0.0);

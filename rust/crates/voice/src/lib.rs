@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 
-pub use audio::{list_devices, Devices};
+pub use audio::{list_devices, play, AudioIo, Devices};
 
 /// Everything needed to connect, from the main gateway's VOICE_STATE_UPDATE and VOICE_SERVER_UPDATE.
 #[derive(Debug, Clone)]

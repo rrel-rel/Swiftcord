@@ -35,3 +35,7 @@ strip = true
 # Image decoding is painfully slow unoptimized; keep debug builds usable.
 [profile.dev.package."*"]
 opt-level = 2
+
+# Video frames are converted in the voice crate; unoptimized, that can't keep up with playback.
+[profile.dev.package.swiftcord-voice]
+opt-level = 2
