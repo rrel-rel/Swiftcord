@@ -19,7 +19,7 @@ pub enum Suggestion {
     Role { id: Snowflake, name: String, color: u32 },
     Everyone(&'static str),
     Channel { id: Snowflake, name: String },
-    /// A Unicode emoji (inserted as itself) or a custom one.
+    /// A Unicode emoji (inserted as itself, and drawn from the emoji sheet) or a custom one (`image`).
     Emoji { text: String, name: String, image: String, custom: Option<(Snowflake, bool)> },
 }
 
@@ -94,7 +94,7 @@ pub fn suggestions(s: &Session, catalog: &Catalog, channel: &Channel, token: &To
                 }
             }
             for (ch, name) in catalog.search(&q, LIMIT - out.len().min(LIMIT)) {
-                out.push(Suggestion::Emoji { image: swiftcord_core::cdn::twemoji(&ch), text: ch, name, custom: None });
+                out.push(Suggestion::Emoji { image: String::new(), text: ch, name, custom: None });
             }
         }
         _ => {}
@@ -137,8 +137,13 @@ pub fn popup(ui: &Ui, anchor: egui::Rect, items: &[Suggestion], selected: usize,
                         row.label(RichText::new("#").size(18.0).color(theme::FAINT));
                         row.label(RichText::new(name).color(theme::HEADER));
                     }
-                    Suggestion::Emoji { image, name, .. } => {
-                        row.add(egui::Image::from_uri(image.clone()).fit_to_exact_size(Vec2::splat(22.0)).show_loading_spinner(false));
+                    Suggestion::Emoji { image, name, text, custom } => {
+                        let size = Vec2::splat(22.0);
+                        let img = match custom {
+                            Some(_) => egui::Image::from_uri(image.clone()).fit_to_exact_size(size).show_loading_spinner(false),
+                            None => crate::emoji_sheet::image(row.ctx(), text, size),
+                        };
+                        row.add(img);
                         row.label(RichText::new(format!(":{name}:")).color(theme::HEADER));
                     }
                 }

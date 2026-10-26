@@ -196,8 +196,7 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
         }
         Span::UnicodeEmoji(e) => {
             let px = if cx.jumbo { 48.0 } else { size * 1.375 };
-            ui.add(egui::Image::from_uri(swiftcord_core::cdn::twemoji(e)).fit_to_exact_size(Vec2::splat(px)).show_loading_spinner(false))
-                .on_hover_text(e.as_str());
+            ui.add(crate::emoji_sheet::image(ui.ctx(), e, Vec2::splat(px))).on_hover_text(e.as_str());
         }
         Span::Timestamp(t, style) => {
             let text = format_timestamp(*t, *style);

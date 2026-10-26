@@ -80,8 +80,11 @@ fn mime_from_bytes(b: &[u8]) -> Option<String> {
 }
 
 /// URIs starting with this load only the first frame of an animated image (as a PNG), for still previews
-/// that don't hold every frame in memory.
+/// that don't hold every frame in memory. The still is kept on disk, so it's only made once.
 pub const STILL: &str = "still+";
+/// URIs starting with this are kept on disk too (small images that are shown again and again, like the
+/// stills of favourite GIFs).
+pub const KEEP: &str = "keep+";
 
 fn first_frame_png(bytes: &[u8]) -> Result<Vec<u8>, String> {
     // MP4 clips (an "ftyp" box first) go through the video decoder; everything else through the image crate.
@@ -100,16 +103,30 @@ fn first_frame_png(bytes: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 async fn fetch(http: &reqwest::Client, uri: &str, disk: Option<PathBuf>) -> Result<File, String> {
-    if let Some(real) = uri.strip_prefix(STILL) {
-        let full = Box::pin(fetch(http, real, None)).await?;
-        let png = tokio::task::spawn_blocking(move || first_frame_png(&full.bytes)).await.map_err(|e| e.to_string())??;
-        return Ok(File { bytes: png.into(), mime: Some("image/png".into()) });
-    }
     if let Some(path) = &disk {
         if let Ok(bytes) = tokio::fs::read(path).await {
             let mime = mime_from_bytes(&bytes);
             return Ok(File { bytes: bytes.into(), mime });
         }
+    }
+    let derived = if let Some(real) = uri.strip_prefix(KEEP) {
+        Some(Box::pin(fetch(http, real, None)).await?)
+    } else if let Some(real) = uri.strip_prefix(STILL) {
+        // The whole animation is fetched to make the still, but isn't kept.
+        let full = Box::pin(fetch(http, real, None)).await?;
+        let png = tokio::task::spawn_blocking(move || first_frame_png(&full.bytes)).await.map_err(|e| e.to_string())??;
+        Some(File { bytes: png.into(), mime: Some("image/png".into()) })
+    } else {
+        None
+    };
+    if let Some(file) = derived {
+        if let Some(path) = disk {
+            let b = file.bytes.clone();
+            tokio::spawn(async move {
+                let _ = tokio::fs::write(path, b).await;
+            });
+        }
+        return Ok(file);
     }
     let resp = http.get(uri).send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
@@ -134,7 +151,7 @@ impl BytesLoader for MediaLoader {
     }
 
     fn load(&self, ctx: &egui::Context, uri: &str) -> BytesLoadResult {
-        let real = uri.strip_prefix(STILL).unwrap_or(uri);
+        let real = uri.strip_prefix(KEEP).or_else(|| uri.strip_prefix(STILL)).unwrap_or(uri);
         if !(real.starts_with("https://") || real.starts_with("http://")) {
             return Err(LoadError::NotSupported);
         }
@@ -150,7 +167,7 @@ impl BytesLoader for MediaLoader {
         drop(cache);
 
         let uri = uri.to_owned();
-        let disk = is_immutable(&uri).then(|| self.disk.join(cache_name(&uri)));
+        let disk = (is_immutable(&uri) || uri.starts_with(KEEP) || uri.starts_with(STILL)).then(|| self.disk.join(cache_name(&uri)));
         let (http, cache, limit, ctx) = (self.http.clone(), self.cache.clone(), self.limit.clone(), ctx.clone());
         self.rt.spawn(async move {
             let _permit = limit.acquire().await;

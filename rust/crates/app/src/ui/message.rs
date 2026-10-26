@@ -798,12 +798,7 @@ fn reactions(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
             let resp = egui::Frame::new().fill(fill).stroke(egui::Stroke::new(1.0, stroke)).corner_radius(8).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    let url = match (r.emoji.id, &r.emoji.name) {
-                        (Some(id), _) => swiftcord_core::cdn::emoji(id, r.emoji.animated, 48),
-                        (None, Some(n)) => swiftcord_core::cdn::twemoji(n),
-                        _ => String::new(),
-                    };
-                    ui.add(egui::Image::from_uri(url).fit_to_exact_size(Vec2::splat(18.0)).show_loading_spinner(false));
+                    ui.add(crate::emoji_sheet::any(ui.ctx(), &r.emoji, Vec2::splat(18.0)));
                     ui.label(RichText::new(r.count.to_string()).font(theme::font_semibold(13.0)).color(if r.me { theme::MENTION_TEXT } else { theme::MUTED }));
                 });
             });

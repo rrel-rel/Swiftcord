@@ -4,6 +4,7 @@
 mod app;
 mod clip;
 mod demo;
+mod emoji_sheet;
 mod lottie;
 mod stickers;
 mod media;

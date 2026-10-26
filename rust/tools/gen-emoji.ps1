@@ -8,6 +8,7 @@
 param(
     [string]$Version = "17.0.0",
     [double]$MaxVersion = 16.0,
+    [string]$SheetVersion = "16.0.0",
     [string]$Out = "$PSScriptRoot\..\crates\app\assets\emoji.json"
 )
 $ErrorActionPreference = "Stop"
@@ -64,7 +65,26 @@ $letters = 0..25 | ForEach-Object {
 }
 $entries.InsertRange($symbolsEnd, [object[]]$letters)
 
-$json = [ordered]@{ source = "emojibase-data $Version (MIT, Miles Johnson); names as Discord uses them"; groups = $categories; emoji = $entries }
+# Where each emoji is on emoji-datasource's Twemoji sprite sheets (MIT; Twemoji graphics CC-BY 4.0), keyed
+# by the emoji without its presentation selectors. The client draws emoji from a sheet, fetched once.
+$sheetData = Get-Json "https://cdn.jsdelivr.net/npm/emoji-datasource-twitter@$SheetVersion/emoji.json"
+$positions = [ordered]@{}
+function Add-Position($unified, $x, $y) {
+    $key = Text @(Codes $unified | Where-Object { $_ -ne 0xFE0F })
+    if (-not $positions.Contains($key)) { $positions[$key] = @($x, $y) }
+}
+foreach ($d in $sheetData) {
+    if (-not $d.has_img_twitter) { continue }
+    Add-Position $d.unified $d.sheet_x $d.sheet_y
+    if ($d.skin_variations) {
+        foreach ($s in $d.skin_variations.PSObject.Properties.Value) {
+            if ($s.has_img_twitter) { Add-Position $s.unified $s.sheet_x $s.sheet_y }
+        }
+    }
+}
+$sheet = [ordered]@{ version = $SheetVersion; cells = 62; positions = $positions }
+
+$json = [ordered]@{ source = "emojibase-data $Version (MIT, Miles Johnson); names as Discord uses them"; groups = $categories; emoji = $entries; sheet = $sheet }
 $text = $json | ConvertTo-Json -Depth 5 -Compress
 [IO.File]::WriteAllText((Resolve-Path -LiteralPath (Split-Path $Out)).Path + "\" + (Split-Path $Out -Leaf), $text, (New-Object Text.UTF8Encoding $false))
 "$($entries.Count) emoji written to $Out"

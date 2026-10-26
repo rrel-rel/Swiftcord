@@ -11,7 +11,7 @@ use swiftcord_core::Snowflake;
 
 use crate::app::{Action, UiState};
 use crate::clip::Clips;
-use crate::media::STILL;
+use crate::media::{KEEP, STILL};
 use crate::theme;
 use crate::theme::icon::{STAR, STAR_FILLED};
 
@@ -103,7 +103,31 @@ fn tile_from_gif(g: &Gif) -> Tile {
 
 fn tile_from_favorite(f: &FavoriteGif) -> Tile {
     let play = if f.format == 2 { Play::Clip(f.src.clone()) } else { Play::Image(f.src.clone()) };
-    Tile { url: f.url.clone(), still: format!("{STILL}{}", f.src), play, width: f.width, height: f.height, title: String::new(), favorite: f.clone() }
+    Tile { url: f.url.clone(), still: still_of(&f.src), play, width: f.width, height: f.height, title: String::new(), favorite: f.clone() }
+}
+
+/// A small still of a GIF, without fetching the GIF: Discord's media proxy renders one for anything it
+/// proxies (a few KB instead of a few MB), and Tenor has its own tiny preview. Anything else is made from
+/// the first frame. Either way it's kept on disk, so favourites show at once after the first time.
+fn still_of(src: &str) -> String {
+    let host = src.split("://").nth(1).and_then(|r| r.split('/').next()).unwrap_or("");
+    if host.ends_with(".discordapp.net") || host == "cdn.discordapp.com" {
+        // Attachments are proxied from media.discordapp.net; their signature parameters must stay.
+        let src = src.replacen("https://cdn.discordapp.com/", "https://media.discordapp.net/", 1);
+        let (base, query) = src.split_once('?').unwrap_or((&src, ""));
+        let mut params: Vec<&str> =
+            query.split('&').filter(|p| !p.is_empty() && !["animated=", "format=", "width=", "height=", "quality="].iter().any(|k| p.starts_with(k))).collect();
+        params.push("format=webp&width=256&height=256");
+        return format!("{KEEP}{base}?{}", params.join("&"));
+    }
+    if let Some((id, file)) = src.strip_prefix("https://media.tenor.com/").and_then(|r| r.split_once('/')) {
+        // Tenor media IDs end in a five-letter format code; AAAAF is the tiny still.
+        if id.len() > 5 && id.is_char_boundary(id.len() - 5) {
+            let stem = file.rsplit_once('.').map_or(file, |f| f.0);
+            return format!("{KEEP}https://media.tenor.com/{}AAAAF/{stem}.gif", &id[..id.len() - 5]);
+        }
+    }
+    format!("{STILL}{src}")
 }
 
 /// Category tiles get a colour from their name, so the grid isn't uniform.
@@ -324,4 +348,23 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
 fn is_still(url: &str) -> bool {
     let path = url.split('?').next().unwrap_or("").to_ascii_lowercase();
     [".png", ".jpg", ".jpeg"].iter().any(|e| path.ends_with(e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stills_come_from_the_proxy_or_tenor() {
+        assert_eq!(
+            still_of("https://images-ext-1.discordapp.net/external/abc/https/static.klipy.com/x.webp?animated=true"),
+            "keep+https://images-ext-1.discordapp.net/external/abc/https/static.klipy.com/x.webp?format=webp&width=256&height=256"
+        );
+        assert_eq!(
+            still_of("https://cdn.discordapp.com/attachments/1/2/cat.gif?ex=1&is=2&hm=3"),
+            "keep+https://media.discordapp.net/attachments/1/2/cat.gif?ex=1&is=2&hm=3&format=webp&width=256&height=256"
+        );
+        assert_eq!(still_of("https://media.tenor.com/VqZiOo7SkbAAAAPo/goku-dragon-ball.mp4"), "keep+https://media.tenor.com/VqZiOo7SkbAAAAAF/goku-dragon-ball.gif");
+        assert_eq!(still_of("https://example.com/a.gif"), "still+https://example.com/a.gif");
+    }
 }
