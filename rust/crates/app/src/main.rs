@@ -44,6 +44,9 @@ fn main() -> eframe::Result {
     if std::env::args().any(|a| a == platform::login_webview::ARG) {
         platform::login_webview::run_child();
     }
+    if std::env::args().any(|a| a == platform::video_window::ARG) {
+        platform::video_window::run_child();
+    }
 
     init_logging();
     tracing::info!("Swiftcord {} starting", env!("CARGO_PKG_VERSION"));

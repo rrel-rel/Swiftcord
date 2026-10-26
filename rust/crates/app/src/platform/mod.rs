@@ -1,5 +1,6 @@
 pub mod credentials;
 pub mod login_webview;
+pub mod video_window;
 
 use std::path::PathBuf;
 

@@ -681,12 +681,13 @@ fn playable(v: &EmbedMedia) -> bool {
     v.proxy_url.is_some() || [".mp4", ".mov", ".m4v", ".webm"].iter().any(|ext| path.ends_with(ext))
 }
 
-/// A video that can't play here: its poster (or a blank tile) with a play button, opening `target`.
-fn video_poster(ui: &mut Ui, poster: Option<&EmbedMedia>, video: &EmbedMedia, target: &str) {
-    match poster {
+/// A video that's a web player (YouTube and the like): its poster (or a blank tile) with a play button, which
+/// plays it in the video window.
+fn video_poster(ui: &mut Ui, poster: Option<&EmbedMedia>, video: &EmbedMedia, title: Option<&str>) {
+    let r = match poster {
         Some(p) => {
             let size = fit(p.width.or(video.width), p.height.or(video.height), Vec2::new(480.0, 270.0));
-            media(ui, p.proxy_url.as_deref().unwrap_or(&p.url), target, size, false, true, None);
+            media_response(ui, p.proxy_url.as_deref().unwrap_or(&p.url), size, false, true, None)
         }
         None => {
             let size = fit(video.width.or(Some(480)), video.height.or(Some(270)), Vec2::new(480.0, 270.0));
@@ -694,10 +695,11 @@ fn video_poster(ui: &mut Ui, poster: Option<&EmbedMedia>, video: &EmbedMedia, ta
             ui.painter().rect_filled(rect, 6, Color32::BLACK);
             ui.painter().circle_filled(rect.center(), 24.0, Color32::from_white_alpha(40));
             ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::PLAY, theme::icon_font(20.0), Color32::WHITE);
-            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                crate::platform::open_url(target);
-            }
+            r.on_hover_cursor(egui::CursorIcon::PointingHand)
         }
+    };
+    if r.on_hover_text("Play").clicked() {
+        crate::platform::video_window::open(&video.url, title.unwrap_or("Video"));
     }
 }
 
@@ -759,7 +761,7 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
                 let video = crate::player::Video { url: &v.url, link: target, poster: still, width: v.width, height: v.height };
                 cx.uis.videos.show(ui, &video, size);
             } else {
-                video_poster(ui, poster, v, target);
+                video_poster(ui, poster, v, e.title.as_deref());
             }
         } else if let Some(img) = &e.image {
             if extra_images.is_empty() {
