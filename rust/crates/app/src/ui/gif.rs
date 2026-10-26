@@ -13,11 +13,10 @@ use crate::app::{Action, UiState};
 use crate::clip::Clips;
 use crate::media::STILL;
 use crate::theme;
+use crate::theme::icon::{STAR, STAR_FILLED};
 
 const SIZE: Vec2 = Vec2::new(440.0, 480.0);
 const DEBOUNCE: Duration = Duration::from_millis(350);
-const STAR: &str = "\u{E734}";
-const STAR_FILLED: &str = "\u{E735}";
 const FAVORITES: &str = "Favourites";
 const TRENDING: &str = "Trending GIFs";
 

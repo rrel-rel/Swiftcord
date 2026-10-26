@@ -60,6 +60,8 @@ pub mod icon {
     /// A monitor: screens, and going live.
     pub const SCREEN: &str = "\u{E7F4}";
     pub const WINDOW: &str = "\u{E7C4}";
+    pub const STAR: &str = "\u{E734}";
+    pub const STAR_FILLED: &str = "\u{E735}";
 }
 
 pub fn icons() -> FontFamily {

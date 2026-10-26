@@ -10,6 +10,7 @@ use eframe::egui::{self, Align, Color32, Layout, Rect, RichText, Sense, Ui, Vec2
 use swiftcord_core::markdown::{self, Block};
 use swiftcord_core::models::{message_type, Attachment, Embed, Message, PendingState};
 use swiftcord_core::permissions::perm;
+use swiftcord_core::proto::FavoriteGif;
 use swiftcord_core::state::State;
 use swiftcord_core::Snowflake;
 
@@ -237,7 +238,7 @@ fn body(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
                     md::blocks(ui, &blocks, &mut mcx);
                 }
                 for a in &snap.message.attachments {
-                    attachment(ui, a);
+                    attachment(ui, a, cx);
                 }
                 for e in &snap.message.embeds {
                     embed(ui, e, msg.id, cx);
@@ -249,7 +250,7 @@ fn body(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     }
 
     for a in &msg.attachments {
-        attachment(ui, a);
+        attachment(ui, a, cx);
     }
     if msg.flags & swiftcord_core::models::message_flags::SUPPRESS_EMBEDS == 0 {
         for e in &msg.embeds {
@@ -354,7 +355,44 @@ fn fit(w: Option<u32>, h: Option<u32>, max: Vec2) -> Vec2 {
     Vec2::new((w * scale).round(), (h * scale).round())
 }
 
+/// Shows an image (or a video's poster), opening `original` when clicked.
 fn media(ui: &mut Ui, proxy_url: &str, original: &str, size: Vec2, gif: bool, video: bool, alt: Option<&str>) {
+    if media_response(ui, proxy_url, size, gif, video, alt).clicked() {
+        crate::platform::open_url(original);
+    }
+}
+
+/// A GIF with a favourite star in its corner: clicking the star toggles the favourite, anywhere else opens
+/// `original`.
+fn gif_media(ui: &mut Ui, r: egui::Response, original: &str, gif: FavoriteGif, cx: &mut Ctx) {
+    let over_star = favorite_star(ui, &r, gif, cx);
+    if r.clicked() && !over_star {
+        crate::platform::open_url(original);
+    }
+}
+
+/// Draws the star while the GIF is hovered or already a favourite, and toggles it on click. Returns whether the
+/// pointer is over the star, so the click isn't also taken as opening the GIF.
+fn favorite_star(ui: &Ui, r: &egui::Response, gif: FavoriteGif, cx: &mut Ctx) -> bool {
+    let starred = cx.uis.favorite_gifs.iter().any(|f| f.url == gif.url);
+    let star = Rect::from_min_size(r.rect.right_top() + Vec2::new(-32.0, 6.0), Vec2::splat(26.0));
+    let over = ui.rect_contains_pointer(star) && r.hovered();
+    if r.hovered() || starred {
+        let p = ui.painter_at(r.rect);
+        p.circle_filled(star.center(), 13.0, Color32::from_black_alpha(if over { 200 } else { 140 }));
+        let (glyph, color) = if starred { (icon::STAR_FILLED, theme::YELLOW) } else { (icon::STAR, Color32::WHITE) };
+        p.text(star.center(), egui::Align2::CENTER_CENTER, glyph, theme::icon_font(14.0), color);
+    }
+    if over {
+        r.clone().on_hover_text(if starred { "Remove from Favourites" } else { "Add to Favourites" });
+        if r.clicked() {
+            cx.actions.push(Action::ToggleFavoriteGif(gif));
+        }
+    }
+    over
+}
+
+fn media_response(ui: &mut Ui, proxy_url: &str, size: Vec2, gif: bool, video: bool, alt: Option<&str>) -> egui::Response {
     let ppp = ui.ctx().pixels_per_point();
     let (pw, ph) = ((size.x * ppp) as u32, (size.y * ppp) as u32);
     // Animated GIFs must stay GIFs; everything else is fetched resized as WebP to save memory.
@@ -370,13 +408,13 @@ fn media(ui: &mut Ui, proxy_url: &str, original: &str, size: Vec2, gif: bool, vi
         ui.painter().text(r.rect.center(), egui::Align2::CENTER_CENTER, icon::PLAY, theme::icon_font(20.0), Color32::WHITE);
     }
     let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let r = match alt { Some(a) if !a.is_empty() => r.on_hover_text(a), _ => r };
-    if r.clicked() {
-        crate::platform::open_url(original);
+    match alt {
+        Some(a) if !a.is_empty() => r.on_hover_text(a),
+        _ => r,
     }
 }
 
-fn attachment(ui: &mut Ui, a: &Attachment) {
+fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
     if a.url.is_empty() {
         // Still uploading.
         ui.label(RichText::new(format!("{} ({})", a.filename, widgets::human_size(a.size))).color(theme::MUTED));
@@ -385,7 +423,13 @@ fn attachment(ui: &mut Ui, a: &Attachment) {
     if a.is_image() || (a.is_video() && a.width.is_some()) {
         let size = fit(a.width, a.height, MAX_MEDIA);
         let gif = a.content_type.as_deref() == Some("image/gif");
-        media(ui, &a.proxy_url, &a.url, size, gif, a.is_video(), a.description.as_deref());
+        let r = media_response(ui, &a.proxy_url, size, gif, a.is_video(), a.description.as_deref());
+        if gif {
+            let fav = FavoriteGif { url: a.url.clone(), src: a.url.clone(), format: 1, width: a.width.unwrap_or(0), height: a.height.unwrap_or(0), order: 0 };
+            gif_media(ui, r, &a.url, fav, cx);
+        } else if r.clicked() {
+            crate::platform::open_url(&a.url);
+        }
         return;
     }
     egui::Frame::new().fill(theme::EMBED_BG).corner_radius(6).inner_margin(10).stroke(egui::Stroke::new(1.0, theme::RAIL)).show(ui, |ui| {
@@ -456,6 +500,10 @@ fn embed_text(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
     }
 }
 
+fn is_gif_url(url: &str) -> bool {
+    url.split(['?', '#']).next().is_some_and(|path| path.to_ascii_lowercase().ends_with(".gif"))
+}
+
 /// An animated GIF for a GIF-as-video embed, where the site offers one at a predictable URL.
 fn animated_gif(e: &Embed) -> Option<String> {
     let v = &e.video.as_ref()?.url;
@@ -481,14 +529,19 @@ fn embed(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
         // GIFs are usually MP4s now: play them as looping clips, with the still until the first frame.
         if let Some(video) = e.video.as_ref().filter(|_| kind == "gifv" && !e.video.as_ref().unwrap().url.is_empty()) {
             let still = e.thumbnail.as_ref().map(|t| swiftcord_core::cdn::media_proxy(t.proxy_url.as_deref().unwrap_or(&t.url), size.x as u32, size.y as u32));
-            let r = cx.uis.clips.show(ui, &video.url, still.as_deref(), size);
-            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                crate::platform::open_url(&target);
-            }
+            let r = cx.uis.clips.show(ui, &video.url, still.as_deref(), size).on_hover_cursor(egui::CursorIcon::PointingHand);
+            let (width, height) = (video.width.or(m.width).unwrap_or(0), video.height.or(m.height).unwrap_or(0));
+            let fav = FavoriteGif { url: target.clone(), src: video.url.clone(), format: 2, width, height, order: 0 };
+            gif_media(ui, r, &target, fav, cx);
             return;
         }
-        match animated_gif(e) {
-            Some(gif) => media(ui, &gif, &target, size, true, false, None),
+        let gif = animated_gif(e).or_else(|| is_gif_url(&m.url).then(|| m.proxy_url.clone().unwrap_or_else(|| m.url.clone())));
+        match gif {
+            Some(gif) => {
+                let r = media_response(ui, &gif, size, true, false, None);
+                let fav = FavoriteGif { url: target.clone(), src: gif, format: 1, width: m.width.unwrap_or(0), height: m.height.unwrap_or(0), order: 0 };
+                gif_media(ui, r, &target, fav, cx);
+            }
             None => media(ui, m.proxy_url.as_deref().unwrap_or(&m.url), &target, size, false, kind == "gifv", None),
         }
         return;
