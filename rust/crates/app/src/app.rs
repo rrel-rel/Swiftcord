@@ -43,6 +43,7 @@ pub enum AppEvent {
     /// Saving favourites failed; restore these settings.
     FrecencyRejected { previous: Option<String>, error: String },
     Stream { generation: u64, event: swiftcord_voice::Event },
+    Share { generation: u64, event: swiftcord_voice::Event },
 }
 
 /// Things the UI asks for; applied after the frame is drawn so drawing only borrows state.
@@ -77,6 +78,11 @@ pub enum Action {
     DeclineCall(Snowflake),
     WatchStream { guild: Option<Snowflake>, channel: Snowflake, user: Snowflake },
     StopWatching,
+    OpenSharePicker,
+    CloseSharePicker,
+    /// Go live with what the share picker has selected.
+    StartShare,
+    StopShare,
     /// Show the stream in the main area (true) or go back to the chat (false).
     ShowStream(bool),
     ToggleFullscreen,
@@ -155,6 +161,10 @@ pub struct UiState {
     pub speaking: HashSet<Snowflake>,
     pub voice: Option<crate::voice_glue::VoiceView>,
     pub stream: Option<crate::stream_glue::StreamView>,
+    pub share: Option<crate::share_glue::ShareView>,
+    pub share_picker: Option<crate::share_glue::Picker>,
+    /// The quality last chosen for going live.
+    pub share_quality: crate::share_glue::Quality,
     pub settings_draft: Option<ui::settings::Draft>,
     /// A pending member search (guild, query, when it changed, sent yet).
     pub member_query: Option<(Snowflake, String, Instant, bool)>,
@@ -182,6 +192,7 @@ pub struct App {
     pub emoji: ui::emoji::Catalog,
     pub voice: Option<crate::voice_glue::Call>,
     pub watch: Option<crate::stream_glue::Watch>,
+    pub sharing: Option<crate::share_glue::Sharing>,
     pub settings: crate::settings::Settings,
     history_failed: HashMap<Snowflake, Instant>,
     /// The frecency settings as last read or written, so favourites can be edited without touching the rest.
@@ -207,6 +218,7 @@ impl App {
             emoji: ui::emoji::Catalog::load(),
             voice: None,
             watch: None,
+            sharing: None,
             settings: crate::settings::Settings::load(),
             history_failed: HashMap::new(),
             frecency: None,
@@ -278,6 +290,7 @@ impl App {
         }
         credentials::delete_token();
         self.watch = None;
+        self.sharing = None;
         self.voice = None;
         let login = std::mem::take(&mut self.ui.login);
         self.ui = UiState { login, ..Default::default() };
@@ -397,6 +410,7 @@ impl App {
             },
             AppEvent::Voice { generation, event } => crate::voice_glue::on_event(self, generation, event),
             AppEvent::Stream { generation, event } => crate::stream_glue::on_event(self, generation, event),
+            AppEvent::Share { generation, event } => crate::share_glue::on_event(self, generation, event),
             AppEvent::Gifs { query, result } => {
                 if let Some(p) = self.ui.gif_picker.as_mut().filter(|p| p.requested() == Some(query.as_str())) {
                     match result {
@@ -929,6 +943,10 @@ impl App {
             Action::LeaveVoice => crate::voice_glue::leave(self),
             Action::WatchStream { guild, channel, user } => crate::stream_glue::watch(self, guild, channel, user),
             Action::StopWatching => crate::stream_glue::stop(self),
+            Action::OpenSharePicker => crate::share_glue::open_picker(self),
+            Action::CloseSharePicker => self.ui.share_picker = None,
+            Action::StartShare => crate::share_glue::start(self),
+            Action::StopShare => crate::share_glue::stop(self),
             Action::ShowStream(show) => {
                 if let Some(v) = &mut self.ui.stream {
                     v.visible = show;
@@ -1050,6 +1068,7 @@ impl eframe::App for App {
             self.ui.banner = None;
         }
         crate::voice_glue::tick(self);
+        crate::share_glue::tick(self);
         self.ui.clips.tick();
     }
 

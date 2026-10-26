@@ -97,16 +97,16 @@ pub fn stop(app: &mut App) {
 }
 
 #[derive(Deserialize)]
-struct StreamEvent {
-    stream_key: String,
+pub struct StreamEvent {
+    pub stream_key: String,
     #[serde(default)]
-    rtc_server_id: Option<String>,
+    pub rtc_server_id: Option<String>,
     #[serde(default)]
-    endpoint: Option<String>,
+    pub endpoint: Option<String>,
     #[serde(default)]
-    token: Option<String>,
+    pub token: Option<String>,
     #[serde(default)]
-    reason: Option<String>,
+    pub reason: Option<String>,
 }
 
 /// Handles STREAM_* gateway events.
@@ -116,6 +116,9 @@ pub fn on_gateway(app: &mut App, name: &str, data: &RawValue) {
     }
     let Ok(e) = serde_json::from_str::<StreamEvent>(data.get()) else { return };
     tracing::info!("{name} for {} (server {:?}, endpoint {:?})", e.stream_key, e.rtc_server_id, e.endpoint);
+    if crate::share_glue::on_stream_event(app, name, &e) {
+        return;
+    }
     let Some(w) = &mut app.watch else { return };
     if e.stream_key != w.key {
         return;
@@ -171,6 +174,7 @@ fn connect(app: &mut App) {
         token: token.clone(),
         endpoint: endpoint.clone(),
         stream_owner: Some(w.owner.0),
+        share: None,
     };
     w.generation += 1;
     let generation = w.generation;

@@ -55,6 +55,9 @@ pub mod icon {
     pub const SIGNAL: &str = "\u{E701}";
     pub const PHONE: &str = "\u{E717}";
     pub const CHAT: &str = "\u{E8BD}";
+    /// A monitor: screens, and going live.
+    pub const SCREEN: &str = "\u{E7F4}";
+    pub const WINDOW: &str = "\u{E7C4}";
 }
 
 pub fn icons() -> FontFamily {

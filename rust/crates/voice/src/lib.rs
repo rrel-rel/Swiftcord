@@ -2,6 +2,7 @@
 //! UDP, Opus, and WASAPI audio through cpal.
 
 pub mod audio;
+pub mod capture;
 pub mod codec;
 mod connection;
 pub mod rtp;
@@ -29,6 +30,28 @@ pub struct ConnectInfo {
     /// For a Go Live stream connection: the streamer. Stream connections receive video and the stream's
     /// audio and never send.
     pub stream_owner: Option<u64>,
+    /// For our own Go Live stream connection: what to send. It sends video only and plays nothing.
+    pub share: Option<Share>,
+}
+
+/// Going live: what to capture and at what quality.
+#[derive(Debug, Clone)]
+pub struct Share {
+    pub source: capture::Source,
+    pub max_width: u32,
+    pub max_height: u32,
+    pub fps: u32,
+    /// Video bitrate in bits per second.
+    pub bitrate: u32,
+}
+
+/// How a stream we're sending is going.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShareStats {
+    pub width: u32,
+    pub height: u32,
+    /// Frames captured and encoded per second (lower than asked when the machine can't keep up).
+    pub fps: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -199,9 +222,14 @@ impl Drop for MicTest {
 }
 
 impl Voice {
-    /// The latest decoded video picture, if a new one arrived since the last call.
+    /// The latest decoded video picture, if a new one arrived since the last call. While sharing, a small
+    /// preview of what's being sent.
     pub fn take_picture(&self) -> Option<video::Picture> {
         self.shared.video.lock().take()
+    }
+
+    pub fn share_stats(&self) -> Option<ShareStats> {
+        *self.shared.share_stats.lock()
     }
 
     /// The microphone's current level in dBFS.

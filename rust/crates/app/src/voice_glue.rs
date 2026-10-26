@@ -81,6 +81,7 @@ pub fn join(app: &mut App, guild: Option<Snowflake>, channel: Snowflake) {
 
 pub fn leave(app: &mut App) {
     crate::stream_glue::stop(app);
+    crate::share_glue::stop(app);
     let Some(call) = app.voice.take() else { return };
     drop(call.voice);
     if let Some(s) = &app.session {
@@ -124,6 +125,7 @@ pub fn on_notice(app: &mut App, notice: Notice) {
                 None if call.status != Status::Joining => {
                     // Disconnected from elsewhere (kicked, or joined on another device).
                     crate::stream_glue::stop(app);
+                    crate::share_glue::stop(app);
                     drop(app.voice.take());
                     app.ui.speaking.clear();
                     app.ui.voice = None;
@@ -177,6 +179,7 @@ fn connect(app: &mut App) {
         token: server.token.clone(),
         endpoint: server.endpoint.clone().unwrap_or_default(),
         stream_owner: None,
+        share: None,
     };
     call.status = Status::Connecting;
     call.generation += 1;
@@ -267,9 +270,13 @@ pub fn status_panel(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<A
                 if hang.on_hover_text("Disconnect").clicked() {
                     actions.push(Action::LeaveVoice);
                 }
+                if uis.share.is_none() && matches!(call.status, Status::Connected { .. }) && crate::ui::widgets::icon_button(ui, icon::SCREEN, "Share Your Screen").clicked() {
+                    actions.push(Action::OpenSharePicker);
+                }
             });
         });
     });
+    crate::ui::share::live_panel(ui, uis, actions);
     ui.separator();
 }
 

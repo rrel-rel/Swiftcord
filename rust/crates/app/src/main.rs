@@ -6,6 +6,7 @@ mod clip;
 mod demo;
 mod media;
 mod settings;
+mod share_glue;
 mod stream_glue;
 mod platform;
 mod theme;

@@ -73,6 +73,9 @@ pub(crate) struct Shared {
     pub video_ssrcs: Mutex<VideoSsrcs>,
     /// Set when the decoder dropped or failed a frame and needs a keyframe.
     pub video_resync: AtomicBool,
+    /// While sharing: a viewer asked for a keyframe.
+    pub keyframe: AtomicBool,
+    pub share_stats: Mutex<Option<crate::ShareStats>>,
 }
 
 #[derive(Default)]
@@ -99,6 +102,8 @@ impl Shared {
             video: Mutex::new(None),
             video_ssrcs: Mutex::new(VideoSsrcs::default()),
             video_resync: AtomicBool::new(false),
+            keyframe: AtomicBool::new(false),
+            share_stats: Mutex::new(None),
         }
     }
 }
@@ -122,6 +127,9 @@ struct Media {
     socket: Arc<UdpSocket>,
     ssrc: u32,
     mode: Mode,
+    /// Where our own video goes (stream connections we share on).
+    video_ssrc: u32,
+    rtx_ssrc: u32,
 }
 
 /// Audio devices and the media threads, restarted whenever a new key arrives.
@@ -145,6 +153,13 @@ impl Running {
     fn start(&mut self, media: &Media, cipher: Cipher, info: &ConnectInfo, settings: &Settings, shared: &Arc<Shared>, cmd: &mpsc::UnboundedSender<Cmd>, events: &Arc<dyn Fn(Event) + Send + Sync>) {
         self.stop(shared);
         let cipher = Arc::new(cipher);
+        if let Some(share) = &info.share {
+            // Sharing sends video and nothing else: no microphone, no playback.
+            let (tx, rx) = std::sync::mpsc::sync_channel(4);
+            self.threads.push(spawn_capture(share.clone(), tx, shared.clone(), cmd.clone(), events.clone()));
+            self.threads.push(spawn_video_sender(media, cipher, rx, shared.clone()));
+            return;
+        }
         let stream = info.stream_owner.is_some();
         let (mic_tx, mic_rx) = std::sync::mpsc::sync_channel(256);
         // Watching a stream plays its audio but never opens the microphone.
@@ -191,11 +206,15 @@ struct ReadyData {
     ip: String,
     port: u16,
     modes: Vec<String>,
+    #[serde(default)]
+    streams: Vec<Value>,
 }
 
 pub(crate) enum Cmd {
     Speaking(bool),
     Disconnect,
+    /// Ended from our side for a reason (a shared window closed).
+    End(String),
 }
 
 pub(crate) async fn run(
@@ -273,8 +292,8 @@ async fn session(
                 "user_id": info.user_id.to_string(),
                 "session_id": info.session_id,
                 "token": info.token,
-                "video": info.stream_owner.is_some(),
-                "streams": if info.stream_owner.is_some() { json!([{ "type": "screen", "rid": "100", "quality": 100 }]) } else { json!([]) },
+                "video": is_stream(info),
+                "streams": if is_stream(info) { json!([{ "type": "screen", "rid": "100", "quality": 100 }]) } else { json!([]) },
                 "max_dave_protocol_version": davey::DAVE_PROTOCOL_VERSION,
             }),
         )
@@ -328,11 +347,15 @@ async fn session(
                                 let Some((socket, my_ip, my_port)) = found else {
                                     return Outcome::Lost("UDP connection to the voice server failed".into());
                                 };
-                                *media = Some(Media { socket: Arc::new(socket), ssrc, mode });
+                                // The server assigns our video SSRCs; older servers leave them to follow the audio one.
+                                let first = ready.streams.first();
+                                let ssrc_of = |k: &str, fallback: u32| first.and_then(|s| s[k].as_u64()).filter(|&v| v != 0).map_or(fallback, |v| v as u32);
+                                let (video_ssrc, rtx_ssrc) = (ssrc_of("ssrc", ssrc.wrapping_add(1)), ssrc_of("rtx_ssrc", ssrc.wrapping_add(2)));
+                                *media = Some(Media { socket: Arc::new(socket), ssrc, mode, video_ssrc, rtx_ssrc });
                                 send!(json_msg(op::SELECT_PROTOCOL, json!({
                                     "protocol": "udp",
                                     "data": { "address": my_ip, "port": my_port, "mode": mode.name() },
-                                    "codecs": codecs(info.stream_owner.is_some()),
+                                    "codecs": codecs(is_stream(info), info.share.is_some()),
                                 })));
                             }
                             op::SESSION_DESCRIPTION => {
@@ -353,6 +376,22 @@ async fn session(
                                     }
                                 }
                                 running.start(m, cipher, info, settings, shared, cmd_tx, events);
+                                if let Some(share) = &info.share {
+                                    // Announce our video so the server forwards it to viewers.
+                                    let (w, h) = crate::capture::output_size(&share.source, share.max_width, share.max_height).unwrap_or((share.max_width, share.max_height));
+                                    send!(json_msg(op::VIDEO, json!({
+                                        "audio_ssrc": m.ssrc,
+                                        "video_ssrc": m.video_ssrc,
+                                        "rtx_ssrc": m.rtx_ssrc,
+                                        "streams": [{
+                                            "type": "video", "rid": "100", "ssrc": m.video_ssrc, "rtx_ssrc": m.rtx_ssrc,
+                                            "active": true, "quality": 100,
+                                            "max_bitrate": share.bitrate, "max_framerate": share.fps,
+                                            "max_resolution": { "type": "fixed", "width": w, "height": h },
+                                        }],
+                                    })));
+                                    send!(json_msg(op::SPEAKING, json!({ "speaking": 1, "delay": 0, "ssrc": m.ssrc })));
+                                }
                                 if info.stream_owner.is_some() {
                                     check_video_codec(&f.d, events);
                                     // Ask for the stream's video at full quality.
@@ -497,6 +536,10 @@ async fn session(
                 Some(Cmd::Disconnect) | None => {
                     let _ = ws.close(None).await;
                     return Outcome::Closed("Left the call.".into());
+                }
+                Some(Cmd::End(reason)) => {
+                    let _ = ws.close(None).await;
+                    return Outcome::Closed(reason);
                 }
             }
         }
@@ -707,15 +750,19 @@ fn spawn_sender(
         .expect("voice send thread")
 }
 
-/// The codecs we offer: Opus always, and H.264 (decode only) when watching a stream, which makes the
-/// streamer's client encode in a format Windows can decode natively.
-fn codecs(video: bool) -> Value {
+fn is_stream(info: &ConnectInfo) -> bool {
+    info.stream_owner.is_some() || info.share.is_some()
+}
+
+/// The codecs we offer: Opus always, and H.264 on stream connections. Watching, it makes the streamer's
+/// client encode in a format Windows can decode natively; sharing, it's what we send.
+fn codecs(video: bool, encode: bool) -> Value {
     let mut list = vec![json!({ "name": "opus", "type": "audio", "priority": 1000, "payload_type": rtp::OPUS_PAYLOAD_TYPE })];
     if video {
         list.push(json!({
             "name": "H264", "type": "video", "priority": 1000,
             "payload_type": video::H264_PAYLOAD_TYPE, "rtx_payload_type": video::H264_RTX_PAYLOAD_TYPE,
-            "encode": false, "decode": true,
+            "encode": encode, "decode": true,
         }));
     }
     Value::Array(list)
@@ -767,6 +814,201 @@ fn spawn_video_decoder(
             }
         })
         .expect("video thread")
+}
+
+/// Captures and encodes our screen or window at the stream's frame rate. When the machine can't keep up,
+/// frames are skipped rather than queued, so the stream stays live.
+fn spawn_capture(
+    share: crate::Share,
+    out: std::sync::mpsc::SyncSender<video::EncodedFrame>,
+    shared: Arc<Shared>,
+    cmd: mpsc::UnboundedSender<Cmd>,
+    events: Arc<dyn Fn(Event) + Send + Sync>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("swiftcord-capture".into())
+        .spawn(move || {
+            let Some(mut capturer) = crate::capture::Capturer::new(share.source.clone(), share.max_width, share.max_height) else {
+                let _ = cmd.send(Cmd::End("Couldn't capture that screen or window.".into()));
+                return;
+            };
+            let (w, h) = capturer.size();
+            let mut encoder = match video::Encoder::new(w as u32, h as u32, share.fps, share.bitrate) {
+                Ok(e) => e,
+                Err(e) => {
+                    let _ = cmd.send(Cmd::End(format!("Can't encode video: {e}. Windows' H.264 encoder is missing (N editions need the Media Feature Pack).")));
+                    return;
+                }
+            };
+            tracing::info!("sharing {:?} at {w}x{h}, {} fps, {} kbps", share.source, share.fps, share.bitrate / 1000);
+            let interval = Duration::from_secs_f64(1.0 / share.fps.max(1) as f64);
+            let start = Instant::now();
+            let ts_base = rand::random::<u32>();
+            let mut next = start;
+            let (mut frames, mut window_start, mut last_preview) = (0u32, Instant::now(), Instant::now() - Duration::from_secs(1));
+            while !shared.stop.load(Ordering::Relaxed) {
+                let now = Instant::now();
+                if now < next {
+                    std::thread::sleep(next - now);
+                }
+                next += interval;
+                if next < Instant::now() {
+                    next = Instant::now();
+                }
+                let Some(frame) = capturer.grab() else {
+                    let _ = cmd.send(Cmd::End("The shared window was closed.".into()));
+                    return;
+                };
+                if last_preview.elapsed() > Duration::from_millis(500) {
+                    last_preview = Instant::now();
+                    *shared.video.lock() = Some(preview(&frame));
+                    events(Event::VideoFrame);
+                }
+                let nv12 = video::bgra_to_nv12(frame.bgra, w, h);
+                if shared.keyframe.swap(false, Ordering::Relaxed) {
+                    encoder.force_keyframe();
+                }
+                // RTP video runs on a 90 kHz clock.
+                let timestamp = ts_base.wrapping_add((start.elapsed().as_secs_f64() * 90_000.0) as u32);
+                match encoder.encode(&nv12) {
+                    Ok(units) => {
+                        for data in units {
+                            let keyframe = video::nal_units(&data).iter().any(|n| n[0] & 0x1f == 5);
+                            if out.try_send(video::EncodedFrame { data, timestamp, keyframe }).is_err() {
+                                // The sender is behind; the next frames would reference this one.
+                                shared.keyframe.store(true, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!("video encode failed: {e}"),
+                }
+                frames += 1;
+                if window_start.elapsed() >= Duration::from_secs(2) {
+                    let fps = frames as f32 / window_start.elapsed().as_secs_f32();
+                    *shared.share_stats.lock() = Some(crate::ShareStats { width: w as u32, height: h as u32, fps });
+                    (frames, window_start) = (0, Instant::now());
+                }
+            }
+        })
+        .expect("capture thread")
+}
+
+/// A small RGBA copy of a captured frame for the "you're live" preview.
+fn preview(frame: &crate::capture::Frame) -> video::Picture {
+    let step = (frame.width / 480).max(1);
+    let (w, h) = (frame.width / step, frame.height / step);
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * step * frame.width + x * step) * 4;
+            rgba.extend_from_slice(&[frame.bgra[i + 2], frame.bgra[i + 1], frame.bgra[i], 255]);
+        }
+    }
+    video::Picture { width: w, height: h, rgba }
+}
+
+/// Packets kept for retransmission: a few seconds of video.
+const RTX_HISTORY: usize = 4096;
+/// RTP payload budget per packet, leaving room for headers, the AEAD tag and the nonce within a safe MTU.
+const MAX_PAYLOAD: usize = 1100;
+
+/// End-to-end encrypts, packetizes and sends our video, and answers viewers' feedback: keyframe requests go
+/// to the encoder and NACKed packets are resent over RTX.
+fn spawn_video_sender(media: &Media, cipher: Arc<Cipher>, frames: std::sync::mpsc::Receiver<video::EncodedFrame>, shared: Arc<Shared>) -> std::thread::JoinHandle<()> {
+    let socket = media.socket.clone();
+    let (ssrc, rtx_ssrc) = (media.video_ssrc, media.rtx_ssrc);
+    std::thread::Builder::new()
+        .name("swiftcord-video-send".into())
+        .spawn(move || {
+            let _ = socket.set_nonblocking(true);
+            let (mut seq, mut rtx_seq, mut counter) = (rand::random::<u16>(), rand::random::<u16>(), 0u32);
+            let mut history: std::collections::VecDeque<(u16, u32, bool, Vec<u8>)> = std::collections::VecDeque::with_capacity(RTX_HISTORY);
+            let mut buf = [0u8; 2048];
+            let mut last_keyframe_request = Instant::now() - Duration::from_secs(10);
+            let (mut sent_frames, mut resent, mut held_back) = (0u64, 0u64, 0u64);
+            let mut last_stats = Instant::now();
+            while !shared.stop.load(Ordering::Relaxed) {
+                match frames.recv_timeout(Duration::from_millis(5)) {
+                    Ok(frame) => {
+                        let protected = {
+                            let mut dave = shared.dave.lock();
+                            if dave.active() {
+                                match dave.session.as_mut().filter(|s| s.is_ready()).map(|s| s.encrypt(MediaType::VIDEO, davey::Codec::H264, &frame.data)) {
+                                    Some(Ok(p)) => Some(p.into_owned()),
+                                    // Never send unencrypted video into an end-to-end encrypted call.
+                                    _ => None,
+                                }
+                            } else {
+                                Some(frame.data)
+                            }
+                        };
+                        let Some(protected) = protected else {
+                            held_back += 1;
+                            shared.keyframe.store(true, Ordering::Relaxed);
+                            continue;
+                        };
+                        let payloads = video::packetize(&protected, MAX_PAYLOAD);
+                        let last = payloads.len().saturating_sub(1);
+                        for (i, payload) in payloads.into_iter().enumerate() {
+                            if let Some(p) = rtp::seal_marked(&cipher, video::H264_PAYLOAD_TYPE, i == last, seq, frame.timestamp, ssrc, counter, &payload) {
+                                send_all(&socket, &p);
+                            }
+                            counter = counter.wrapping_add(1);
+                            if history.len() == RTX_HISTORY {
+                                history.pop_front();
+                            }
+                            history.push_back((seq, frame.timestamp, i == last, payload));
+                            seq = seq.wrapping_add(1);
+                        }
+                        sent_frames += 1;
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(_) => break,
+                }
+                // Feedback from the server about what viewers lost.
+                while let Ok(n) = socket.recv(&mut buf) {
+                    for f in rtp::open_feedback(&cipher, &buf[..n]) {
+                        match f {
+                            rtp::Feedback::Keyframe => {
+                                if last_keyframe_request.elapsed() > Duration::from_millis(500) {
+                                    last_keyframe_request = Instant::now();
+                                    shared.keyframe.store(true, Ordering::Relaxed);
+                                }
+                            }
+                            rtp::Feedback::Nack(lost) => {
+                                for s in lost {
+                                    let Some((_, ts, marker, payload)) = history.iter().find(|h| h.0 == s) else { continue };
+                                    // RTX: the original sequence number, then the original payload.
+                                    let mut rtx = s.to_be_bytes().to_vec();
+                                    rtx.extend_from_slice(payload);
+                                    if let Some(p) = rtp::seal_marked(&cipher, video::H264_RTX_PAYLOAD_TYPE, *marker, rtx_seq, *ts, rtx_ssrc, counter, &rtx) {
+                                        send_all(&socket, &p);
+                                    }
+                                    counter = counter.wrapping_add(1);
+                                    rtx_seq = rtx_seq.wrapping_add(1);
+                                    resent += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                if last_stats.elapsed() > Duration::from_secs(10) {
+                    last_stats = Instant::now();
+                    tracing::info!("sent {sent_frames} video frames; {resent} packets retransmitted; {held_back} held back waiting for encryption");
+                }
+            }
+        })
+        .expect("video send thread")
+}
+
+/// Sends on a non-blocking socket, waiting briefly if its buffer is full (a keyframe is a big burst).
+fn send_all(socket: &UdpSocket, packet: &[u8]) {
+    for _ in 0..50 {
+        match socket.send(packet) {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(1)),
+            _ => return,
+        }
+    }
 }
 
 /// What a received packet is, by SSRC (as announced in op 12) and then payload type.
@@ -946,5 +1188,79 @@ fn e2ee_decrypt(shared: &Shared, user: Option<u64>, kind: MediaType, payload: Ve
         Ok(f) => Some(f),
         Err(_) if session.can_passthrough(user) => Some(payload),
         Err(_) => None,
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    /// Our video sender against a local socket standing in for the voice server: frames arrive, reassemble
+    /// and decode, and a NACK is answered over RTX.
+    #[test]
+    fn sent_video_reassembles_and_retransmits() {
+        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        client.connect(server.local_addr().unwrap()).unwrap();
+        server.connect(client.local_addr().unwrap()).unwrap();
+        server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let key = [9u8; 32];
+        let media = Media { socket: Arc::new(client), ssrc: 1, mode: Mode::Aes256Gcm, video_ssrc: 2, rtx_ssrc: 3 };
+        let shared = Arc::new(Shared::new(&Settings::default()));
+        let (tx, rx) = std::sync::mpsc::sync_channel(4);
+        let sender = spawn_video_sender(&media, Arc::new(Cipher::new(Mode::Aes256Gcm, &key).unwrap()), rx, shared.clone());
+
+        let (w, h) = (640usize, 360usize);
+        let mut enc = video::Encoder::new(w as u32, h as u32, 30, 2_000_000).unwrap();
+        let mut bgra = vec![0u8; w * h * 4];
+        for (i, px) in bgra.chunks_mut(4).enumerate() {
+            // Noise-like content so the keyframe spans many packets.
+            let v = ((i * 2654435761) >> 13) as u8;
+            px.copy_from_slice(&[v, v.wrapping_mul(3), v.wrapping_add(90), 255]);
+        }
+        for (n, data) in enc.encode(&video::bgra_to_nv12(&bgra, w, h)).unwrap().into_iter().enumerate() {
+            tx.send(video::EncodedFrame { data, timestamp: 1000 + n as u32, keyframe: true }).unwrap();
+        }
+
+        let cipher = Cipher::new(Mode::Aes256Gcm, &key).unwrap();
+        let mut rx_video = video::VideoReceiver::default();
+        let mut buf = [0u8; 2048];
+        let mut packets = Vec::new();
+        let mut frames = Vec::new();
+        while frames.is_empty() {
+            let n = server.recv(&mut buf).expect("video packets");
+            let p = rtp::open(&cipher, &buf[..n]).expect("decrypts");
+            assert_eq!((p.ssrc, p.payload_type), (2, video::H264_PAYLOAD_TYPE));
+            packets.push(p.seq);
+            rx_video.push(p.seq, p.timestamp, p.marker, p.payload, false);
+            frames.extend(rx_video.poll());
+        }
+        assert!(packets.len() > 5, "a keyframe this size spans packets: {}", packets.len());
+        let mut dec = video::Decoder::new().unwrap();
+        let mut pics = dec.decode(&frames[0].data, true).unwrap();
+        if pics.is_empty() {
+            pics = dec.decode(&frames[0].data, true).unwrap();
+        }
+        assert_eq!((pics[0].width, pics[0].height), (w, h));
+
+        // Ask for the third packet again: it comes back on the RTX SSRC carrying its original sequence number.
+        let nack = rtp::seal_nack(&cipher, 7, 2, &[packets[2]], 0x8000_0000).unwrap();
+        server.send(&nack).unwrap();
+        let n = server.recv(&mut buf).expect("retransmission");
+        let p = rtp::open(&cipher, &buf[..n]).expect("decrypts");
+        assert_eq!((p.ssrc, p.payload_type), (3, video::H264_RTX_PAYLOAD_TYPE));
+        assert_eq!(u16::from_be_bytes([p.payload[0], p.payload[1]]), packets[2]);
+
+        // A keyframe request reaches the encoder's flag.
+        server.send(&rtp::seal_pli(&cipher, 7, 2, 0x8000_0001).unwrap()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !shared.keyframe.load(Ordering::Relaxed) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(shared.keyframe.load(Ordering::Relaxed));
+
+        shared.stop.store(true, Ordering::Relaxed);
+        drop(tx);
+        sender.join().unwrap();
     }
 }

@@ -80,9 +80,15 @@ impl Cipher {
 
 /// Builds an encrypted RTP packet.
 pub fn seal(cipher: &Cipher, payload_type: u8, seq: u16, timestamp: u32, ssrc: u32, counter: u32, payload: &[u8]) -> Option<Vec<u8>> {
+    seal_marked(cipher, payload_type, false, seq, timestamp, ssrc, counter, payload)
+}
+
+/// [`seal`] with the marker bit, which ends a video frame.
+#[allow(clippy::too_many_arguments)]
+pub fn seal_marked(cipher: &Cipher, payload_type: u8, marker: bool, seq: u16, timestamp: u32, ssrc: u32, counter: u32, payload: &[u8]) -> Option<Vec<u8>> {
     let mut header = [0u8; 12];
     header[0] = 0x80;
-    header[1] = payload_type;
+    header[1] = payload_type | if marker { 0x80 } else { 0 };
     header[2..4].copy_from_slice(&seq.to_be_bytes());
     header[4..8].copy_from_slice(&timestamp.to_be_bytes());
     header[8..12].copy_from_slice(&ssrc.to_be_bytes());
@@ -145,6 +151,54 @@ pub fn seal_nack(cipher: &Cipher, our_ssrc: u32, media_ssrc: u32, lost: &[u16], 
     out.extend_from_slice(&body);
     out.extend_from_slice(&counter.to_be_bytes());
     Some(out)
+}
+
+/// What viewers (through the voice server) ask of the video we send.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Feedback {
+    /// Picture Loss Indication or Full Intra Request: send a keyframe.
+    Keyframe,
+    /// Retransmit these packets.
+    Nack(Vec<u16>),
+}
+
+/// Decrypts an RTCP compound packet and pulls out keyframe requests and NACKs.
+pub fn open_feedback(cipher: &Cipher, data: &[u8]) -> Vec<Feedback> {
+    let mut out = Vec::new();
+    // RTCP packet types are 200–207; RTP's second byte (marker + payload type) never is for Discord's types.
+    if data.len() < 8 + TAG + 4 || !(200..=207).contains(&data[1]) {
+        return out;
+    }
+    let nonce_at = data.len() - 4;
+    let mut body = data[8..nonce_at].to_vec();
+    let nonce: [u8; 4] = data[nonce_at..].try_into().unwrap_or_default();
+    if !cipher.open(nonce, &data[..8], &mut body) {
+        return out;
+    }
+    let mut plain = data[..8].to_vec();
+    plain.extend_from_slice(&body);
+    let mut rest = &plain[..];
+    while rest.len() >= 4 {
+        let (fmt, pt) = (rest[0] & 0x1f, rest[1]);
+        let len = (u16::from_be_bytes([rest[2], rest[3]]) as usize + 1) * 4;
+        let Some(packet) = rest.get(..len) else { break };
+        match (pt, fmt) {
+            (206, 1) | (206, 4) => out.push(Feedback::Keyframe),
+            (205, 1) => {
+                let mut lost = Vec::new();
+                for fci in packet.get(12..).unwrap_or_default().chunks_exact(4) {
+                    let pid = u16::from_be_bytes([fci[0], fci[1]]);
+                    let blp = u16::from_be_bytes([fci[2], fci[3]]);
+                    lost.push(pid);
+                    lost.extend((0..16).filter(|b| blp & (1 << b) != 0).map(|b| pid.wrapping_add(b + 1)));
+                }
+                out.push(Feedback::Nack(lost));
+            }
+            _ => {}
+        }
+        rest = &rest[len..];
+    }
+    out
 }
 
 #[derive(Debug)]
@@ -279,6 +333,17 @@ mod tests {
         aes.decrypt_in_place(&[0u8; 12].into(), &p[..8], &mut body).unwrap();
         // 100 with 101 (bit 0) and 103 (bit 2); then 200 alone.
         assert_eq!(&body[4..], &[0, 100, 0, 0b101, 0, 200, 0, 0]);
+    }
+
+    #[test]
+    fn reads_back_feedback() {
+        let c = Cipher::new(Mode::XChaCha20, &[4u8; 32]).unwrap();
+        let nack = seal_nack(&c, 1, 2, &[100, 101, 103, 200], 5).unwrap();
+        assert_eq!(open_feedback(&c, &nack), [Feedback::Nack(vec![100, 101, 103, 200])]);
+        let pli = seal_pli(&c, 1, 2, 6).unwrap();
+        assert_eq!(open_feedback(&c, &pli), [Feedback::Keyframe]);
+        let marked = seal_marked(&c, 101, true, 1, 2, 3, 7, b"x").unwrap();
+        assert!(open(&c, &marked).unwrap().marker);
     }
 
     #[test]

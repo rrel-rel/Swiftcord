@@ -10,5 +10,6 @@ pub mod shell;
 pub mod stream;
 pub mod suggest;
 pub mod settings;
+pub mod share;
 pub mod sidebar;
 pub mod widgets;

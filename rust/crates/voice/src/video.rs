@@ -274,12 +274,100 @@ pub fn nv12_to_rgba(src: &[u8], width: usize, height: usize, stride: usize, uv_o
     out
 }
 
+/// The NAL units of an Annex-B access unit, split the way WebRTC does (a zero before `00 00 01` belongs to
+/// the start code), so DAVE's unencrypted ranges line up for receivers.
+pub fn nal_units(annexb: &[u8]) -> Vec<&[u8]> {
+    let mut starts = Vec::new(); // (start code begins, payload begins)
+    let mut i = 0;
+    while i + 3 <= annexb.len() {
+        if annexb[i] == 0 && annexb[i + 1] == 0 && annexb[i + 2] == 1 {
+            let begin = if i > 0 && annexb[i - 1] == 0 { i - 1 } else { i };
+            starts.push((begin, i + 3));
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    let mut out = Vec::with_capacity(starts.len());
+    for (k, &(_, payload)) in starts.iter().enumerate() {
+        let end = starts.get(k + 1).map_or(annexb.len(), |n| n.0);
+        if end > payload {
+            out.push(&annexb[payload..end]);
+        }
+    }
+    out
+}
+
+/// Splits an access unit into RTP payloads (RFC 6184, packetization mode 1): NAL units that fit go whole,
+/// bigger ones as FU-A fragments of at most `max` bytes. The last payload ends the frame (RTP marker).
+pub fn packetize(annexb: &[u8], max: usize) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    for nal in nal_units(annexb) {
+        if nal.len() <= max {
+            out.push(nal.to_vec());
+            continue;
+        }
+        let (h, body) = (nal[0], &nal[1..]);
+        let chunks: Vec<&[u8]> = body.chunks(max - 2).collect();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let mut fu = Vec::with_capacity(chunk.len() + 2);
+            fu.push((h & 0xe0) | 28);
+            let mut header = h & 0x1f;
+            if i == 0 {
+                header |= 0x80;
+            }
+            if i == chunks.len() - 1 {
+                header |= 0x40;
+            }
+            fu.push(header);
+            fu.extend_from_slice(chunk);
+            out.push(fu);
+        }
+    }
+    out
+}
+
+/// BGRA (as GDI captures it) → NV12 in limited-range BT.601, the colour space WebRTC assumes for untagged
+/// video. Width and height must be even.
+pub fn bgra_to_nv12(bgra: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let mut out = vec![0u8; width * height * 3 / 2];
+    let (luma, chroma) = out.split_at_mut(width * height);
+    for y in 0..height {
+        let row = &bgra[y * width * 4..(y + 1) * width * 4];
+        let dst = &mut luma[y * width..(y + 1) * width];
+        for x in 0..width {
+            let (b, g, r) = (row[x * 4] as i32, row[x * 4 + 1] as i32, row[x * 4 + 2] as i32);
+            dst[x] = (((66 * r + 129 * g + 25 * b + 128) >> 8) + 16) as u8;
+        }
+    }
+    for y in (0..height).step_by(2) {
+        let (r0, r1) = (&bgra[y * width * 4..], &bgra[(y + 1) * width * 4..]);
+        let dst = &mut chroma[(y / 2) * width..(y / 2 + 1) * width];
+        for x in (0..width).step_by(2) {
+            let px = |row: &[u8], o: usize| (row[o] as i32, row[o + 1] as i32, row[o + 2] as i32);
+            let (mut b, mut g, mut r) = (0, 0, 0);
+            for (pb, pg, pr) in [px(r0, x * 4), px(r0, x * 4 + 4), px(r1, x * 4), px(r1, x * 4 + 4)] {
+                b += pb;
+                g += pg;
+                r += pr;
+            }
+            let (b, g, r) = (b / 4, g / 4, r / 4);
+            dst[x] = (((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128) as u8;
+            dst[x + 1] = (((112 * r - 94 * g - 18 * b + 128) >> 8) + 128) as u8;
+        }
+    }
+    out
+}
+
 #[cfg(windows)]
-pub use mf::Decoder;
+pub use mf::{Decoder, Encoder};
 
 #[cfg(windows)]
 mod mf {
     use windows::Win32::Media::MediaFoundation::*;
+    use windows::core::Interface;
+    use windows::Win32::Foundation::{VARIANT_FALSE, VARIANT_TRUE};
+    use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VT_UI4};
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
 
     use super::{nv12_to_rgba, Picture};
@@ -433,6 +521,151 @@ mod mf {
     impl Drop for Decoder {
         fn drop(&mut self) {
             unsafe {
+                let _ = self.mft.ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
+            }
+        }
+    }
+
+    fn variant_u32(v: u32) -> VARIANT {
+        let mut var = VARIANT::default();
+        unsafe {
+            (*var.Anonymous.Anonymous).vt = VT_UI4;
+            (*var.Anonymous.Anonymous).Anonymous.ulVal = v;
+        }
+        var
+    }
+
+    fn variant_bool(v: bool) -> VARIANT {
+        let mut var = VARIANT::default();
+        unsafe {
+            (*var.Anonymous.Anonymous).vt = VT_BOOL;
+            (*var.Anonymous.Anonymous).Anonymous.boolVal = if v { VARIANT_TRUE } else { VARIANT_FALSE };
+        }
+        var
+    }
+
+    /// Windows' built-in (software) H.264 encoder MFT: NV12 in, Annex-B access units out, constrained baseline
+    /// with no frame delay so every viewer's decoder can play it. Create and use it on one thread.
+    pub struct Encoder {
+        mft: IMFTransform,
+        codec: Option<ICodecAPI>,
+        frame_size: usize,
+        out_size: u32,
+        provides_samples: bool,
+        duration: i64,
+        time: i64,
+    }
+
+    impl Encoder {
+        pub fn new(width: u32, height: u32, fps: u32, bitrate: u32) -> windows::core::Result<Encoder> {
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+                MFStartup(MF_VERSION, MFSTARTUP_LITE)?;
+                let mft: IMFTransform = CoCreateInstance(&CLSID_MSH264EncoderMFT, None, CLSCTX_INPROC_SERVER)?;
+                let codec: Option<ICodecAPI> = mft.cast().ok();
+                if let Some(c) = &codec {
+                    let _ = c.SetValue(&CODECAPI_AVLowLatencyMode, &variant_bool(true));
+                    let _ = c.SetValue(&CODECAPI_AVEncCommonRateControlMode, &variant_u32(eAVEncCommonRateControlMode_CBR.0 as u32));
+                    let _ = c.SetValue(&CODECAPI_AVEncCommonMeanBitRate, &variant_u32(bitrate));
+                    // A keyframe every few seconds so late joiners and lossy viewers recover even without asking.
+                    let _ = c.SetValue(&CODECAPI_AVEncMPVGOPSize, &variant_u32(fps * 4));
+                    let _ = c.SetValue(&CODECAPI_AVEncMPVDefaultBPictureCount, &variant_u32(0));
+                }
+                let size = ((width as u64) << 32) | height as u64;
+                let rate = ((fps as u64) << 32) | 1;
+                let output = MFCreateMediaType()?;
+                output.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+                output.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
+                output.SetUINT32(&MF_MT_AVG_BITRATE, bitrate)?;
+                output.SetUINT64(&MF_MT_FRAME_SIZE, size)?;
+                output.SetUINT64(&MF_MT_FRAME_RATE, rate)?;
+                output.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1 << 32) | 1)?;
+                output.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
+                output.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Base.0 as u32)?;
+                mft.SetOutputType(0, &output, 0)?;
+                let input = MFCreateMediaType()?;
+                input.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+                input.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)?;
+                input.SetUINT64(&MF_MT_FRAME_SIZE, size)?;
+                input.SetUINT64(&MF_MT_FRAME_RATE, rate)?;
+                input.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1 << 32) | 1)?;
+                input.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
+                mft.SetInputType(0, &input, 0)?;
+                let info = mft.GetOutputStreamInfo(0)?;
+                let provides_samples = info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0 as u32) != 0;
+                mft.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
+                mft.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
+                Ok(Encoder {
+                    mft,
+                    codec,
+                    frame_size: (width * height * 3 / 2) as usize,
+                    out_size: info.cbSize.max(width * height),
+                    provides_samples,
+                    duration: 10_000_000 / fps.max(1) as i64,
+                    time: 0,
+                })
+            }
+        }
+
+        /// Makes the next frame a keyframe (a viewer joined or lost packets).
+        pub fn force_keyframe(&self) {
+            if let Some(c) = &self.codec {
+                let _ = unsafe { c.SetValue(&CODECAPI_AVEncVideoForceKeyFrame, &variant_u32(1)) };
+            }
+        }
+
+        /// Encodes one NV12 picture, returning the access units that came out (usually exactly one).
+        pub fn encode(&mut self, nv12: &[u8]) -> windows::core::Result<Vec<Vec<u8>>> {
+            unsafe {
+                let len = self.frame_size.min(nv12.len());
+                let buf = MFCreateMemoryBuffer(len as u32)?;
+                let mut ptr = std::ptr::null_mut();
+                buf.Lock(&mut ptr, None, None)?;
+                std::ptr::copy_nonoverlapping(nv12.as_ptr(), ptr, len);
+                buf.Unlock()?;
+                buf.SetCurrentLength(len as u32)?;
+                let sample = MFCreateSample()?;
+                sample.AddBuffer(&buf)?;
+                sample.SetSampleTime(self.time)?;
+                sample.SetSampleDuration(self.duration)?;
+                self.time += self.duration;
+                self.mft.ProcessInput(0, &sample, 0)?;
+                let mut out = Vec::new();
+                loop {
+                    let own = if self.provides_samples {
+                        None
+                    } else {
+                        let s = MFCreateSample()?;
+                        s.AddBuffer(&MFCreateMemoryBuffer(self.out_size)?)?;
+                        Some(s)
+                    };
+                    let mut data = [MFT_OUTPUT_DATA_BUFFER { dwStreamID: 0, pSample: std::mem::ManuallyDrop::new(own), dwStatus: 0, pEvents: std::mem::ManuallyDrop::new(None) }];
+                    let mut status = 0;
+                    let r = self.mft.ProcessOutput(0, &mut data, &mut status);
+                    let sample = std::mem::ManuallyDrop::take(&mut data[0].pSample);
+                    drop(std::mem::ManuallyDrop::take(&mut data[0].pEvents));
+                    match r {
+                        Err(e) if e.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => break,
+                        Err(e) => return Err(e),
+                        Ok(()) => {}
+                    }
+                    let Some(sample) = sample else { break };
+                    let buffer = sample.ConvertToContiguousBuffer()?;
+                    let mut p = std::ptr::null_mut();
+                    let mut n = 0u32;
+                    buffer.Lock(&mut p, None, Some(&mut n))?;
+                    out.push(std::slice::from_raw_parts(p, n as usize).to_vec());
+                    buffer.Unlock()?;
+                }
+                Ok(out)
+            }
+        }
+    }
+
+    impl Drop for Encoder {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = self.mft.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
                 let _ = self.mft.ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
             }
         }
@@ -647,6 +880,60 @@ mod tests {
         }
         nal(5, sl.trailing(), &mut out);
         out
+    }
+
+    #[test]
+    fn splits_nal_units_like_webrtc() {
+        let au = [0, 0, 0, 1, 0x67, 1, 0, 0, 1, 0x68, 2, 0, 0, 0, 1, 0x65, 3, 0];
+        assert_eq!(nal_units(&au), [&[0x67, 1][..], &[0x68, 2], &[0x65, 3, 0]]);
+    }
+
+    #[test]
+    fn packetized_frames_reassemble() {
+        let mut big = vec![0x65];
+        big.extend((0..3000).map(|i| (i % 251) as u8 | 1));
+        let mut au = vec![0, 0, 0, 1, 0x67, 9, 0, 0, 0, 1];
+        au.extend_from_slice(&big);
+        let packets = packetize(&au, 1000);
+        assert_eq!(packets.len(), 1 + 4, "the SPS whole, the slice in four fragments");
+        let mut d = rx();
+        let n = packets.len();
+        for (i, p) in packets.into_iter().enumerate() {
+            d.push(i as u16, 7, i == n - 1, p, false);
+        }
+        let f = d.poll().pop().unwrap();
+        assert!(f.keyframe);
+        assert_eq!(f.data, au);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn encoder_output_decodes() {
+        let (w, h) = (320usize, 240usize);
+        let mut enc = Encoder::new(w as u32, h as u32, 30, 1_000_000).expect("H.264 encoder");
+        let mut dec = Decoder::new().expect("H.264 decoder");
+        let mut pictures = Vec::new();
+        let mut keyframe_nals = Vec::new();
+        for i in 0..10 {
+            // A bright square moving across a dark background.
+            let mut bgra = vec![30u8; w * h * 4];
+            for y in 60..140 {
+                for x in (i * 10 + 40)..(i * 10 + 120) {
+                    bgra[(y * w + x) * 4..(y * w + x) * 4 + 3].copy_from_slice(&[230, 230, 230]);
+                }
+            }
+            for au in enc.encode(&bgra_to_nv12(&bgra, w, h)).expect("encode") {
+                if i == 0 {
+                    keyframe_nals = nal_units(&au).iter().map(|n| n[0] & 0x1f).collect();
+                }
+                pictures.extend(dec.decode(&au, true).expect("decode"));
+            }
+        }
+        assert!(keyframe_nals.contains(&7) && keyframe_nals.contains(&8) && keyframe_nals.contains(&5), "SPS, PPS and IDR inline: {keyframe_nals:?}");
+        let p = pictures.last().expect("pictures");
+        assert_eq!((p.width, p.height), (w, h));
+        let px = |x: usize, y: usize| p.rgba[(y * w + x) * 4];
+        assert!(px(10, 10) < 70 && px(170, 100) > 180, "{} {}", px(10, 10), px(170, 100));
     }
 
     #[cfg(windows)]

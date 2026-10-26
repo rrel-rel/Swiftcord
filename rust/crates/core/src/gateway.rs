@@ -38,6 +38,7 @@ pub mod op {
     pub const STREAM_CREATE: u8 = 18;
     pub const STREAM_DELETE: u8 = 19;
     pub const STREAM_WATCH: u8 = 20;
+    pub const STREAM_SET_PAUSED: u8 = 22;
 }
 
 const DEFAULT_URL: &str = "wss://gateway.discord.gg";
@@ -135,6 +136,17 @@ impl Gateway {
     /// Stops watching (or streaming) a Go Live stream.
     pub fn stop_stream(&self, stream_key: &str) {
         self.send(op::STREAM_DELETE, json!({ "stream_key": stream_key }));
+    }
+
+    /// Goes live in a voice channel (`guild_id` None for a DM call); Discord answers with STREAM_CREATE and
+    /// STREAM_SERVER_UPDATE for our own stream key.
+    pub fn create_stream(&self, guild_id: Option<Snowflake>, channel_id: Snowflake) {
+        let kind = if guild_id.is_some() { "guild" } else { "call" };
+        self.send(op::STREAM_CREATE, json!({ "type": kind, "guild_id": guild_id, "channel_id": channel_id, "preferred_region": null }));
+    }
+
+    pub fn set_stream_paused(&self, stream_key: &str, paused: bool) {
+        self.send(op::STREAM_SET_PAUSED, json!({ "stream_key": stream_key, "paused": paused }));
     }
 
     pub fn update_presence(&self, status: PresenceStatus) {
