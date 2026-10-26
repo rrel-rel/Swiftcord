@@ -160,3 +160,224 @@ mod tests {
         assert_eq!(read[0].guild_ids, vec![Snowflake(10), Snowflake(20)]);
     }
 }
+
+// MARK: Favourite GIFs (FrecencyUserSettings, settings-proto type 2)
+//
+// message FrecencyUserSettings { ...; FavoriteGIFs favorite_gifs = 2; ... }
+// message FavoriteGIFs { map<string, FavoriteGIF> gifs = 1; bool hide_tooltip = 2; }
+// message FavoriteGIF { GIFType format = 1; string src = 2; uint32 width = 3; uint32 height = 4; uint32 order = 5; }
+
+const FAVORITE_GIFS_FIELD: u64 = 2;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FavoriteGif {
+    /// The link that's sent (the map key).
+    pub url: String,
+    /// The media itself.
+    pub src: String,
+    /// 1 = image (GIF/WebP), 2 = video (MP4).
+    pub format: u32,
+    pub width: u32,
+    pub height: u32,
+    /// Higher is more recently added.
+    pub order: u32,
+}
+
+/// Favourite GIFs, most recently added first.
+pub fn read_favorite_gifs(base64: &str) -> Option<Vec<FavoriteGif>> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(base64).ok()?;
+    let mut out = Vec::new();
+    for (field, value) in fields(&bytes).ok()? {
+        let (FAVORITE_GIFS_FIELD, Value::Bytes(favs)) = (field, value) else { continue };
+        for (f, entry) in fields(favs).ok()? {
+            let (1, Value::Bytes(entry)) = (f, entry) else { continue };
+            let mut gif = FavoriteGif { url: String::new(), src: String::new(), format: 0, width: 0, height: 0, order: 0 };
+            for (k, v) in fields(entry).ok()? {
+                match (k, v) {
+                    (1, Value::Bytes(b)) => gif.url = String::from_utf8_lossy(b).into_owned(),
+                    (2, Value::Bytes(b)) => {
+                        for (gk, gv) in fields(b).ok()? {
+                            match (gk, gv) {
+                                (1, Value::Int(v)) => gif.format = v as u32,
+                                (2, Value::Bytes(s)) => gif.src = String::from_utf8_lossy(s).into_owned(),
+                                (3, Value::Int(v)) => gif.width = v as u32,
+                                (4, Value::Int(v)) => gif.height = v as u32,
+                                (5, Value::Int(v)) => gif.order = v as u32,
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if !gif.url.is_empty() {
+                out.push(gif);
+            }
+        }
+    }
+    out.sort_by_key(|g| std::cmp::Reverse(g.order));
+    Some(out)
+}
+
+/// Adds (`Some`) or removes (by `url`) a favourite GIF, returning the new settings as base64. Every other field
+/// is copied byte for byte, since the whole message is written back.
+pub fn edit_favorite_gifs(base64: &str, url: &str, add: Option<&FavoriteGif>) -> Option<String> {
+    let engine = base64::engine::general_purpose::STANDARD;
+    let bytes = engine.decode(base64).ok()?;
+    let mut out = Vec::with_capacity(bytes.len() + 128);
+    let mut favs: Vec<u8> = Vec::new();
+    for (field, record, value) in raw_fields(&bytes).ok()? {
+        if field != FAVORITE_GIFS_FIELD {
+            out.extend_from_slice(record);
+            continue;
+        }
+        // Keep existing entries except the one being changed, and any other subfields (e.g. hide_tooltip).
+        for (f, rec, v) in raw_fields(value).ok()? {
+            if f == 1 {
+                let key = fields(v).ok()?.into_iter().find_map(|(k, val)| match (k, val) {
+                    (1, Value::Bytes(b)) => Some(b),
+                    _ => None,
+                });
+                if key == Some(url.as_bytes()) {
+                    continue;
+                }
+            }
+            favs.extend_from_slice(rec);
+        }
+    }
+    if let Some(g) = add {
+        let mut gif = Vec::new();
+        put_varint_field(&mut gif, 1, g.format as u64);
+        put_bytes_field(&mut gif, 2, g.src.as_bytes());
+        put_varint_field(&mut gif, 3, g.width as u64);
+        put_varint_field(&mut gif, 4, g.height as u64);
+        put_varint_field(&mut gif, 5, g.order as u64);
+        let mut entry = Vec::new();
+        put_bytes_field(&mut entry, 1, url.as_bytes());
+        put_bytes_field(&mut entry, 2, &gif);
+        put_bytes_field(&mut favs, 1, &entry);
+    }
+    put_bytes_field(&mut out, FAVORITE_GIFS_FIELD, &favs);
+    Some(engine.encode(out))
+}
+
+/// Top-level fields as (field number, the whole record's bytes, the value's bytes).
+fn raw_fields(data: &[u8]) -> Result<Vec<(u64, &[u8], &[u8])>, ()> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while pos < data.len() {
+        let start = pos;
+        let key = varint(data, &mut pos)?;
+        let value_start;
+        match key & 7 {
+            0 => {
+                value_start = pos;
+                varint(data, &mut pos)?;
+            }
+            1 => {
+                value_start = pos;
+                pos += 8;
+            }
+            2 => {
+                let len = varint(data, &mut pos)? as usize;
+                value_start = pos;
+                pos = pos.checked_add(len).ok_or(())?;
+            }
+            5 => {
+                value_start = pos;
+                pos += 4;
+            }
+            _ => return Err(()),
+        }
+        if pos > data.len() {
+            return Err(());
+        }
+        out.push((key >> 3, &data[start..pos], &data[value_start..pos]));
+    }
+    Ok(out)
+}
+
+fn put_varint(out: &mut Vec<u8>, mut v: u64) {
+    loop {
+        let b = (v & 0x7f) as u8;
+        v >>= 7;
+        if v == 0 {
+            out.push(b);
+            return;
+        }
+        out.push(b | 0x80);
+    }
+}
+
+fn put_varint_field(out: &mut Vec<u8>, field: u64, v: u64) {
+    put_varint(out, field << 3);
+    put_varint(out, v);
+}
+
+fn put_bytes_field(out: &mut Vec<u8>, field: u64, b: &[u8]) {
+    put_varint(out, field << 3 | 2);
+    put_varint(out, b.len() as u64);
+    out.extend_from_slice(b);
+}
+
+
+/// Whether editing these settings would leave everything else intact: a no-op edit (removing a URL that isn't
+/// there) must keep every field but favourites byte for byte, and the favourites themselves unchanged.
+pub fn edit_round_trips(base64: &str) -> bool {
+    let engine = base64::engine::general_purpose::STANDARD;
+    let Some(edited) = edit_favorite_gifs(base64, "\u{0}swiftcord-no-such-gif", None) else { return false };
+    let (Ok(before), Ok(after)) = (engine.decode(base64), engine.decode(&edited)) else { return false };
+    let others = |b: &[u8]| -> Option<Vec<Vec<u8>>> {
+        Some(raw_fields(b).ok()?.into_iter().filter(|f| f.0 != FAVORITE_GIFS_FIELD).map(|f| f.1.to_vec()).collect())
+    };
+    let favs_before = read_favorite_gifs(base64).map(|mut v| {
+        v.sort_by(|a, b| a.url.cmp(&b.url));
+        v
+    });
+    let favs_after = read_favorite_gifs(&edited).map(|mut v| {
+        v.sort_by(|a, b| a.url.cmp(&b.url));
+        v
+    });
+    others(&before).is_some() && others(&before) == others(&after) && favs_before.is_some() && favs_before == favs_after
+}
+
+#[cfg(test)]
+mod favorite_tests {
+    use super::*;
+
+    fn gif(url: &str, order: u32) -> FavoriteGif {
+        FavoriteGif { url: url.into(), src: format!("{url}.mp4"), format: 2, width: 320, height: 240, order }
+    }
+
+    #[test]
+    fn adds_and_removes_while_keeping_other_fields() {
+        let engine = base64::engine::general_purpose::STANDARD;
+        // Field 1 (versions) and field 5 (favourite emoji) must survive untouched.
+        let mut original = Vec::new();
+        put_bytes_field(&mut original, 1, &[0x08, 0x07]);
+        put_bytes_field(&mut original, 5, b"emoji-data");
+        let b64 = engine.encode(&original);
+
+        let one = edit_favorite_gifs(&b64, "https://a", Some(&gif("https://a", 1))).unwrap();
+        let two = edit_favorite_gifs(&one, "https://b", Some(&gif("https://b", 2))).unwrap();
+        assert_eq!(read_favorite_gifs(&two).unwrap(), vec![gif("https://b", 2), gif("https://a", 1)]);
+
+        let back = edit_favorite_gifs(&two, "https://b", None).unwrap();
+        assert_eq!(read_favorite_gifs(&back).unwrap(), vec![gif("https://a", 1)]);
+
+        // The other fields are byte-for-byte the same, in order.
+        let bytes = engine.decode(&back).unwrap();
+        let others: Vec<Vec<u8>> = raw_fields(&bytes).unwrap().into_iter().filter(|f| f.0 != 2).map(|f| f.1.to_vec()).collect();
+        let orig: Vec<Vec<u8>> = raw_fields(&original).unwrap().into_iter().map(|f| f.1.to_vec()).collect();
+        assert_eq!(others, orig);
+        assert!(edit_round_trips(&two));
+        assert!(edit_round_trips(&b64));
+    }
+
+    #[test]
+    fn re_adding_replaces_rather_than_duplicates() {
+        let b64 = edit_favorite_gifs("", "https://a", Some(&gif("https://a", 1))).unwrap();
+        let b64 = edit_favorite_gifs(&b64, "https://a", Some(&gif("https://a", 5))).unwrap();
+        assert_eq!(read_favorite_gifs(&b64).unwrap(), vec![gif("https://a", 5)]);
+    }
+}

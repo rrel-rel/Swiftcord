@@ -38,6 +38,10 @@ pub enum AppEvent {
     /// GIF results for a search (an empty query is trending).
     Gifs { query: String, result: Result<Vec<swiftcord_core::rest::Gif>, String> },
     GifCategories(Result<Vec<String>, String>),
+    /// The frecency settings (favourite GIFs) as read or as saved.
+    Frecency(Result<String, String>),
+    /// Saving favourites failed; restore these settings.
+    FrecencyRejected { previous: Option<String>, error: String },
     Stream { generation: u64, event: swiftcord_voice::Event },
 }
 
@@ -63,6 +67,7 @@ pub enum Action {
     GifCategories,
     SendGif { channel: Snowflake, url: String },
     CloseGifPicker,
+    ToggleFavoriteGif(swiftcord_core::proto::FavoriteGif),
     OpenDm(Snowflake),
     ShowPins(Snowflake),
     Ack(Snowflake),
@@ -154,6 +159,8 @@ pub struct UiState {
     /// A pending member search (guild, query, when it changed, sent yet).
     pub member_query: Option<(Snowflake, String, Instant, bool)>,
     pub gif_picker: Option<ui::gif::GifPicker>,
+    /// Favourite GIFs, most recent first (from the synced frecency settings).
+    pub favorite_gifs: Vec<swiftcord_core::proto::FavoriteGif>,
     /// Players for GIF-style video clips on screen.
     pub clips: crate::clip::Clips,
 }
@@ -177,6 +184,8 @@ pub struct App {
     pub watch: Option<crate::stream_glue::Watch>,
     pub settings: crate::settings::Settings,
     history_failed: HashMap<Snowflake, Instant>,
+    /// The frecency settings as last read or written, so favourites can be edited without touching the rest.
+    frecency: Option<String>,
 }
 
 impl App {
@@ -200,6 +209,7 @@ impl App {
             watch: None,
             settings: crate::settings::Settings::load(),
             history_failed: HashMap::new(),
+            frecency: None,
         };
         match credentials::load_token() {
             Some(token) => app.start_session(token),
@@ -388,7 +398,7 @@ impl App {
             AppEvent::Voice { generation, event } => crate::voice_glue::on_event(self, generation, event),
             AppEvent::Stream { generation, event } => crate::stream_glue::on_event(self, generation, event),
             AppEvent::Gifs { query, result } => {
-                if let Some(p) = self.ui.gif_picker.as_mut().filter(|p| p.requested.as_deref() == Some(query.as_str())) {
+                if let Some(p) = self.ui.gif_picker.as_mut().filter(|p| p.requested() == Some(query.as_str())) {
                     match result {
                         Ok(gifs) => p.results = Some(gifs),
                         Err(e) => {
@@ -397,6 +407,16 @@ impl App {
                         }
                     }
                 }
+            }
+            AppEvent::Frecency(result) => match result {
+                Ok(b64) => self.set_frecency(b64),
+                Err(e) => tracing::warn!("couldn't load favourite GIFs: {e}"),
+            },
+            AppEvent::FrecencyRejected { previous, error } => {
+                if let Some(p) = previous {
+                    self.set_frecency(p);
+                }
+                self.banner(format!("Couldn't update favourites: {error}"));
             }
             AppEvent::GifCategories(result) => {
                 if let Some(p) = &mut self.ui.gif_picker {
@@ -469,6 +489,7 @@ impl App {
             let folders = rest.settings_proto().await.ok().and_then(|p| swiftcord_core::proto::read_guild_folders(&p));
             AppEvent::Folders(folders)
         });
+        self.load_frecency();
     }
 
     fn handle_notice(&mut self, notice: Notice) {
@@ -489,6 +510,7 @@ impl App {
                 platform::notify(format!("{caller} is calling you"), "Open Swiftcord to answer.".into());
             }
             Notice::RingStopped(_) => {}
+            Notice::FrecencyChanged => self.load_frecency(),
             Notice::OwnVoiceState | Notice::VoiceServer(_) | Notice::Other(..) => {
                 crate::voice_glue::on_notice(self, notice);
             }
@@ -524,6 +546,26 @@ impl App {
         self.rt.spawn(async move {
             let _ = rest.ack(channel, message).await;
         });
+    }
+
+    fn set_frecency(&mut self, b64: String) {
+        let favs = swiftcord_core::proto::read_favorite_gifs(&b64);
+        // Only allow editing if a no-op edit of these exact settings round-trips cleanly; otherwise saving
+        // could damage settings we don't understand.
+        let safe = favs.is_some() && swiftcord_core::proto::edit_round_trips(&b64);
+        if !safe {
+            tracing::warn!("favourite GIFs are read-only: the settings didn't round-trip");
+        }
+        if let Some(favs) = favs {
+            self.ui.favorite_gifs = favs;
+        }
+        self.frecency = safe.then_some(b64);
+    }
+
+    fn load_frecency(&self) {
+        let Some(s) = &self.session else { return };
+        let rest = s.rest.clone();
+        self.spawn(async move { AppEvent::Frecency(rest.frecency_settings().await.map_err(|e| e.to_string())) });
     }
 
     // MARK: Actions
@@ -718,6 +760,30 @@ impl App {
                 self.apply(Action::CloseGifPicker);
                 let reply = self.ui.drafts.entry(channel).or_default().reply.take();
                 self.post(channel, url, Vec::new(), reply);
+            }
+            Action::ToggleFavoriteGif(gif) => {
+                // Without the current settings we'd overwrite everything else in them, so don't try.
+                let Some(current) = self.frecency.clone() else {
+                    self.banner("Favourites haven't loaded yet.");
+                    return;
+                };
+                let exists = self.ui.favorite_gifs.iter().any(|g| g.url == gif.url);
+                let order = self.ui.favorite_gifs.iter().map(|g| g.order).max().unwrap_or(0) + 1;
+                let added = swiftcord_core::proto::FavoriteGif { order, ..gif.clone() };
+                let Some(updated) = swiftcord_core::proto::edit_favorite_gifs(&current, &gif.url, (!exists).then_some(&added)) else {
+                    self.banner("Couldn't read your favourites.");
+                    return;
+                };
+                // Show the change now; put it back if Discord refuses it.
+                self.set_frecency(updated.clone());
+                let Some(s) = &self.session else { return };
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    match rest.set_frecency_settings(&updated).await {
+                        Ok(saved) => AppEvent::Frecency(Ok(saved)),
+                        Err(e) => AppEvent::FrecencyRejected { previous: Some(current), error: e.to_string() },
+                    }
+                });
             }
             Action::CloseGifPicker => {
                 // Animated GIFs are heavy once decoded; let them go.

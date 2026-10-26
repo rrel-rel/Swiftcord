@@ -28,6 +28,8 @@ pub enum Notice {
     /// The current user's voice state changed (joined, moved, left, muted…).
     OwnVoiceState,
     VoiceServer(VoiceServerUpdate),
+    /// Favourite GIFs, stickers or emoji changed (possibly on another device).
+    FrecencyChanged,
     /// A DM call started ringing the current user.
     Ring(Snowflake),
     /// A DM call stopped ringing the current user (answered elsewhere, declined, or ended).
@@ -653,6 +655,8 @@ impl State {
                     if let Some(f) = crate::proto::read_guild_folders(&u.settings.proto) {
                         self.folders = Some(f);
                     }
+                } else if u.settings.kind == 2 {
+                    notices.push(Notice::FrecencyChanged);
                 }
             }
             Event::UserGuildSettingsUpdate(s) => {

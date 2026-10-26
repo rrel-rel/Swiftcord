@@ -54,6 +54,7 @@ pub mod icon {
     pub const FILE: &str = "\u{E8A5}";
     pub const SIGNAL: &str = "\u{E701}";
     pub const PHONE: &str = "\u{E717}";
+    pub const CHAT: &str = "\u{E8BD}";
 }
 
 pub fn icons() -> FontFamily {

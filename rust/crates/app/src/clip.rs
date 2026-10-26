@@ -46,11 +46,16 @@ impl Clips {
     /// clip can't play.
     pub fn show(&mut self, ui: &mut Ui, url: &str, still: Option<&str>, size: Vec2) -> Response {
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-        if !ui.is_rect_visible(rect) {
-            return response;
+        if ui.is_rect_visible(rect) {
+            self.paint(ui, rect, url, still);
         }
+        response
+    }
+
+    /// Paints a looping clip into `rect` (for layouts that place it themselves).
+    pub fn paint(&mut self, ui: &Ui, rect: egui::Rect, url: &str, still: Option<&str>) {
         if !self.players.contains_key(url) && self.players.len() < MAX_PLAYERS {
-            self.players.insert(url.to_owned(), self.start(ui.ctx(), url, size));
+            self.players.insert(url.to_owned(), self.start(ui.ctx(), url, rect.size()));
         }
         let mut drawn = false;
         if let Some(p) = self.players.get_mut(url) {
@@ -76,7 +81,6 @@ impl Clips {
                 }
             }
         }
-        response
     }
 
     /// Stops players for clips no longer on screen.
@@ -136,6 +140,14 @@ async fn download(url: &str) -> Option<Vec<u8>> {
         return None;
     }
     resp.bytes().await.ok().map(|b| b.to_vec())
+}
+
+/// The first frame of a video clip, for still previews (e.g. favourite GIFs, which are mostly MP4s).
+pub fn first_frame(bytes: &[u8], max_width: u32) -> Option<ColorImage> {
+    #[cfg(windows)]
+    return decode::first_frame(bytes, max_width).ok();
+    #[cfg(not(windows))]
+    return None;
 }
 
 #[cfg(windows)]
@@ -243,8 +255,7 @@ mod decode {
         }
     }
 
-    /// The first frame, for tests.
-    #[cfg(test)]
+    /// The first frame, for still previews.
     pub fn first_frame(bytes: &[u8], max_width: u32) -> windows::core::Result<ColorImage> {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);

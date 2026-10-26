@@ -45,7 +45,8 @@ fn row(ui: &mut Ui, selected: bool, height: f32, add: impl FnOnce(&mut Ui, bool)
     let width = ui.available_width() - 8.0;
     let (rect, r) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
     let rect = rect.translate(Vec2::new(4.0, 0.0));
-    let hovered = r.hovered();
+    // contains_pointer, not hovered: buttons inside the row would otherwise un-hover it and hide themselves.
+    let hovered = r.contains_pointer();
     if selected || hovered {
         ui.painter().rect_filled(rect, 4, if selected { theme::SELECTED } else { theme::HOVER });
     }
@@ -93,6 +94,7 @@ fn guild_channels(ui: &mut Ui, state: &State, uis: &mut UiState, guild: Snowflak
 fn channel_row(ui: &mut Ui, state: &State, c: &Channel, selected: bool, unread: bool, actions: &mut Vec<Action>) {
     let mentions = state.mention_count(c.id);
     let muted = state.is_channel_muted(c);
+    let mut open_chat = false;
     let r = row(ui, selected, 32.0, |ui, hovered| {
         let color = if selected || unread { theme::HEADER } else if hovered { theme::TEXT } else if muted { theme::FAINT } else { theme::MUTED };
         let glyph = match c.kind {
@@ -104,10 +106,16 @@ fn channel_row(ui: &mut Ui, state: &State, c: &Channel, selected: bool, unread: 
         ui.add_sized(Vec2::new(20.0, 24.0), egui::Label::new(glyph.color(theme::FAINT)).selectable(false));
         let font = if unread || selected { theme::font_semibold(15.0) } else { theme::font(15.0) };
         ui.add(egui::Label::new(RichText::new(c.label()).font(font).color(color)).truncate().selectable(false));
-        if mentions > 0 {
+        if mentions > 0 || (c.is_voice() && (hovered || selected)) {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(22.0, 16.0), Sense::hover());
-                widgets::badge(ui, rect.center(), mentions, Color32::TRANSPARENT);
+                // Voice channels have a text chat too; this opens it (clicking the row joins the call).
+                if c.is_voice() && (hovered || selected) && widgets::icon_button(ui, icon::CHAT, "Open Chat").clicked() {
+                    open_chat = true;
+                }
+                if mentions > 0 {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(22.0, 16.0), Sense::hover());
+                    widgets::badge(ui, rect.center(), mentions, Color32::TRANSPARENT);
+                }
             });
         }
     });
@@ -117,7 +125,9 @@ fn channel_row(ui: &mut Ui, state: &State, c: &Channel, selected: bool, unread: 
         ui.painter().rect_filled(egui::Rect::from_min_size(egui::pos2(x - 4.0, y - 4.0), Vec2::new(8.0, 8.0)), 4, theme::HEADER);
     }
     let r = r.on_hover_text(c.topic.clone().unwrap_or_default());
-    if r.clicked() {
+    if open_chat {
+        actions.push(Action::SelectChannel(c.id));
+    } else if r.clicked() {
         if c.is_voice() {
             actions.push(Action::JoinVoice { guild: c.guild_id, channel: c.id });
         } else {

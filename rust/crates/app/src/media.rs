@@ -84,7 +84,14 @@ fn mime_from_bytes(b: &[u8]) -> Option<String> {
 pub const STILL: &str = "still+";
 
 fn first_frame_png(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
+    // MP4 clips (an "ftyp" box first) go through the video decoder; everything else through the image crate.
+    let img = if bytes.get(4..8) == Some(b"ftyp") {
+        let frame = crate::clip::first_frame(bytes, 320).ok_or("undecodable video")?;
+        let rgba: Vec<u8> = frame.pixels.iter().flat_map(|c| c.to_array()).collect();
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(frame.size[0] as u32, frame.size[1] as u32, rgba).ok_or("bad frame")?)
+    } else {
+        image::load_from_memory(bytes).map_err(|e| e.to_string())?
+    };
     // Previews are small on screen; cap their size too.
     let img = if img.width() > 320 { img.thumbnail(320, 320) } else { img };
     let mut out = std::io::Cursor::new(Vec::new());

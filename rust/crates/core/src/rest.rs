@@ -257,6 +257,25 @@ impl Rest {
         Ok(self.json::<S>(Method::GET, "users/@me/settings-proto/1", Body::None).await?.settings)
     }
 
+    /// The frecency settings (favourite GIFs, stickers and emoji), base64-encoded protobuf.
+    pub async fn frecency_settings(&self) -> Result<String> {
+        #[derive(Deserialize)]
+        struct S {
+            settings: String,
+        }
+        Ok(self.json::<S>(Method::GET, "users/@me/settings-proto/2", Body::None).await?.settings)
+    }
+
+    /// Replaces the frecency settings; returns what Discord stored.
+    pub async fn set_frecency_settings(&self, settings: &str) -> Result<String> {
+        #[derive(Deserialize)]
+        struct S {
+            settings: String,
+        }
+        let body = Body::Json(json!({ "settings": settings }));
+        Ok(self.json::<S>(Method::PATCH, "users/@me/settings-proto/2", body).await?.settings)
+    }
+
     // MARK: Messages
 
     /// Up to `limit` (1–100) messages, newest first.
@@ -404,6 +423,8 @@ impl Rest {
 #[serde(default)]
 pub struct Gif {
     pub url: String,
+    /// The video (MP4), when requested with media_format=mp4.
+    pub src: String,
     pub title: String,
     /// The animated GIF.
     pub gif_src: String,
