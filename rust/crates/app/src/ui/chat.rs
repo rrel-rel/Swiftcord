@@ -68,7 +68,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
     let perms = state.permissions(channel.id);
 
     let in_call = uis.voice.as_ref().is_some_and(|v| v.channel == channel.id);
-    header(ui, s, channel, in_call, actions);
+    header(ui, s, channel, in_call, &mut uis.search_box, actions);
     if channel.is_private() {
         crate::ui::call::panel(ui, s, uis, channel, actions);
     }
@@ -91,8 +91,13 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
         composer(ui, s, uis, catalog, channel, perms, actions);
     });
 
+    let searching = uis.search.as_ref().is_some_and(|q| q.applies_to(channel.id, channel.guild_id));
     let pins = uis.pins.as_ref().filter(|(c, _)| *c == channel.id).map(|(_, p)| p.clone());
-    if let Some(pins) = pins {
+    if searching {
+        egui::Panel::right("search").exact_size(400.0).frame(egui::Frame::new().fill(theme::SIDEBAR).inner_margin(8)).show(ui, |ui| {
+            crate::ui::search::panel(ui, s, uis, actions);
+        });
+    } else if let Some(pins) = pins {
         egui::Panel::right(("pins", channel.id)).exact_size(380.0).frame(egui::Frame::new().fill(theme::SIDEBAR).inner_margin(8)).show(ui, |ui| {
             pins_panel(ui, s, uis, channel, pins.as_deref(), actions);
         });
@@ -111,7 +116,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
     });
 }
 
-fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, actions: &mut Vec<Action>) {
+fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut String, actions: &mut Vec<Action>) {
     egui::Panel::top(("chat-header", c.id)).frame(egui::Frame::new().fill(theme::CHAT).inner_margin(egui::Margin::symmetric(16, 0))).show(ui, |ui| {
         ui.set_height(48.0);
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -151,6 +156,7 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, actions: &mut Ve
                 ui.add(egui::Label::new(RichText::new(first_line).size(13.5).color(theme::MUTED)).truncate()).on_hover_text(topic);
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                search_field(ui, c, search_box, actions);
                 if c.guild_id.is_some() && widgets::icon_button(ui, icon::PEOPLE, "Member List").clicked() {
                     actions.push(Action::ToggleMemberList);
                 }
@@ -651,6 +657,26 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
     }
 }
 
+/// The header's search box: Enter searches the whole server (or this DM); filters like `from:` and `in:`
+/// narrow it.
+fn search_field(ui: &mut Ui, c: &Channel, text: &mut String, actions: &mut Vec<Action>) {
+    egui::Frame::new().fill(theme::RAIL).corner_radius(4).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(icon::SEARCH).font(theme::icon_font(12.0)).color(theme::MUTED));
+            let hint = if c.guild_id.is_some() { "Search" } else { "Search this chat" };
+            let r = ui.add(egui::TextEdit::singleline(text).hint_text(hint).frame(egui::Frame::NONE).desired_width(170.0));
+            let r = r.on_hover_text("Search messages. Filters: from:name, in:channel, has:image, mentions:name, before:2024-01-31, after:, during:");
+            if r.lost_focus() {
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {
+                    actions.push(Action::Search { channel: c.id, text: text.trim().to_owned() });
+                } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    text.clear();
+                }
+            }
+        });
+    });
+}
+
 /// The composer's sticker button: a rounded square with a peeled corner (there's no sticker icon in the font).
 fn sticker_button(ui: &mut Ui) -> egui::Response {
     let (rect, r) = ui.allocate_exact_size(Vec2::new(32.0, 28.0), Sense::click());
@@ -709,15 +735,8 @@ fn pins_panel(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, pins: Op
             });
             // "Jump" in the corner while hovered, as in Discord.
             let rect = r.response.rect;
-            if ui.rect_contains_pointer(rect) {
-                // Painted over the message rather than laid out, so it doesn't push the next one down.
-                let b = egui::Rect::from_min_size(rect.right_top() + Vec2::new(-56.0, 6.0), Vec2::new(48.0, 22.0));
-                let br = ui.interact(b, egui::Id::unique(("pin-jump", m.id)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-                ui.painter().rect_filled(b, 4, if br.hovered() { theme::SELECTED } else { theme::SIDEBAR });
-                ui.painter().text(b.center(), egui::Align2::CENTER_CENTER, "Jump", theme::font(12.0), theme::HEADER);
-                if br.clicked() {
-                    jump = Some(m.id);
-                }
+            if widgets::jump_button(ui, rect, ("pin-jump", m.id)) {
+                jump = Some(m.id);
             }
             ui.add_space(6.0);
         }

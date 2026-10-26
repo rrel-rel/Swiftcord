@@ -5,6 +5,19 @@ use swiftcord_core::models::{PresenceStatus, User};
 
 use crate::theme;
 
+/// A "Jump" button in the top-right corner of `rect` (a message in a side panel) while it's hovered. It's
+/// painted over the message rather than laid out, so it doesn't push the next one down. True when clicked.
+pub fn jump_button(ui: &Ui, rect: egui::Rect, id: impl std::hash::Hash + std::fmt::Debug) -> bool {
+    if !ui.rect_contains_pointer(rect) {
+        return false;
+    }
+    let b = egui::Rect::from_min_size(rect.right_top() + Vec2::new(-56.0, 6.0), Vec2::new(48.0, 22.0));
+    let r = ui.interact(b, egui::Id::unique(id), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+    ui.painter().rect_filled(b, 4, if r.hovered() { theme::SELECTED } else { theme::SIDEBAR });
+    ui.painter().text(b.center(), egui::Align2::CENTER_CENTER, "Jump", theme::font(12.0), theme::HEADER);
+    r.clicked()
+}
+
 pub fn avatar(ui: &mut Ui, url: &str, size: f32) -> Response {
     ui.add(
         egui::Image::from_uri(url.to_owned())

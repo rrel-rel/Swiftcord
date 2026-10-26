@@ -11,6 +11,7 @@ pub mod permissions;
 pub mod proto;
 pub mod remote_auth;
 pub mod rest;
+pub mod search;
 mod snowflake;
 pub mod state;
 

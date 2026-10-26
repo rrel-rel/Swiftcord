@@ -8,6 +8,7 @@ pub mod markdown;
 pub mod members;
 pub mod message;
 pub mod rail;
+pub mod search;
 pub mod shell;
 pub mod stream;
 pub mod suggest;

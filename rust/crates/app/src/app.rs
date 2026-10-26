@@ -40,6 +40,7 @@ pub enum AppEvent {
     GifCategories(Result<Vec<String>, String>),
     StickerPacks(Result<Vec<swiftcord_core::models::StickerPack>, String>),
     StreamPreview { key: String, result: Result<Option<String>, String> },
+    SearchResults { generation: u64, result: Result<swiftcord_core::rest::SearchResult, String> },
     /// The frecency settings (favourite GIFs) as read or as saved.
     Frecency(Result<String, String>),
     /// Saving favourites failed; restore these settings.
@@ -108,6 +109,10 @@ pub enum Action {
     WatchStream { guild: Option<Snowflake>, channel: Snowflake, user: Snowflake },
     /// Fetch a Go Live stream's preview picture (by stream key).
     LoadStreamPreview(String),
+    /// Search messages (the whole server, or the DM) from this channel.
+    Search { channel: Snowflake, text: String },
+    SearchMore,
+    CloseSearch,
     StopWatching,
     OpenSharePicker,
     CloseSharePicker,
@@ -215,6 +220,9 @@ pub struct UiState {
     /// Go Live preview pictures by stream key: when fetched, and the picture (`None` while loading, then
     /// `Some(None)` if there isn't one).
     pub stream_previews: HashMap<String, (Instant, Option<Option<String>>)>,
+    /// The open message search, and what's typed in the header's search box.
+    pub search: Option<crate::search_glue::Search>,
+    pub search_box: String,
     /// Favourite GIFs, most recent first (from the synced frecency settings).
     pub favorite_gifs: Vec<swiftcord_core::proto::FavoriteGif>,
     /// Players for GIF-style video clips on screen.
@@ -492,6 +500,7 @@ impl App {
                 }
                 self.banner(format!("Couldn't update favourites: {error}"));
             }
+            AppEvent::SearchResults { generation, result } => crate::search_glue::on_results(self, generation, result),
             AppEvent::StreamPreview { key, result } => {
                 let url = result.unwrap_or_else(|e| {
                     tracing::debug!("stream preview for {key}: {e}");
@@ -542,6 +551,7 @@ impl App {
             }
             GatewayOutput::Event(event) => {
                 let is_ready = matches!(event, swiftcord_core::events::Event::Ready(_));
+                let members_chunk = matches!(event, swiftcord_core::events::Event::GuildMembersChunk(_));
                 // A message pinned or unpinned in the channel whose pins are open: load them again.
                 let pins_changed = match (&event, &self.ui.pins) {
                     (swiftcord_core::events::Event::MessageUpdate(u), Some((c, Some(list)))) if u.channel_id == *c => {
@@ -558,6 +568,9 @@ impl App {
                 }
                 for n in notices {
                     self.handle_notice(n);
+                }
+                if members_chunk {
+                    crate::search_glue::members_arrived(self);
                 }
                 if let (true, Some(c)) = (pins_changed, self.ui.pins.as_ref().map(|p| p.0)) {
                     self.ui.pins = None;
@@ -1080,6 +1093,7 @@ impl App {
             Action::CreateThread => crate::threads_glue::create(self),
             Action::SetThreadJoined(thread, joined) => crate::threads_glue::set_joined(self, thread, joined),
             Action::ShowPins(channel) => {
+                self.ui.search = None;
                 if matches!(self.ui.pins, Some((c, _)) if c == channel) {
                     self.ui.pins = None;
                     return;
@@ -1110,6 +1124,9 @@ impl App {
             }
             Action::LeaveVoice => crate::voice_glue::leave(self),
             Action::WatchStream { guild, channel, user } => crate::stream_glue::watch(self, guild, channel, user),
+            Action::Search { channel, text } => crate::search_glue::start(self, channel, text),
+            Action::SearchMore => crate::search_glue::more(self),
+            Action::CloseSearch => self.ui.search = None,
             Action::LoadStreamPreview(key) => {
                 let Some(s) = &self.session else { return };
                 self.ui.stream_previews.insert(key.clone(), (Instant::now(), None));
@@ -1249,6 +1266,7 @@ impl eframe::App for App {
         self.ui.clips.tick();
         self.ui.videos.tick();
         self.ui.stickers.tick();
+        crate::search_glue::tick(self);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

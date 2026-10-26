@@ -1044,6 +1044,10 @@ impl State {
             return;
         }
         self.users.insert(m.author.id, m.author.clone());
+        // People it mentions, so the mentions show names (without replacing fresher copies).
+        for u in &m.mentions {
+            self.users.entry(u.id).or_insert_with(|| u.clone());
+        }
         if let (Some(g), Some(member)) = (m.guild_id, &m.member) {
             let mut member = member.clone();
             member.user.get_or_insert_with(|| m.author.clone());

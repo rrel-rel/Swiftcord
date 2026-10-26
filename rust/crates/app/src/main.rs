@@ -9,6 +9,7 @@ mod lottie;
 mod stickers;
 mod media;
 mod settings;
+mod search_glue;
 mod share_glue;
 mod threads_glue;
 mod stream_glue;

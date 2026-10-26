@@ -53,6 +53,7 @@ pub mod icon {
     pub const DOWNLOAD: &str = "\u{E896}";
     pub const PLAY: &str = "\u{E768}";
     pub const PAUSE: &str = "\u{E769}";
+    pub const SEARCH: &str = "\u{E721}";
     pub const VOLUME: &str = "\u{E767}";
     pub const MUTED: &str = "\u{E74F}";
     pub const FULL_SCREEN: &str = "\u{E740}";

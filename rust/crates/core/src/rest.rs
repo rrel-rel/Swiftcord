@@ -369,6 +369,37 @@ impl Rest {
     }
 
     /// A channel or thread we haven't been sent (e.g. an archived thread someone linked).
+    /// Searches a server's messages (or, without `guild`, one DM's), with Discord's search parameters
+    /// (`content`, `author_id`, `channel_id`, `has`, `mentions`, `min_id`, `max_id`, `offset`), newest first.
+    /// A server not yet indexed for search answers `Indexing` with how long to wait.
+    pub async fn search_messages(&self, guild: Option<Snowflake>, channel: Snowflake, params: &[(&str, String)]) -> Result<SearchResult> {
+        let base = match guild {
+            Some(g) => format!("guilds/{g}/messages/search"),
+            None => format!("channels/{channel}/messages/search"),
+        };
+        let mut query: Vec<String> = params.iter().map(|(k, v)| format!("{k}={}", percent_encode(v))).collect();
+        query.extend(["sort_by=timestamp".into(), "sort_order=desc".into(), "include_nsfw=true".into()]);
+        let raw: serde_json::Value = self.json(Method::GET, &format!("{base}?{}", query.join("&")), Body::None).await?;
+        if raw.get("messages").is_none() {
+            let wait = raw.get("retry_after").and_then(|v| v.as_f64()).unwrap_or(2.0);
+            return Ok(SearchResult::Indexing { retry_after: wait });
+        }
+        #[derive(Deserialize)]
+        struct Page {
+            #[serde(default)]
+            total_results: u64,
+            #[serde(default)]
+            messages: Vec<Vec<serde_json::Value>>,
+            #[serde(default)]
+            threads: Vec<Channel>,
+        }
+        let page: Page = serde_json::from_value(raw)?;
+        // Each hit comes as a list holding the message (older APIs added context around it); unreadable ones are
+        // skipped rather than failing the page.
+        let messages = page.messages.into_iter().filter_map(|hit| hit.into_iter().next()).filter_map(|m| serde_json::from_value(m).ok()).collect();
+        Ok(SearchResult::Page { total: page.total_results, messages, threads: page.threads })
+    }
+
     /// The latest preview picture of a Go Live stream, if its streamer has sent one.
     pub async fn stream_preview(&self, stream_key: &str) -> Result<Option<String>> {
         #[derive(Deserialize)]
@@ -494,6 +525,26 @@ impl Rest {
     }
 }
 
+/// A page of message search results.
+#[derive(Debug, Clone)]
+pub enum SearchResult {
+    Page { total: u64, messages: Vec<Message>, threads: Vec<Channel> },
+    /// Discord is still indexing the server for search; try again after this many seconds.
+    Indexing { retry_after: f64 },
+}
+
+/// Percent-encodes a query string value.
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 /// A page of thread search results.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -558,6 +609,12 @@ mod tests {
             "PUT channels/123456789012345678/messages/{id}/reactions/{emoji}/@me"
         );
         assert_eq!(route_key(&Method::GET, "users/123456789012345678/profile"), "GET users/{id}/profile");
+    }
+
+    #[test]
+    fn percent_encodes_search_text() {
+        assert_eq!(percent_encode("hi there & ok"), "hi%20there%20%26%20ok");
+        assert_eq!(percent_encode("日本"), "%E6%97%A5%E6%9C%AC");
     }
 
     #[test]
