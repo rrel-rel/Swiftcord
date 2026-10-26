@@ -104,13 +104,15 @@ pub struct Presence {
 }
 
 /// A game, a song, a custom status…
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Activity {
     #[serde(rename = "type")]
     pub kind: u8,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub emoji: Option<Emoji>,
 }
 

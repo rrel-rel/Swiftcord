@@ -72,6 +72,8 @@ pub enum Action {
     OpenDm(Snowflake),
     ShowPins(Snowflake),
     ToggleMemberList,
+    /// Online, idle, do not disturb or invisible (`Offline`).
+    SetStatus(swiftcord_core::models::PresenceStatus),
     /// The member list beside `channel` shows rows `first..=last`; subscribes to the blocks covering them.
     MemberListRange { guild: Snowflake, channel: Snowflake, first: usize, last: usize },
     Ack(Snowflake),
@@ -519,12 +521,14 @@ impl App {
         let focused = self.ctx.input(|i| i.viewport().focused.unwrap_or(true));
         let current = self.ui.channel();
         let Some(s) = &mut self.session else { return };
+        // Do not disturb silences desktop notifications, as in Discord.
+        let dnd = s.state.own_status() == swiftcord_core::models::PresenceStatus::Dnd;
         match notice {
             Notice::MessageCreated { message, notify } => {
                 let _ = s;
                 if current == Some(message.channel_id) && focused {
                     self.queue_ack(message.channel_id, message.id);
-                } else if notify && self.settings.notifications {
+                } else if notify && self.settings.notifications && !dnd {
                     self.toast(&message);
                 }
             }
@@ -918,6 +922,19 @@ impl App {
                     match rest.create_dm(user).await {
                         Ok(c) => AppEvent::DmOpened(c),
                         Err(e) => AppEvent::Error(format!("Couldn't open DM: {e}")),
+                    }
+                });
+            }
+            Action::SetStatus(status) => {
+                let Some(s) = &mut self.session else { return };
+                // The gateway update shows it right away; the settings write keeps it across sessions and devices.
+                s.gateway.update_presence(status, s.state.own_custom_status());
+                s.state.set_own_status(status);
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    match rest.set_status(status).await {
+                        Ok(()) => AppEvent::Error(String::new()),
+                        Err(e) => AppEvent::Error(format!("Couldn't save your status: {e}")),
                     }
                 });
             }

@@ -257,6 +257,13 @@ impl Rest {
         Ok(self.json::<S>(Method::GET, "users/@me/settings-proto/1", Body::None).await?.settings)
     }
 
+    /// Saves our status (online, idle, dnd or invisible) to the account. Discord merges partial settings, so
+    /// only the status is sent.
+    pub async fn set_status(&self, status: PresenceStatus) -> Result<()> {
+        let body = Body::Json(json!({ "settings": crate::proto::status_settings(status.as_str()) }));
+        self.json::<serde_json::Value>(Method::PATCH, "users/@me/settings-proto/1", body).await.map(drop)
+    }
+
     /// The frecency settings (favourite GIFs, stickers and emoji), base64-encoded protobuf.
     pub async fn frecency_settings(&self) -> Result<String> {
         #[derive(Deserialize)]

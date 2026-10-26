@@ -1,7 +1,7 @@
 //! The channel sidebar: a guild's channel tree or the DM list, then voice status and the user panel.
 
 use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Ui, Vec2};
-use swiftcord_core::models::{Channel, ChannelType};
+use swiftcord_core::models::{Channel, ChannelType, PresenceStatus};
 use swiftcord_core::state::State;
 use swiftcord_core::Snowflake;
 
@@ -233,12 +233,46 @@ fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Acti
     }
 }
 
+const STATUSES: [(PresenceStatus, &str, Option<&str>); 4] = [
+    (PresenceStatus::Online, "Online", None),
+    (PresenceStatus::Idle, "Idle", None),
+    (PresenceStatus::Dnd, "Do Not Disturb", Some("You will not receive desktop notifications")),
+    (PresenceStatus::Offline, "Invisible", Some("You will appear offline, but have full access")),
+];
+
+/// Choosing our status, from the avatar in the user panel.
+fn status_menu(ui: &mut Ui, actions: &mut Vec<Action>) {
+    let bg = ui.visuals().window_fill;
+    for (status, label, detail) in STATUSES {
+        let height = if detail.is_some() { 40.0 } else { 30.0 };
+        let (rect, r) = ui.allocate_exact_size(Vec2::new(290.0, height), Sense::click());
+        let fill = if r.hovered() { theme::BLURPLE } else { bg };
+        if r.hovered() {
+            ui.painter().rect_filled(rect, 3, fill);
+        }
+        let top = rect.top() + 15.0;
+        widgets::status_dot(ui.painter(), egui::pos2(rect.left() + 14.0, top), 5.0, status, fill);
+        let text = if r.hovered() { Color32::WHITE } else { theme::TEXT };
+        ui.painter().text(egui::pos2(rect.left() + 30.0, top), egui::Align2::LEFT_CENTER, label, theme::font_semibold(14.0), text);
+        if let Some(d) = detail {
+            let muted = if r.hovered() { Color32::WHITE } else { theme::MUTED };
+            ui.painter().text(egui::pos2(rect.left() + 30.0, top + 16.0), egui::Align2::LEFT_CENTER, d, theme::font(12.0), muted);
+        }
+        if r.clicked() {
+            actions.push(Action::SetStatus(status));
+            ui.close();
+        }
+    }
+}
+
 fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Action>) {
     let Some(me) = &state.me else { return };
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        widgets::avatar_with_status(ui, me, 32.0, state.presence(me.id), Color32::from_rgb(0x23, 0x24, 0x28));
+        let avatar = widgets::avatar_with_status(ui, me, 32.0, state.own_status(), Color32::from_rgb(0x23, 0x24, 0x28));
+        egui::Popup::menu(&avatar).show(|ui| status_menu(ui, actions));
+        avatar.on_hover_text("Set Status");
         ui.vertical(|ui| {
             ui.set_max_width(ui.available_width() - 100.0);
             ui.add(egui::Label::new(RichText::new(me.display_name()).font(theme::font_semibold(14.0)).color(theme::HEADER)).truncate());

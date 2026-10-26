@@ -136,6 +136,13 @@ mod tests {
     }
 
     #[test]
+    fn encodes_status_settings() {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(status_settings("dnd")).unwrap();
+        // Field 11 { field 1 { field 1: "dnd" } }.
+        assert_eq!(bytes, [0x5a, 7, 0x0a, 5, 0x0a, 3, b'd', b'n', b'd']);
+    }
+
+    #[test]
     fn reads_folders() {
         // Folder with two guilds, id 7 and name "Games".
         let mut ids = Vec::new();
@@ -259,6 +266,19 @@ pub fn edit_favorite_gifs(base64: &str, url: &str, add: Option<&FavoriteGif>) ->
     }
     put_bytes_field(&mut out, FAVORITE_GIFS_FIELD, &favs);
     Some(engine.encode(out))
+}
+
+const STATUS_FIELD: u64 = 11;
+
+/// User settings holding only a status (`status { status: StringValue }`), base64-encoded, for a partial update.
+pub fn status_settings(status: &str) -> String {
+    let mut value = Vec::new();
+    put_bytes_field(&mut value, 1, status.as_bytes());
+    let mut settings = Vec::new();
+    put_bytes_field(&mut settings, 1, &value);
+    let mut out = Vec::new();
+    put_bytes_field(&mut out, STATUS_FIELD, &settings);
+    base64::engine::general_purpose::STANDARD.encode(out)
 }
 
 /// Top-level fields as (field number, the whole record's bytes, the value's bytes).

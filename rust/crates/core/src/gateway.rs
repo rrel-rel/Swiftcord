@@ -15,7 +15,7 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use crate::events::Event;
+use crate::events::{Activity, Event};
 use crate::models::PresenceStatus;
 use crate::Snowflake;
 
@@ -160,8 +160,10 @@ impl Gateway {
         self.send(op::STREAM_SET_PAUSED, json!({ "stream_key": stream_key, "paused": paused }));
     }
 
-    pub fn update_presence(&self, status: PresenceStatus) {
-        self.send(op::PRESENCE_UPDATE, json!({ "status": status.as_str(), "since": 0, "activities": [], "afk": false }));
+    /// Sets this session's status (`Offline` means invisible). `activities` replace the session's own, so pass
+    /// the custom status along to keep it.
+    pub fn update_presence(&self, status: PresenceStatus, activities: &[Activity]) {
+        self.send(op::PRESENCE_UPDATE, json!({ "status": status.as_str(), "since": 0, "activities": activities, "afk": false }));
     }
 }
 

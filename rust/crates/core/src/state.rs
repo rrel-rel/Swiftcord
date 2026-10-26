@@ -129,6 +129,8 @@ pub struct State {
     presences: HashMap<Snowflake, PresenceStatus>,
     /// What people are doing ("Playing X", custom statuses), for those who are doing something.
     activities: HashMap<Snowflake, String>,
+    /// Our custom status, to send back when our status changes (presence updates replace activities).
+    own_custom_status: Vec<Activity>,
     /// The member list of the channel being viewed, by guild.
     member_lists: HashMap<Snowflake, MemberList>,
     /// Notification settings by guild; DM settings are under `Snowflake::NONE`.
@@ -851,7 +853,24 @@ impl State {
         let Some(me) = self.me.as_ref().map(|m| m.id) else { return };
         if let Some(s) = sessions.iter().find(|s| s.session_id == "all").or(sessions.first()) {
             self.set_presence(me, &s.status, &s.activities);
+            self.own_custom_status = s.activities.iter().filter(|a| a.kind == Activity::CUSTOM).cloned().collect();
         }
+    }
+
+    /// Shows a status we just picked before Discord confirms it with SESSIONS_REPLACE.
+    pub fn set_own_status(&mut self, status: PresenceStatus) {
+        if let Some(me) = self.me.as_ref().map(|m| m.id) {
+            self.presences.insert(me, status);
+        }
+    }
+
+    pub fn own_custom_status(&self) -> &[Activity] {
+        &self.own_custom_status
+    }
+
+    /// Our status: `Offline` when invisible.
+    pub fn own_status(&self) -> PresenceStatus {
+        self.me.as_ref().map_or(PresenceStatus::Offline, |m| self.presence(m.id))
     }
 
     fn on_member_list(&mut self, u: MemberListUpdate) {
@@ -1164,6 +1183,12 @@ mod tests {
         ));
         assert_eq!(s.presence(Snowflake(1)), PresenceStatus::Idle);
         assert_eq!(s.activity(Snowflake(1)), Some("☕ brb"));
+        // Kept to send back with status changes; the emoji survives the round trip.
+        let sent = serde_json::to_value(s.own_custom_status()).unwrap();
+        assert_eq!(sent[0]["state"], "brb");
+        assert_eq!(sent[0]["emoji"]["name"], "☕");
+        s.set_own_status(PresenceStatus::Dnd);
+        assert_eq!(s.own_status(), PresenceStatus::Dnd);
     }
 
     #[test]
