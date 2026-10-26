@@ -223,8 +223,9 @@ fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel, actions
             ui.add(egui::Label::new(RichText::new(name).size(14.0).color(theme::MUTED)).truncate().selectable(false));
             if vs.self_stream {
                 let mine = state.me.as_ref().is_some_and(|m| m.id == vs.user_id);
-                let live = ui.add(egui::Label::new(RichText::new(" LIVE ").font(theme::font_bold(10.0)).color(Color32::WHITE).background_color(theme::RED)).sense(Sense::click()));
-                if !mine && live.on_hover_text("Watch stream").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                let key = crate::stream_glue::stream_key(c.guild_id, c.id, vs.user_id);
+                let live = crate::ui::stream::live_badge(ui, uis, key, " LIVE ", 10.0, if mine { "" } else { "Click to watch" }, actions);
+                if !mine && live.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     actions.push(Action::WatchStream { guild: c.guild_id, channel: c.id, user: vs.user_id });
                 }
             }

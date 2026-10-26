@@ -20,6 +20,8 @@ pub struct Sharing {
     server: Option<(String, String)>,
     voice: Option<Voice>,
     generation: u64,
+    /// When we last sent Discord a preview picture of the stream.
+    preview_sent: Option<std::time::Instant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,7 +108,7 @@ pub fn start(app: &mut App) {
         s.gateway.create_stream(guild, channel);
         s.gateway.set_stream_paused(&key, false);
     }
-    app.sharing = Some(Sharing { key, channel, share, rtc_server_id: None, server: None, voice: None, generation: 0 });
+    app.sharing = Some(Sharing { key, channel, share, rtc_server_id: None, server: None, voice: None, generation: 0, preview_sent: None });
     app.ui.share = Some(ShareView { status: ShareStatus::Starting, label: source.label, preview: None, stats: None });
 }
 
@@ -186,6 +188,7 @@ pub fn on_event(app: &mut App, generation: u64, event: Event) {
     match event {
         Event::VideoFrame => {
             let Some(p) = sh.voice.as_ref().and_then(|v| v.take_picture()) else { return };
+            send_preview(app, &p);
             let image = ColorImage::from_rgba_unmultiplied([p.width, p.height], &p.rgba);
             let ctx = app.ctx().clone();
             let Some(view) = &mut app.ui.share else { return };
@@ -207,6 +210,40 @@ pub fn on_event(app: &mut App, generation: u64, event: Event) {
             app.banner(format!("Stopped streaming: {reason}"));
         }
     }
+}
+
+/// Discord's client refreshes its stream's preview this often.
+const PREVIEW_EVERY: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Sends a preview picture of our stream (shown when people hover it in the channel list): once it's live,
+/// then every few minutes.
+fn send_preview(app: &mut App, p: &swiftcord_voice::video::Picture) {
+    let live = app.ui.share.as_ref().is_some_and(|v| v.status == ShareStatus::Live);
+    let Some(sh) = &mut app.sharing else { return };
+    if !live || sh.preview_sent.is_some_and(|t| t.elapsed() < PREVIEW_EVERY) {
+        return;
+    }
+    sh.preview_sent = Some(std::time::Instant::now());
+    let key = sh.key.clone();
+    let Some(rgba) = image::RgbaImage::from_raw(p.width as u32, p.height as u32, p.rgba.clone()) else { return };
+    let Some(s) = &app.session else { return };
+    let rest = s.rest.clone();
+    app.spawn(async move {
+        let jpeg = tokio::task::spawn_blocking(move || {
+            let small = image::DynamicImage::ImageRgba8(rgba).thumbnail(512, 288).to_rgb8();
+            let mut out = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 75).encode_image(&small).ok().map(|()| out)
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some(jpeg) = jpeg {
+            if let Err(e) = rest.upload_stream_preview(&key, &jpeg).await {
+                tracing::warn!("stream preview upload failed: {e}");
+            }
+        }
+        AppEvent::Error(String::new())
+    });
 }
 
 pub fn tick(app: &mut App) {

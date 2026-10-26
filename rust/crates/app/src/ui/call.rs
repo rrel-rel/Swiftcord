@@ -105,7 +105,8 @@ fn participant(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, u: &U
                 ui.label(RichText::new("Ringing…").small().color(theme::MUTED));
             }
             if vs.is_some_and(|v| v.self_stream) && s.state.me.as_ref().is_some_and(|m| m.id != u.id) {
-                let live = ui.add(egui::Label::new(RichText::new(" LIVE · Watch ").font(theme::font_bold(10.5)).color(Color32::WHITE).background_color(theme::RED)).sense(Sense::click()));
+                let key = crate::stream_glue::stream_key(None, channel.id, u.id);
+                let live = crate::ui::stream::live_badge(ui, uis, key, " LIVE · Watch ", 10.5, "Click to watch", actions);
                 if live.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     actions.push(Action::WatchStream { guild: None, channel: channel.id, user: u.id });
                 }

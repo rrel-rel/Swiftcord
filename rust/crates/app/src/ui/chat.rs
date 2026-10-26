@@ -61,7 +61,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
     let state = &s.state;
     let Some(channel) = uis.channel().and_then(|c| state.channel(c)) else {
         ui.centered_and_justified(|ui| {
-            ui.label(RichText::new(if s.ready { "No channel selected" } else { "Connectingâ€¦" }).color(theme::MUTED));
+            ui.label(RichText::new(if s.ready { "No channel selected" } else { "Connecting…" }).color(theme::MUTED));
         });
         return;
     };
@@ -407,15 +407,15 @@ fn typing_line(ui: &mut Ui, s: &Session, c: &Channel) {
     let users = s.state.typing_users(c.id);
     let text = match users.len() {
         0 => String::new(),
-        1 => format!("{} is typingâ€¦", s.state.display_name(users[0], c.guild_id)),
-        2 => format!("{} and {} are typingâ€¦", s.state.display_name(users[0], c.guild_id), s.state.display_name(users[1], c.guild_id)),
+        1 => format!("{} is typing…", s.state.display_name(users[0], c.guild_id)),
+        2 => format!("{} and {} are typing…", s.state.display_name(users[0], c.guild_id), s.state.display_name(users[1], c.guild_id)),
         3 => format!(
-            "{}, {} and {} are typingâ€¦",
+            "{}, {} and {} are typing…",
             s.state.display_name(users[0], c.guild_id),
             s.state.display_name(users[1], c.guild_id),
             s.state.display_name(users[2], c.guild_id)
         ),
-        _ => "Several people are typingâ€¦".to_owned(),
+        _ => "Several people are typing…".to_owned(),
     };
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
     if !text.is_empty() {
@@ -693,17 +693,36 @@ fn pins_panel(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, pins: Op
         return;
     };
     if pins.is_empty() {
-        ui.label(RichText::new("This channel doesn't have any pinned messagesâ€¦ yet.").color(theme::MUTED));
+        ui.label(RichText::new("This channel doesn't have any pinned messages… yet.").color(theme::MUTED));
         return;
     }
     let perms = s.state.permissions(c.id);
-    egui::ScrollArea::vertical().id_salt(("pins-list", c.id)).show(ui, |ui| {
+    let mut jump = None;
+    egui::ScrollArea::vertical().id_salt(("pins-list", c.id)).auto_shrink(false).show(ui, |ui| {
+        // Messages lay out within the panel rather than at their natural width.
+        ui.set_max_width(ui.available_width());
         let mut cx = Ctx { state: &s.state, uis, actions, channel: c.id, guild: c.guild_id, perms, highlight: None, read_only: true };
         for m in pins {
-            egui::Frame::new().fill(theme::CHAT).corner_radius(6).inner_margin(egui::Margin { left: 0, right: 8, top: 0, bottom: 8 }).show(ui, |ui| {
+            let r = egui::Frame::new().fill(theme::CHAT).corner_radius(6).inner_margin(egui::Margin { left: 0, right: 8, top: 0, bottom: 8 }).show(ui, |ui| {
+                ui.set_width(ui.available_width());
                 message::show(ui, m, false, &mut cx);
             });
+            // "Jump" in the corner while hovered, as in Discord.
+            let rect = r.response.rect;
+            if ui.rect_contains_pointer(rect) {
+                // Painted over the message rather than laid out, so it doesn't push the next one down.
+                let b = egui::Rect::from_min_size(rect.right_top() + Vec2::new(-56.0, 6.0), Vec2::new(48.0, 22.0));
+                let br = ui.interact(b, egui::Id::unique(("pin-jump", m.id)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+                ui.painter().rect_filled(b, 4, if br.hovered() { theme::SELECTED } else { theme::SIDEBAR });
+                ui.painter().text(b.center(), egui::Align2::CENTER_CENTER, "Jump", theme::font(12.0), theme::HEADER);
+                if br.clicked() {
+                    jump = Some(m.id);
+                }
+            }
             ui.add_space(6.0);
         }
     });
+    if let Some(message) = jump {
+        actions.push(Action::JumpTo { channel: c.id, message: Some(message) });
+    }
 }

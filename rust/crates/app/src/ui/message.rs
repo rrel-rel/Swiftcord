@@ -96,7 +96,7 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
     let me = cx.state.me.as_ref().map(|m| m.id);
     // Highlighted like Discord, including when you mention yourself.
     let mentioned = me.is_some() && cx.state.mentions_me(msg);
-    let row_id = egui::Id::unique(("msg", msg.id));
+    let row_id = egui::Id::unique(("msg", msg.id, cx.read_only));
 
     // Background slot, filled once we know the height and hover state.
     let bg = ui.painter().add(egui::Shape::Noop);
@@ -374,6 +374,11 @@ fn system_line(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     });
 }
 
+/// A media size limit narrowed to the space there is (a narrow window, or the pins panel).
+fn within(ui: &Ui, max: Vec2) -> Vec2 {
+    Vec2::new(max.x.min(ui.available_width().max(80.0)), max.y)
+}
+
 pub(crate) fn fit(w: Option<u32>, h: Option<u32>, max: Vec2) -> Vec2 {
     let (w, h) = (w.unwrap_or(300).max(1) as f32, h.unwrap_or(200).max(1) as f32);
     let scale = (max.x / w).min(max.y / h).min(1.0);
@@ -446,7 +451,7 @@ pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
         return;
     }
     if a.is_video() {
-        let size = fit(a.width.or(Some(480)), a.height.or(Some(270)), MAX_MEDIA);
+        let size = fit(a.width.or(Some(480)), a.height.or(Some(270)), within(ui, MAX_MEDIA));
         let ppp = ui.ctx().pixels_per_point();
         let poster = a.width.map(|_| swiftcord_core::cdn::media_proxy(&a.proxy_url, (size.x * ppp) as u32, (size.y * ppp) as u32));
         let video = crate::player::Video { url: &a.url, link: &a.url, poster, width: a.width, height: a.height };
@@ -454,7 +459,7 @@ pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
         return;
     }
     if a.is_image() {
-        let size = fit(a.width, a.height, MAX_MEDIA);
+        let size = fit(a.width, a.height, within(ui, MAX_MEDIA));
         let gif = a.content_type.as_deref() == Some("image/gif");
         let r = media_response(ui, &a.proxy_url, size, gif, a.is_video(), a.description.as_deref());
         if gif {
@@ -633,7 +638,7 @@ pub(crate) fn gallery(ui: &mut Ui, items: &[GalleryMedia], msg_id: Snowflake, ke
         let rect = rect.translate(area.min.to_vec2());
         let reveal_key = (msg_id, key.wrapping_add(i as u16));
         if m.spoiler && !cx.uis.revealed.contains(&reveal_key) {
-            let r = ui.interact(rect, egui::Id::unique(("gallery-spoiler", reveal_key)), Sense::click());
+            let r = ui.interact(rect, egui::Id::unique(("gallery-spoiler", reveal_key, cx.read_only)), Sense::click());
             ui.painter().rect_filled(rect, 4, Color32::from_rgb(0x1e, 0x1f, 0x22));
             ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "SPOILER", theme::font_bold(14.0), Color32::WHITE);
             if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
@@ -686,11 +691,11 @@ fn playable(v: &EmbedMedia) -> bool {
 fn video_poster(ui: &mut Ui, poster: Option<&EmbedMedia>, video: &EmbedMedia, title: Option<&str>) {
     let r = match poster {
         Some(p) => {
-            let size = fit(p.width.or(video.width), p.height.or(video.height), Vec2::new(480.0, 270.0));
+            let size = fit(p.width.or(video.width), p.height.or(video.height), within(ui, Vec2::new(480.0, 270.0)));
             media_response(ui, p.proxy_url.as_deref().unwrap_or(&p.url), size, false, true, None)
         }
         None => {
-            let size = fit(video.width.or(Some(480)), video.height.or(Some(270)), Vec2::new(480.0, 270.0));
+            let size = fit(video.width.or(Some(480)), video.height.or(Some(270)), within(ui, Vec2::new(480.0, 270.0)));
             let (rect, r) = ui.allocate_exact_size(size, Sense::click());
             ui.painter().rect_filled(rect, 6, Color32::BLACK);
             ui.painter().circle_filled(rect.center(), 24.0, Color32::from_white_alpha(40));
@@ -708,7 +713,7 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
     // Bare media links (images, GIFs) render as the media alone.
     if matches!(kind, "image" | "gifv") {
         let Some(m) = e.thumbnail.as_ref().or(e.image.as_ref()).or(e.video.as_ref()) else { return };
-        let size = fit(m.width, m.height, MAX_MEDIA);
+        let size = fit(m.width, m.height, within(ui, MAX_MEDIA));
         let target = e.url.as_deref().unwrap_or(&m.url).to_owned();
         // GIFs are usually MP4s now: play them as looping clips, with the still until the first frame.
         if let Some(video) = e.video.as_ref().filter(|_| kind == "gifv" && !e.video.as_ref().unwrap().url.is_empty()) {
@@ -755,7 +760,7 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
             let target = e.url.as_deref().unwrap_or(&v.url);
             let poster = e.thumbnail.as_ref().or(e.image.as_ref());
             if playable(v) {
-                let size = fit(poster.and_then(|p| p.width).or(v.width), poster.and_then(|p| p.height).or(v.height), Vec2::new(480.0, 270.0));
+                let size = fit(poster.and_then(|p| p.width).or(v.width), poster.and_then(|p| p.height).or(v.height), within(ui, Vec2::new(480.0, 270.0)));
                 let ppp = ui.ctx().pixels_per_point();
                 let still = poster.map(|p| swiftcord_core::cdn::media_proxy(p.proxy_url.as_deref().unwrap_or(&p.url), (size.x * ppp) as u32, (size.y * ppp) as u32));
                 let video = crate::player::Video { url: &v.url, link: target, poster: still, width: v.width, height: v.height };
@@ -765,7 +770,7 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
             }
         } else if let Some(img) = &e.image {
             if extra_images.is_empty() {
-                let size = fit(img.width, img.height, Vec2::new(480.0, 300.0));
+                let size = fit(img.width, img.height, within(ui, Vec2::new(480.0, 300.0)));
                 media(ui, img.proxy_url.as_deref().unwrap_or(&img.url), &img.url, size, false, false, None);
             } else {
                 let images: Vec<GalleryMedia> = std::iter::once(img).chain(extra_images.iter().copied()).map(GalleryMedia::from).collect();
@@ -802,7 +807,7 @@ fn reactions(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
                     ui.label(RichText::new(r.count.to_string()).font(theme::font_semibold(13.0)).color(if r.me { theme::MENTION_TEXT } else { theme::MUTED }));
                 });
             });
-            let resp = ui.interact(resp.response.rect, egui::Id::unique(("react", msg.id, r.emoji.reaction_key())), Sense::click());
+            let resp = ui.interact(resp.response.rect, egui::Id::unique(("react", msg.id, r.emoji.reaction_key(), cx.read_only)), Sense::click());
             let name = r.emoji.name.clone().unwrap_or_default();
             if resp.on_hover_text(format!(":{name}:")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && cx.perms & perm::ADD_REACTIONS != 0 {
                 cx.actions.push(Action::React { channel: msg.channel_id, message: msg.id, emoji: r.emoji.clone(), add: !r.me });

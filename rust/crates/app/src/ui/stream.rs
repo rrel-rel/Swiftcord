@@ -7,6 +7,41 @@ use crate::stream_glue::WatchStatus;
 use crate::theme;
 use crate::ui::widgets;
 
+/// A LIVE badge for someone's stream: hovering it shows the stream's latest preview picture (fetched when
+/// hovered, at most once a minute). Returns the badge's response, for clicking to watch.
+pub fn live_badge(ui: &mut Ui, uis: &UiState, key: String, text: &str, size: f32, hint: &str, actions: &mut Vec<Action>) -> egui::Response {
+    let badge = ui.add(egui::Label::new(RichText::new(text).font(theme::font_bold(size)).color(Color32::WHITE).background_color(theme::RED)).sense(Sense::click()));
+    if !badge.hovered() {
+        return badge;
+    }
+    let preview = uis.stream_previews.get(&key);
+    if preview.is_none_or(|(at, url)| url.is_some() && at.elapsed() > std::time::Duration::from_secs(60)) {
+        actions.push(Action::LoadStreamPreview(key));
+    }
+    let picture = preview.and_then(|(_, url)| url.clone());
+    badge.on_hover_ui(|ui| {
+        let size = Vec2::new(320.0, 180.0);
+        match picture {
+            Some(Some(url)) => {
+                ui.add(egui::Image::from_uri(url).fit_to_exact_size(size).corner_radius(4));
+            }
+            Some(None) => {
+                let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                ui.painter().rect_filled(rect, 4, theme::RAIL);
+                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "No preview yet", theme::font(13.0), theme::MUTED);
+            }
+            None => {
+                let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                ui.painter().rect_filled(rect, 4, theme::RAIL);
+                ui.put(egui::Rect::from_center_size(rect.center(), Vec2::splat(24.0)), egui::Spinner::new());
+            }
+        }
+        if !hint.is_empty() {
+            ui.label(RichText::new(hint).color(theme::MUTED));
+        }
+    })
+}
+
 pub fn show(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) {
     let Some(view) = &uis.stream else { return };
     let name = s.state.display_name(view.owner, view.guild);

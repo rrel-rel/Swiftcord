@@ -369,6 +369,26 @@ impl Rest {
     }
 
     /// A channel or thread we haven't been sent (e.g. an archived thread someone linked).
+    /// The latest preview picture of a Go Live stream, if its streamer has sent one.
+    pub async fn stream_preview(&self, stream_key: &str) -> Result<Option<String>> {
+        #[derive(Deserialize)]
+        struct Preview {
+            url: Option<String>,
+        }
+        match self.json::<Preview>(Method::GET, &format!("streams/{stream_key}/preview"), Body::None).await {
+            Ok(p) => Ok(p.url),
+            Err(e) if e.status() == Some(StatusCode::NOT_FOUND) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Sends a preview picture of our own stream (a JPEG), for people looking at it in the channel list.
+    pub async fn upload_stream_preview(&self, stream_key: &str, jpeg: &[u8]) -> Result<()> {
+        use base64::Engine;
+        let thumbnail = format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(jpeg));
+        self.empty(Method::POST, &format!("streams/{stream_key}/preview"), Body::Json(json!({ "thumbnail": thumbnail }))).await
+    }
+
     /// Discord's standard sticker packs, which anyone can send.
     pub async fn sticker_packs(&self) -> Result<Vec<StickerPack>> {
         #[derive(Deserialize)]

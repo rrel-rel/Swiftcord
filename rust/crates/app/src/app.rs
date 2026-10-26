@@ -39,6 +39,7 @@ pub enum AppEvent {
     Gifs { query: String, result: Result<Vec<swiftcord_core::rest::Gif>, String> },
     GifCategories(Result<Vec<String>, String>),
     StickerPacks(Result<Vec<swiftcord_core::models::StickerPack>, String>),
+    StreamPreview { key: String, result: Result<Option<String>, String> },
     /// The frecency settings (favourite GIFs) as read or as saved.
     Frecency(Result<String, String>),
     /// Saving favourites failed; restore these settings.
@@ -105,6 +106,8 @@ pub enum Action {
     AcceptCall(Snowflake),
     DeclineCall(Snowflake),
     WatchStream { guild: Option<Snowflake>, channel: Snowflake, user: Snowflake },
+    /// Fetch a Go Live stream's preview picture (by stream key).
+    LoadStreamPreview(String),
     StopWatching,
     OpenSharePicker,
     CloseSharePicker,
@@ -209,6 +212,9 @@ pub struct UiState {
     pub sticker_packs: Option<Option<Vec<swiftcord_core::models::StickerPack>>>,
     /// Animated stickers being shown.
     pub stickers: crate::stickers::Stickers,
+    /// Go Live preview pictures by stream key: when fetched, and the picture (`None` while loading, then
+    /// `Some(None)` if there isn't one).
+    pub stream_previews: HashMap<String, (Instant, Option<Option<String>>)>,
     /// Favourite GIFs, most recent first (from the synced frecency settings).
     pub favorite_gifs: Vec<swiftcord_core::proto::FavoriteGif>,
     /// Players for GIF-style video clips on screen.
@@ -445,7 +451,15 @@ impl App {
             },
             AppEvent::FilesPicked { channel, files } => self.add_files(channel, files),
             AppEvent::Pins { channel, result } => match result {
-                Ok(p) => self.ui.pins = Some((channel, Some(p))),
+                Ok(p) => {
+                    // Their authors may never have spoken since we connected; without this they're "Unknown User".
+                    if let Some(s) = &mut self.session {
+                        for m in &p {
+                            s.state.cache_author(m);
+                        }
+                    }
+                    self.ui.pins = Some((channel, Some(p)));
+                }
                 Err(e) => {
                     self.ui.pins = None;
                     self.banner(format!("Couldn't load pins: {e}"));
@@ -477,6 +491,13 @@ impl App {
                     self.set_frecency(p);
                 }
                 self.banner(format!("Couldn't update favourites: {error}"));
+            }
+            AppEvent::StreamPreview { key, result } => {
+                let url = result.unwrap_or_else(|e| {
+                    tracing::debug!("stream preview for {key}: {e}");
+                    None
+                });
+                self.ui.stream_previews.insert(key, (Instant::now(), Some(url)));
             }
             AppEvent::StickerPacks(result) => {
                 let packs = result.unwrap_or_else(|e| {
@@ -521,6 +542,13 @@ impl App {
             }
             GatewayOutput::Event(event) => {
                 let is_ready = matches!(event, swiftcord_core::events::Event::Ready(_));
+                // A message pinned or unpinned in the channel whose pins are open: load them again.
+                let pins_changed = match (&event, &self.ui.pins) {
+                    (swiftcord_core::events::Event::MessageUpdate(u), Some((c, Some(list)))) if u.channel_id == *c => {
+                        u.pinned.is_some_and(|p| p != list.iter().any(|m| m.id == u.id))
+                    }
+                    _ => false,
+                };
                 let notices = s.state.apply(event);
                 if is_ready {
                     tracing::info!("READY: {} channels, me = {:?}", s.state.private_channels().len(), s.state.me.as_ref().map(|m| m.id));
@@ -530,6 +558,10 @@ impl App {
                 }
                 for n in notices {
                     self.handle_notice(n);
+                }
+                if let (true, Some(c)) = (pins_changed, self.ui.pins.as_ref().map(|p| p.0)) {
+                    self.ui.pins = None;
+                    self.apply(Action::ShowPins(c));
                 }
             }
         }
@@ -663,7 +695,10 @@ impl App {
         }
         self.ui.focus_composer = true;
         self.ui.emoji_picker = None;
-        self.ui.pins = None;
+        // Jumping to a pinned message keeps the pins open.
+        if !matches!(self.ui.pins, Some((c, _)) if c == channel) {
+            self.ui.pins = None;
+        }
         self.ui.threads_panel = None;
         // Forums have posts (threads), not messages.
         if self.session.as_ref().and_then(|s| s.state.channel(channel)).is_some_and(|c| c.is_forum()) {
@@ -1075,6 +1110,15 @@ impl App {
             }
             Action::LeaveVoice => crate::voice_glue::leave(self),
             Action::WatchStream { guild, channel, user } => crate::stream_glue::watch(self, guild, channel, user),
+            Action::LoadStreamPreview(key) => {
+                let Some(s) = &self.session else { return };
+                self.ui.stream_previews.insert(key.clone(), (Instant::now(), None));
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    let result = rest.stream_preview(&key).await.map_err(|e| e.to_string());
+                    AppEvent::StreamPreview { key, result }
+                });
+            }
             Action::StopWatching => crate::stream_glue::stop(self),
             Action::OpenSharePicker => crate::share_glue::open_picker(self),
             Action::CloseSharePicker => self.ui.share_picker = None,
