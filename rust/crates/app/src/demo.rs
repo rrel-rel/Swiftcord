@@ -110,5 +110,11 @@ const SAMPLES: &str = r##"[
  "attachments":[{"id":"1","filename":"mov_bbb.mp4","size":788493,"content_type":"video/mp4","width":320,"height":176,
    "url":"https://www.w3schools.com/html/mov_bbb.mp4","proxy_url":""},
   {"id":"2","filename":"sample-5s.mp4","size":2848208,"content_type":"video/mp4","width":1920,"height":1080,
-   "url":"https://download.samplelib.com/mp4/sample-5s.mp4","proxy_url":""}]}
+   "url":"https://download.samplelib.com/mp4/sample-5s.mp4","proxy_url":""}]},
+{"id":"1400000000000000011","channel_id":"{CH}","author":{"id":"2","username":"Demo Bot","bot":true},
+ "timestamp":"2026-10-25T10:10:00+00:00","content":"",
+ "sticker_items":[{"id":"796140620111544330","name":"Happy","format_type":3}]},
+{"id":"1400000000000000012","channel_id":"{CH}","author":{"id":"{ME}","username":"me"},
+ "timestamp":"2026-10-25T10:11:00+00:00","content":"",
+ "sticker_items":[{"id":"1228092333061443654","name":"Cursed","format_type":2}]}
 ]"##;

@@ -4,6 +4,8 @@
 mod app;
 mod clip;
 mod demo;
+mod lottie;
+mod stickers;
 mod media;
 mod settings;
 mod share_glue;

@@ -283,14 +283,7 @@ fn body(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         crate::ui::threads::chip(ui, t, cx.actions);
     }
     for s in &msg.sticker_items {
-        match swiftcord_core::cdn::sticker(s.id, s.format_type) {
-            Some(url) => {
-                ui.add(egui::Image::from_uri(url).fit_to_exact_size(Vec2::splat(160.0))).on_hover_text(&s.name);
-            }
-            None => {
-                ui.label(RichText::new(format!("[sticker: {}]", s.name)).color(theme::MUTED));
-            }
-        }
+        cx.uis.stickers.show(ui, s, 160.0);
     }
     if !msg.reactions.is_empty() {
         reactions(ui, msg, cx);

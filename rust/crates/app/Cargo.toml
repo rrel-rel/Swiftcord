@@ -22,6 +22,9 @@ eframe = { version = "0.37", default-features = false, features = ["wgpu", "defa
 egui_extras = { version = "0.37", default-features = false, features = ["image", "gif", "webp"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 qrcode = { version = "0.14", default-features = false }
+# Lottie stickers: velato reads the animation, and the CPU renderer egui already uses draws it.
+velato = { version = "0.12", default-features = false }
+vello_cpu = { version = "0.2", default-features = false, features = ["std", "u8_pipeline"] }
 rfd = "0.17"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 directories = "6"

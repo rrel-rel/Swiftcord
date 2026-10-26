@@ -712,6 +712,11 @@ impl State {
                     g.emojis = e.emojis;
                 }
             }
+            Event::GuildStickersUpdate(e) => {
+                if let Some(g) = self.guilds.get_mut(&e.guild_id) {
+                    g.stickers = e.stickers;
+                }
+            }
             Event::ChannelCreate(c) => self.add_channel(*c),
             Event::ChannelUpdate(mut c) => {
                 if let Some(old) = self.channels.get(&c.id) {

@@ -38,6 +38,7 @@ pub enum AppEvent {
     /// GIF results for a search (an empty query is trending).
     Gifs { query: String, result: Result<Vec<swiftcord_core::rest::Gif>, String> },
     GifCategories(Result<Vec<String>, String>),
+    StickerPacks(Result<Vec<swiftcord_core::models::StickerPack>, String>),
     /// The frecency settings (favourite GIFs) as read or as saved.
     Frecency(Result<String, String>),
     /// Saving favourites failed; restore these settings.
@@ -72,6 +73,9 @@ pub enum Action {
     Notice(String),
     SearchMembers { guild: Snowflake, query: String },
     OpenGifPicker { channel: Snowflake, at: egui::Pos2 },
+    OpenStickerPicker { channel: Snowflake, at: egui::Pos2 },
+    LoadStickerPacks,
+    SendSticker { channel: Snowflake, sticker: swiftcord_core::models::StickerItem },
     /// Search GIFs; an empty query loads trending ones.
     GifSearch(String),
     GifCategories,
@@ -200,6 +204,11 @@ pub struct UiState {
     /// The member list we're subscribed to: channel and row ranges.
     pub member_sub: Option<(Snowflake, Vec<[u32; 2]>)>,
     pub gif_picker: Option<ui::gif::GifPicker>,
+    pub sticker_picker: Option<ui::sticker_picker::StickerPicker>,
+    /// Discord's standard sticker packs: `Some(None)` while they load.
+    pub sticker_packs: Option<Option<Vec<swiftcord_core::models::StickerPack>>>,
+    /// Animated stickers being shown.
+    pub stickers: crate::stickers::Stickers,
     /// Favourite GIFs, most recent first (from the synced frecency settings).
     pub favorite_gifs: Vec<swiftcord_core::proto::FavoriteGif>,
     /// Players for GIF-style video clips on screen.
@@ -469,6 +478,13 @@ impl App {
                 }
                 self.banner(format!("Couldn't update favourites: {error}"));
             }
+            AppEvent::StickerPacks(result) => {
+                let packs = result.unwrap_or_else(|e| {
+                    tracing::warn!("sticker packs: {e}");
+                    Vec::new()
+                });
+                self.ui.sticker_packs = Some(Some(packs));
+            }
             AppEvent::GifCategories(result) => {
                 if let Some(p) = &mut self.ui.gif_picker {
                     p.categories = Some(result.unwrap_or_default());
@@ -722,10 +738,15 @@ impl App {
 
     /// Sends a message, showing it straight away as pending.
     fn post(&mut self, channel: Snowflake, content: String, files: Vec<FileUpload>, reply: Option<(Snowflake, bool)>) {
+        self.post_with(channel, content, files, reply, None);
+    }
+
+    fn post_with(&mut self, channel: Snowflake, content: String, files: Vec<FileUpload>, reply: Option<(Snowflake, bool)>, sticker: Option<swiftcord_core::models::StickerItem>) {
         let Some(s) = &mut self.session else { return };
         let Some(me) = s.state.me.clone() else { return };
         let nonce = nonce_now();
         let mut msg = NewMessage { content: content.clone(), nonce: Some(nonce.to_string()), ..Default::default() };
+        msg.sticker_ids = sticker.iter().map(|st| st.id).collect();
         if let Some((id, ping)) = reply {
             msg.reply_to(id, channel, ping);
         }
@@ -745,6 +766,7 @@ impl App {
                 .iter()
                 .map(|f| swiftcord_core::models::Attachment { filename: f.name.clone(), size: f.bytes.len() as u64, ..Default::default() })
                 .collect(),
+            sticker_items: sticker.into_iter().collect(),
             pending: Some(PendingState::Sending),
             ..Default::default()
         });
@@ -760,7 +782,7 @@ impl App {
         let rest = s.rest.clone();
         // Keep a copy for retrying; file bytes are shared cheaply enough at these sizes.
         let keep_files = files.iter().map(|f| FileUpload { name: f.name.clone(), bytes: f.bytes.clone(), content_type: f.content_type.clone() }).collect();
-        let keep_msg = NewMessage { content: msg.content.clone(), nonce: msg.nonce.clone(), message_reference: msg.message_reference.clone(), allowed_mentions: msg.allowed_mentions.clone(), attachments: None };
+        let keep_msg = NewMessage { content: msg.content.clone(), nonce: msg.nonce.clone(), message_reference: msg.message_reference.clone(), allowed_mentions: msg.allowed_mentions.clone(), attachments: None, sticker_ids: msg.sticker_ids.clone() };
         self.outgoing.insert(nonce, Outgoing { msg: keep_msg, files: keep_files });
         self.spawn(async move {
             let result = rest.send_message(channel, msg, files).await.map_err(|e| e.to_string());
@@ -808,6 +830,7 @@ impl App {
             Action::Notice(text) => self.banner(text),
             Action::OpenGifPicker { channel, at } => {
                 self.ui.emoji_picker = None;
+                self.ui.sticker_picker = None;
                 self.ui.gif_picker = Some(ui::gif::GifPicker::new(channel, at));
             }
             Action::GifSearch(query) => {
@@ -827,6 +850,21 @@ impl App {
                 self.apply(Action::CloseGifPicker);
                 let reply = self.ui.drafts.entry(channel).or_default().reply.take();
                 self.post(channel, url, Vec::new(), reply);
+            }
+            Action::OpenStickerPicker { channel, at } => {
+                self.ui.emoji_picker = None;
+                self.apply(Action::CloseGifPicker);
+                self.ui.sticker_picker = Some(ui::sticker_picker::StickerPicker::new(channel, at));
+            }
+            Action::LoadStickerPacks => {
+                let Some(s) = &self.session else { return };
+                let rest = s.rest.clone();
+                self.spawn(async move { AppEvent::StickerPacks(rest.sticker_packs().await.map_err(|e| e.to_string())) });
+            }
+            Action::SendSticker { channel, sticker } => {
+                // Sent on its own, keeping whatever's being typed, but as the reply if one is set up.
+                let reply = self.ui.drafts.entry(channel).or_default().reply.take();
+                self.post_with(channel, String::new(), Vec::new(), reply, Some(sticker));
             }
             Action::ToggleFavoriteGif(gif) => {
                 // Without the current settings we'd overwrite everything else in them, so don't try.
@@ -1166,6 +1204,7 @@ impl eframe::App for App {
         crate::share_glue::tick(self);
         self.ui.clips.tick();
         self.ui.videos.tick();
+        self.ui.stickers.tick();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

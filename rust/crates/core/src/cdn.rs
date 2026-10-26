@@ -37,11 +37,23 @@ pub fn emoji(id: Snowflake, animated: bool, size: u32) -> String {
     format!("{CDN}/emojis/{id}.{}?size={size}", if animated { "gif" } else { "webp" })
 }
 
+/// A sticker as an image: still for APNG ones (see [`sticker_file`] for the animation), `None` for Lottie
+/// ones, which have no image.
 pub fn sticker(id: Snowflake, format_type: u8) -> Option<String> {
     match format_type {
-        1 | 2 => Some(format!("https://media.discordapp.net/stickers/{id}.png?size=160")),
+        1 => Some(format!("https://media.discordapp.net/stickers/{id}.png?size=160")),
+        2 => Some(format!("https://media.discordapp.net/stickers/{id}.png?size=160&passthrough=false")),
         4 => Some(format!("https://media.discordapp.net/stickers/{id}.gif?size=160")),
-        _ => None, // Lottie stickers aren't rendered.
+        _ => None,
+    }
+}
+
+/// An animated sticker's file: the APNG, or the Lottie animation (JSON).
+pub fn sticker_file(id: Snowflake, format_type: u8) -> Option<String> {
+    match format_type {
+        2 => Some(format!("https://media.discordapp.net/stickers/{id}.png?size=160")),
+        3 => Some(format!("{CDN}/stickers/{id}.json")),
+        _ => None,
     }
 }
 

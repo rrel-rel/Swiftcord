@@ -60,6 +60,8 @@ pub struct NewMessage {
     pub allowed_mentions: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachments: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sticker_ids: Vec<Snowflake>,
 }
 
 impl NewMessage {
@@ -367,6 +369,16 @@ impl Rest {
     }
 
     /// A channel or thread we haven't been sent (e.g. an archived thread someone linked).
+    /// Discord's standard sticker packs, which anyone can send.
+    pub async fn sticker_packs(&self) -> Result<Vec<StickerPack>> {
+        #[derive(Deserialize)]
+        struct Packs {
+            sticker_packs: Vec<StickerPack>,
+        }
+        let packs: Packs = self.json(Method::GET, "sticker-packs", Body::None).await?;
+        Ok(packs.sticker_packs)
+    }
+
     pub async fn channel(&self, id: Snowflake) -> Result<Channel> {
         self.json(Method::GET, &format!("channels/{id}"), Body::None).await
     }
@@ -526,6 +538,16 @@ mod tests {
             "PUT channels/123456789012345678/messages/{id}/reactions/{emoji}/@me"
         );
         assert_eq!(route_key(&Method::GET, "users/123456789012345678/profile"), "GET users/{id}/profile");
+    }
+
+    #[test]
+    fn sends_sticker_ids_only_when_there_are_some() {
+        let plain = serde_json::to_value(NewMessage { content: "hi".into(), ..Default::default() }).unwrap();
+        assert!(plain.get("sticker_ids").is_none());
+        let sticker = NewMessage { sticker_ids: vec![Snowflake(796140620111544330)], ..Default::default() };
+        assert_eq!(serde_json::to_value(sticker).unwrap()["sticker_ids"], serde_json::json!(["796140620111544330"]));
+        let packs: Vec<StickerPack> = serde_json::from_str(r#"[{"id":"1","name":"Wumpus","stickers":[{"id":"2","name":"Hi","tags":"wave","format_type":3,"pack_id":"1"}]}]"#).unwrap();
+        assert!(packs[0].stickers[0].available, "stickers are available unless they say otherwise");
     }
 
     #[test]

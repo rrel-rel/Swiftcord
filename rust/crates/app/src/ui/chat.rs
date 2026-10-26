@@ -574,7 +574,7 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
             if perms & perm::ATTACH_FILES != 0 && widgets::icon_button(ui, icon::ADD, "Upload a file").clicked() {
                 actions.push(Action::PickFiles(c.id));
             }
-            let emoji_w = 76.0;
+            let emoji_w = 108.0;
             let draft = uis.drafts.entry(c.id).or_default();
             let hint = match c.kind {
                 ChannelType::Dm | ChannelType::GroupDm => format!("Message @{}", c.label()),
@@ -615,6 +615,11 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
             if gr.on_hover_text("GIFs").clicked() {
                 actions.push(Action::OpenGifPicker { channel: c.id, at: gif_at });
             }
+            let sr = sticker_button(ui);
+            let sticker_at = sr.rect.right_top();
+            if sr.on_hover_text("Stickers").clicked() {
+                actions.push(Action::OpenStickerPicker { channel: c.id, at: sticker_at });
+            }
             let er = widgets::icon_button(ui, icon::EMOJI, "Emoji");
             if er.clicked() {
                 uis.emoji_picker = Some(PickerTarget::Composer { channel: c.id, at: er.rect.left_top() });
@@ -644,6 +649,33 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
             uis.editing = Some((last.id, last.content.clone()));
         }
     }
+}
+
+/// The composer's sticker button: a rounded square with a peeled corner (there's no sticker icon in the font).
+fn sticker_button(ui: &mut Ui) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(Vec2::new(32.0, 28.0), Sense::click());
+    let color = if r.hovered() { theme::HEADER } else { theme::MUTED };
+    if r.hovered() {
+        ui.painter().rect_filled(rect, 4, theme::SELECTED);
+    }
+    let b = Rect::from_center_size(rect.center(), Vec2::splat(17.0));
+    let fold = 6.0;
+    let stroke = egui::Stroke::new(1.6, color);
+    let p = |x: f32, y: f32| egui::pos2(x, y);
+    let outline = vec![
+        p(b.left() + 3.0, b.top()),
+        p(b.right() - 3.0, b.top()),
+        p(b.right(), b.top() + 3.0),
+        p(b.right(), b.bottom() - fold),
+        p(b.right() - fold, b.bottom()),
+        p(b.left() + 3.0, b.bottom()),
+        p(b.left(), b.bottom() - 3.0),
+        p(b.left(), b.top() + 3.0),
+    ];
+    ui.painter().add(egui::Shape::closed_line(outline, stroke));
+    ui.painter().line_segment([p(b.right(), b.bottom() - fold), p(b.right() - fold, b.bottom() - fold)], stroke);
+    ui.painter().line_segment([p(b.right() - fold, b.bottom() - fold), p(b.right() - fold, b.bottom())], stroke);
+    r.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn pins_panel(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, pins: Option<&[Message]>, actions: &mut Vec<Action>) {

@@ -291,6 +291,13 @@ pub struct GuildEmojisUpdate {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
+pub struct GuildStickersUpdate {
+    pub guild_id: Snowflake,
+    pub stickers: Vec<Sticker>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 pub struct GuildUpdate {
     pub id: Snowflake,
     pub name: Option<String>,
@@ -448,6 +455,7 @@ pub enum Event {
     GuildRoleDelete(GuildRoleEvent),
     GuildMemberUpdate(Box<GuildMemberUpdate>),
     GuildEmojisUpdate(GuildEmojisUpdate),
+    GuildStickersUpdate(GuildStickersUpdate),
     ChannelCreate(Box<Channel>),
     ChannelUpdate(Box<Channel>),
     ChannelDelete(Box<Channel>),
@@ -496,6 +504,7 @@ impl Event {
             "GUILD_ROLE_DELETE" => Event::GuildRoleDelete(p(d)?),
             "GUILD_MEMBER_UPDATE" => Event::GuildMemberUpdate(p(d)?),
             "GUILD_EMOJIS_UPDATE" => Event::GuildEmojisUpdate(p(d)?),
+            "GUILD_STICKERS_UPDATE" => Event::GuildStickersUpdate(p(d)?),
             "CHANNEL_CREATE" | "THREAD_CREATE" => Event::ChannelCreate(p(d)?),
             "CHANNEL_UPDATE" | "THREAD_UPDATE" => Event::ChannelUpdate(p(d)?),
             "CHANNEL_DELETE" | "THREAD_DELETE" => Event::ChannelDelete(p(d)?),

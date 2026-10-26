@@ -40,6 +40,8 @@ pub struct User {
     #[serde(deserialize_with = "null_as_default")]
     pub bot: bool,
     pub public_flags: Option<u64>,
+    /// Nitro (only sent for yourself): 0 none, 1 Classic, 2 Nitro, 3 Basic.
+    pub premium_type: Option<u8>,
 }
 
 impl User {
@@ -138,6 +140,8 @@ pub struct Guild {
     pub roles: Vec<Role>,
     #[serde(deserialize_with = "null_as_default")]
     pub emojis: Vec<Emoji>,
+    #[serde(deserialize_with = "null_as_default")]
+    pub stickers: Vec<Sticker>,
     #[serde(deserialize_with = "null_as_default")]
     pub channels: Vec<Channel>,
     #[serde(deserialize_with = "null_as_default")]
@@ -508,6 +512,46 @@ pub struct StickerItem {
     pub name: String,
     /// 1 = PNG, 2 = APNG, 3 = Lottie, 4 = GIF.
     pub format_type: u8,
+}
+
+/// A sticker that can be sent: a server's own, or one of Discord's standard packs.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Sticker {
+    pub id: Snowflake,
+    pub name: String,
+    pub description: Option<String>,
+    /// Search words (an emoji, for server stickers).
+    #[serde(deserialize_with = "null_as_default")]
+    pub tags: String,
+    pub format_type: u8,
+    pub guild_id: Option<Snowflake>,
+    pub pack_id: Option<Snowflake>,
+    /// False when a server lost the boosts it needs for it.
+    #[serde(default = "yes")]
+    pub available: bool,
+    pub sort_value: Option<i64>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Sticker {
+    pub fn item(&self) -> StickerItem {
+        StickerItem { id: self.id, name: self.name.clone(), format_type: self.format_type }
+    }
+}
+
+/// One of Discord's standard sticker packs.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct StickerPack {
+    pub id: Snowflake,
+    pub name: String,
+    #[serde(deserialize_with = "null_as_default")]
+    pub stickers: Vec<Sticker>,
+    pub cover_sticker_id: Option<Snowflake>,
 }
 
 /// The copied content of a forwarded message.
