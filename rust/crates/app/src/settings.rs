@@ -10,11 +10,13 @@ pub struct Settings {
     /// Voice activity threshold in dBFS.
     pub vad_threshold_db: f32,
     pub notifications: bool,
+    /// The member list beside server channels is closed.
+    pub hide_members: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { input_device: None, output_device: None, vad_threshold_db: -50.0, notifications: true }
+        Self { input_device: None, output_device: None, vad_threshold_db: -50.0, notifications: true, hide_members: false }
     }
 }
 

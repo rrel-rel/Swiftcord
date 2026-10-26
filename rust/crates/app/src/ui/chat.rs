@@ -78,13 +78,15 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
         composer(ui, s, uis, catalog, channel, perms, actions);
     });
 
-    if let Some((pin_channel, pins)) = &uis.pins {
-        if *pin_channel == channel.id {
-            let pins = pins.clone();
-            egui::Panel::right(("pins", channel.id)).exact_size(380.0).frame(egui::Frame::new().fill(theme::SIDEBAR).inner_margin(8)).show(ui, |ui| {
-                pins_panel(ui, s, uis, channel, pins.as_deref(), actions);
-            });
-        }
+    let pins = uis.pins.as_ref().filter(|(c, _)| *c == channel.id).map(|(_, p)| p.clone());
+    if let Some(pins) = pins {
+        egui::Panel::right(("pins", channel.id)).exact_size(380.0).frame(egui::Frame::new().fill(theme::SIDEBAR).inner_margin(8)).show(ui, |ui| {
+            pins_panel(ui, s, uis, channel, pins.as_deref(), actions);
+        });
+    } else if channel.guild_id.is_some() && !channel.is_voice() && !uis.hide_members {
+        egui::Panel::right(("members", channel.id)).exact_size(crate::ui::members::WIDTH).frame(egui::Frame::new().fill(theme::SIDEBAR)).show(ui, |ui| {
+            crate::ui::members::panel(ui, s, channel, actions);
+        });
     }
 
     egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT)).show(ui, |ui| {
@@ -108,7 +110,7 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, actions: &mut Ve
             if c.kind == ChannelType::Dm {
                 if let Some(u) = c.recipients.first() {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
-                    ui.painter().circle_filled(rect.center(), 5.0, widgets::status_color(s.state.presence(u.id)));
+                    widgets::status_dot(ui.painter(), rect.center(), 5.0, s.state.presence(u.id), theme::CHAT);
                 }
             }
             if let Some(topic) = c.topic.as_deref().filter(|t| !t.is_empty()) {
@@ -117,6 +119,9 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, actions: &mut Ve
                 ui.add(egui::Label::new(RichText::new(first_line).size(13.5).color(theme::MUTED)).truncate()).on_hover_text(topic);
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if c.guild_id.is_some() && widgets::icon_button(ui, icon::PEOPLE, "Member List").clicked() {
+                    actions.push(Action::ToggleMemberList);
+                }
                 if widgets::icon_button(ui, icon::PIN, "Pinned Messages").clicked() {
                     actions.push(Action::ShowPins(c.id));
                 }

@@ -238,11 +238,12 @@ fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Actio
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        widgets::avatar_with_status(ui, me, 32.0, swiftcord_core::models::PresenceStatus::Online, Color32::from_rgb(0x23, 0x24, 0x28));
+        widgets::avatar_with_status(ui, me, 32.0, state.presence(me.id), Color32::from_rgb(0x23, 0x24, 0x28));
         ui.vertical(|ui| {
             ui.set_max_width(ui.available_width() - 100.0);
             ui.add(egui::Label::new(RichText::new(me.display_name()).font(theme::font_semibold(14.0)).color(theme::HEADER)).truncate());
-            ui.add(egui::Label::new(RichText::new(me.tag()).size(12.0).color(theme::MUTED)).truncate());
+            let subtitle = state.activity(me.id).map_or_else(|| me.tag(), str::to_owned);
+            ui.add(egui::Label::new(RichText::new(subtitle).size(12.0).color(theme::MUTED)).truncate());
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.add_space(4.0);

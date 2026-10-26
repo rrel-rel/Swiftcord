@@ -4,6 +4,7 @@ pub mod emoji;
 pub mod gif;
 pub mod login;
 pub mod markdown;
+pub mod members;
 pub mod message;
 pub mod rail;
 pub mod shell;

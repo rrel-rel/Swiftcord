@@ -68,6 +68,9 @@ pub struct Ready {
     #[serde(deserialize_with = "lenient_vec")]
     pub users: Vec<User>,
     pub merged_members: Vec<Vec<Member>>,
+    /// The account's sessions, each with its status; the "all" session carries the combined one.
+    #[serde(deserialize_with = "lenient_vec")]
+    pub sessions: Vec<SessionInfo>,
     #[serde(deserialize_with = "entries")]
     pub read_state: Vec<ReadStateEntry>,
     #[serde(deserialize_with = "entries")]
@@ -96,6 +99,61 @@ pub struct Presence {
     pub user_id: Option<Snowflake>,
     pub user: Option<PresenceUser>,
     pub status: String,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub activities: Vec<Activity>,
+}
+
+/// A game, a song, a custom status…
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct Activity {
+    #[serde(rename = "type")]
+    pub kind: u8,
+    pub name: String,
+    pub state: Option<String>,
+    pub emoji: Option<Emoji>,
+}
+
+impl Activity {
+    pub const CUSTOM: u8 = 4;
+
+    /// What the member list shows under a name: "Playing X", or a custom status's text.
+    pub fn summary(&self) -> Option<String> {
+        let verb = match self.kind {
+            0 => "Playing",
+            1 => "Streaming",
+            2 => "Listening to",
+            3 => "Watching",
+            5 => "Competing in",
+            Self::CUSTOM => {
+                // Custom emoji are images; only unicode ones can go in the text.
+                let emoji = self.emoji.as_ref().filter(|e| e.id.is_none()).and_then(|e| e.name.as_deref());
+                return match (emoji, self.state.as_deref().filter(|s| !s.is_empty())) {
+                    (Some(e), Some(s)) => Some(format!("{e} {s}")),
+                    (None, Some(s)) => Some(s.to_owned()),
+                    (Some(e), None) => Some(e.to_owned()),
+                    (None, None) => None,
+                };
+            }
+            _ => return None,
+        };
+        (!self.name.is_empty()).then(|| format!("{verb} {}", self.name))
+    }
+}
+
+/// The text to show for someone's activities: a custom status first, as Discord does.
+pub fn activity_summary(activities: &[Activity]) -> Option<String> {
+    let custom = activities.iter().find(|a| a.kind == Activity::CUSTOM).and_then(Activity::summary);
+    custom.or_else(|| activities.iter().find_map(Activity::summary))
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct SessionInfo {
+    pub session_id: String,
+    pub status: String,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub activities: Vec<Activity>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -246,6 +304,64 @@ pub struct PresenceUpdate {
     pub user: PresenceUser,
     pub guild_id: Option<Snowflake>,
     pub status: String,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub activities: Vec<Activity>,
+}
+
+/// GUILD_MEMBER_LIST_UPDATE: changes to the member list shown beside a channel. Channels whose view
+/// permissions match share a list (`id`). Rows are group headers and members, in display order.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct MemberListUpdate {
+    pub guild_id: Snowflake,
+    pub id: String,
+    pub member_count: u32,
+    pub online_count: u32,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub groups: Vec<MemberListGroup>,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub ops: Vec<MemberListOp>,
+}
+
+/// A hoisted role's id, or "online" / "offline".
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct MemberListGroup {
+    pub id: String,
+    pub count: u32,
+}
+
+/// SYNC (`range`, `items`), INSERT and UPDATE (`index`, `item`), DELETE (`index`) or INVALIDATE (`range`).
+/// A plain struct rather than a tagged enum: those buffer their contents, which `lenient_vec` can't read.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct MemberListOp {
+    pub op: String,
+    pub range: Option<[usize; 2]>,
+    pub index: Option<usize>,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub items: Vec<MemberListItem>,
+    pub item: Option<MemberListItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemberListItem {
+    Group(MemberListGroup),
+    Member(Box<ListMember>),
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ListMember {
+    pub user: Option<User>,
+    pub nick: Option<String>,
+    pub avatar: Option<String>,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub roles: Vec<Snowflake>,
+    pub joined_at: Option<DateTime<Utc>>,
+    pub communication_disabled_until: Option<DateTime<Utc>>,
+    pub presence: Option<Presence>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -323,6 +439,8 @@ pub enum Event {
     VoiceServerUpdate(VoiceServerUpdate),
     CallUpdate(Box<CallEvent>),
     GuildMembersChunk(Box<GuildMembersChunk>),
+    MemberListUpdate(Box<MemberListUpdate>),
+    SessionsReplace(Vec<SessionInfo>),
     CallDelete(Snowflake),
     /// Anything else, kept raw for subsystems (e.g. Go Live streams) that parse it themselves.
     Other(String, Box<RawValue>),
@@ -365,6 +483,8 @@ impl Event {
             "VOICE_SERVER_UPDATE" => Event::VoiceServerUpdate(p(d)?),
             "CALL_CREATE" | "CALL_UPDATE" => Event::CallUpdate(p(d)?),
             "GUILD_MEMBERS_CHUNK" => Event::GuildMembersChunk(p(d)?),
+            "GUILD_MEMBER_LIST_UPDATE" => Event::MemberListUpdate(p(d)?),
+            "SESSIONS_REPLACE" => Event::SessionsReplace(parse_lenient_list(d.get())?),
             "CALL_DELETE" => {
                 #[derive(Deserialize)]
                 struct D {

@@ -19,6 +19,8 @@ pub const BLURPLE: Color32 = Color32::from_rgb(0x58, 0x65, 0xf2);
 pub const GREEN: Color32 = Color32::from_rgb(0x23, 0xa5, 0x59);
 pub const YELLOW: Color32 = Color32::from_rgb(0xf0, 0xb2, 0x32);
 pub const RED: Color32 = Color32::from_rgb(0xf2, 0x3f, 0x43);
+/// The offline / invisible status.
+pub const OFFLINE: Color32 = Color32::from_rgb(0x80, 0x84, 0x8e);
 pub const LINK: Color32 = Color32::from_rgb(0x00, 0xa8, 0xfc);
 pub const MENTION_BG: Color32 = Color32::from_rgba_premultiplied(0x3c, 0x42, 0x70, 0xff);
 pub const MENTION_TEXT: Color32 = Color32::from_rgb(0xc9, 0xcd, 0xfb);

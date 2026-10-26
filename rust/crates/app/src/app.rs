@@ -71,6 +71,9 @@ pub enum Action {
     ToggleFavoriteGif(swiftcord_core::proto::FavoriteGif),
     OpenDm(Snowflake),
     ShowPins(Snowflake),
+    ToggleMemberList,
+    /// The member list beside `channel` shows rows `first..=last`; subscribes to the blocks covering them.
+    MemberListRange { guild: Snowflake, channel: Snowflake, first: usize, last: usize },
     Ack(Snowflake),
     JoinVoice { guild: Option<Snowflake>, channel: Snowflake },
     /// Answer a DM call: join it and show the conversation.
@@ -168,6 +171,9 @@ pub struct UiState {
     pub settings_draft: Option<ui::settings::Draft>,
     /// A pending member search (guild, query, when it changed, sent yet).
     pub member_query: Option<(Snowflake, String, Instant, bool)>,
+    pub hide_members: bool,
+    /// The member list we're subscribed to: channel and row ranges.
+    pub member_sub: Option<(Snowflake, Vec<[u32; 2]>)>,
     pub gif_picker: Option<ui::gif::GifPicker>,
     /// Favourite GIFs, most recent first (from the synced frecency settings).
     pub favorite_gifs: Vec<swiftcord_core::proto::FavoriteGif>,
@@ -223,6 +229,7 @@ impl App {
             history_failed: HashMap::new(),
             frecency: None,
         };
+        app.ui.hide_members = app.settings.hide_members;
         match credentials::load_token() {
             Some(token) => app.start_session(token),
             None => app.start_qr_login(),
@@ -293,7 +300,7 @@ impl App {
         self.sharing = None;
         self.voice = None;
         let login = std::mem::take(&mut self.ui.login);
-        self.ui = UiState { login, ..Default::default() };
+        self.ui = UiState { login, hide_members: self.settings.hide_members, ..Default::default() };
         self.outgoing.clear();
     }
 
@@ -497,6 +504,8 @@ impl App {
             s.gateway.subscribe_guild(g);
             s.subscribed.insert(g);
         }
+        // A fresh session has no member list subscriptions; the list asks again when next drawn.
+        self.ui.member_sub = None;
         // READY with legacy capabilities may not include the protobuf settings that hold server folders.
         let rest = s.rest.clone();
         self.spawn(async move {
@@ -911,6 +920,27 @@ impl App {
                         Err(e) => AppEvent::Error(format!("Couldn't open DM: {e}")),
                     }
                 });
+            }
+            Action::ToggleMemberList => {
+                self.ui.hide_members = !self.ui.hide_members;
+                self.settings.hide_members = self.ui.hide_members;
+                self.settings.save();
+            }
+            Action::MemberListRange { guild, channel, first, last } => {
+                // The first block always, as Discord's client does, plus up to two covering what's in view.
+                const BLOCK: usize = 100;
+                let mut ranges = vec![[0, BLOCK as u32 - 1]];
+                let from = (first / BLOCK).max(1);
+                for b in (from..from + 2).filter(|b| b * BLOCK <= last) {
+                    ranges.push([(b * BLOCK) as u32, (b * BLOCK + BLOCK - 1) as u32]);
+                }
+                if self.ui.member_sub.as_ref() == Some(&(channel, ranges.clone())) {
+                    return;
+                }
+                let Some(s) = &mut self.session else { return };
+                s.gateway.subscribe_member_list(guild, channel, &ranges);
+                s.subscribed.insert(guild);
+                self.ui.member_sub = Some((channel, ranges));
             }
             Action::ShowPins(channel) => {
                 if matches!(self.ui.pins, Some((c, _)) if c == channel) {

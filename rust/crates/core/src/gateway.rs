@@ -31,9 +31,9 @@ pub mod op {
     pub const INVALID_SESSION: u8 = 9;
     pub const HELLO: u8 = 10;
     pub const HEARTBEAT_ACK: u8 = 11;
-    /// User accounts: subscribe to typing, activities, threads and member-list ranges for a guild.
     /// User accounts: request the call state of a DM.
     pub const CALL_CONNECT: u8 = 13;
+    /// User accounts: subscribe to typing, activities, threads and member-list ranges for a guild.
     pub const GUILD_SUBSCRIPTIONS: u8 = 14;
     pub const STREAM_CREATE: u8 = 18;
     pub const STREAM_DELETE: u8 = 19;
@@ -114,6 +114,17 @@ impl Gateway {
         self.send(
             op::GUILD_SUBSCRIPTIONS,
             json!({ "guild_id": guild_id, "typing": true, "threads": true, "activities": true }),
+        );
+    }
+
+    /// Subscribes to the member list beside `channel_id`, in rows `[start, end]` (blocks of 100, a few at a
+    /// time). Updates arrive as GUILD_MEMBER_LIST_UPDATE; subscribing another channel of the guild replaces this.
+    pub fn subscribe_member_list(&self, guild_id: Snowflake, channel_id: Snowflake, ranges: &[[u32; 2]]) {
+        let mut channels = serde_json::Map::new();
+        channels.insert(channel_id.to_string(), json!(ranges));
+        self.send(
+            op::GUILD_SUBSCRIPTIONS,
+            json!({ "guild_id": guild_id, "typing": true, "threads": true, "activities": true, "channels": channels }),
         );
     }
 
@@ -364,7 +375,8 @@ fn identify_payload(config: &GatewayConfig) -> String {
                 "device": "Swiftcord",
                 "system_locale": config.locale,
             },
-            "presence": { "status": "online", "since": 0, "activities": [], "afk": false },
+            // "unknown" lets Discord apply the saved status (idle, do not disturb, invisible) rather than forcing online.
+            "presence": { "status": "unknown", "since": 0, "activities": [], "afk": false },
             "client_state": { "guild_versions": {} },
         }
     })

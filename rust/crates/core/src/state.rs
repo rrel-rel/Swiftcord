@@ -51,6 +51,68 @@ pub struct ChannelMessages {
     pub has_newer: bool,
 }
 
+/// A row of a member list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListRow {
+    /// A group header: a hoisted role's id, or "online" / "offline".
+    Group(String),
+    Member(Snowflake),
+}
+
+/// A channel's member list, as far as it has been synced: rows outside the subscribed ranges are `None`.
+#[derive(Debug, Default)]
+pub struct MemberList {
+    pub id: String,
+    pub member_count: u32,
+    pub online_count: u32,
+    pub groups: Vec<MemberListGroup>,
+    pub rows: Vec<Option<ListRow>>,
+}
+
+impl MemberList {
+    pub fn group_count(&self, id: &str) -> u32 {
+        self.groups.iter().find(|g| g.id == id).map_or(0, |g| g.count)
+    }
+
+    fn apply(&mut self, op: &MemberListOp) {
+        let row = |item: &MemberListItem| match item {
+            MemberListItem::Group(g) => ListRow::Group(g.id.clone()),
+            MemberListItem::Member(m) => ListRow::Member(m.user.as_ref().map(|u| u.id).unwrap_or_default()),
+        };
+        let rows = &mut self.rows;
+        let grow = |rows: &mut Vec<Option<ListRow>>, len: usize| {
+            if rows.len() < len {
+                rows.resize(len, None);
+            }
+        };
+        match (op.op.as_str(), op.range, op.index, &op.item) {
+            ("SYNC", Some([start, _]), ..) => {
+                grow(rows, start + op.items.len());
+                for (i, item) in op.items.iter().enumerate() {
+                    rows[start + i] = Some(row(item));
+                }
+            }
+            ("INSERT", _, Some(i), Some(item)) => {
+                grow(rows, i);
+                rows.insert(i, Some(row(item)));
+            }
+            ("UPDATE", _, Some(i), Some(item)) => {
+                grow(rows, i + 1);
+                rows[i] = Some(row(item));
+            }
+            ("DELETE", _, Some(i), _) if i < rows.len() => {
+                rows.remove(i);
+            }
+            ("INVALIDATE", Some([start, end]), ..) => {
+                for r in rows.iter_mut().take(end + 1).skip(start) {
+                    *r = None;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct State {
     pub me: Option<User>,
@@ -65,6 +127,10 @@ pub struct State {
     messages: HashMap<Snowflake, ChannelMessages>,
     read_states: HashMap<Snowflake, ReadStateEntry>,
     presences: HashMap<Snowflake, PresenceStatus>,
+    /// What people are doing ("Playing X", custom statuses), for those who are doing something.
+    activities: HashMap<Snowflake, String>,
+    /// The member list of the channel being viewed, by guild.
+    member_lists: HashMap<Snowflake, MemberList>,
     /// Notification settings by guild; DM settings are under `Snowflake::NONE`.
     guild_settings: HashMap<Snowflake, UserGuildSettings>,
     typing: HashMap<Snowflake, HashMap<Snowflake, Instant>>,
@@ -95,6 +161,14 @@ impl State {
 
     pub fn presence(&self, user: Snowflake) -> PresenceStatus {
         self.presences.get(&user).copied().unwrap_or_default()
+    }
+
+    pub fn activity(&self, user: Snowflake) -> Option<&str> {
+        self.activities.get(&user).map(String::as_str)
+    }
+
+    pub fn member_list(&self, guild: Snowflake) -> Option<&MemberList> {
+        self.member_lists.get(&guild)
     }
 
     pub fn messages(&self, channel: Snowflake) -> Option<&ChannelMessages> {
@@ -497,7 +571,7 @@ impl State {
             Event::Ready(r) => self.on_ready(*r),
             Event::ReadySupplemental(s) => {
                 for p in s.merged_presences.friends {
-                    self.presences.insert(p.user_id(), PresenceStatus::parse(&p.status));
+                    self.set_presence(p.user_id(), &p.status, &p.activities);
                 }
                 for g in s.guilds {
                     let states = self.voice_states.entry(g.id).or_default();
@@ -539,6 +613,7 @@ impl State {
                     self.guilds.remove(&d.id);
                     self.guild_order.retain(|&id| id != d.id);
                     self.members.remove(&d.id);
+                    self.member_lists.remove(&d.id);
                     self.voice_states.remove(&d.id);
                     let gone: Vec<Snowflake> =
                         self.channels.values().filter(|c| c.guild_id == Some(d.id)).map(|c| c.id).collect();
@@ -641,9 +716,9 @@ impl State {
                 // The local clock rather than the event timestamp, so clock skew can't hide indicators.
                 self.typing.entry(t.channel_id).or_default().insert(t.user_id, Instant::now() + TYPING_DURATION);
             }
-            Event::PresenceUpdate(p) => {
-                self.presences.insert(p.user.id, PresenceStatus::parse(&p.status));
-            }
+            Event::PresenceUpdate(p) => self.set_presence(p.user.id, &p.status, &p.activities),
+            Event::SessionsReplace(sessions) => self.set_own_presence(&sessions),
+            Event::MemberListUpdate(u) => self.on_member_list(*u),
             Event::UserUpdate(u) => {
                 if self.me.as_ref().is_some_and(|m| m.id == u.id) {
                     self.users.insert(u.id, (*u).clone());
@@ -759,6 +834,75 @@ impl State {
             .filter(|p| !p.is_empty())
             .and_then(crate::proto::read_guild_folders)
             .or_else(|| r.user_settings.and_then(|s| s.guild_folders));
+        self.set_own_presence(&r.sessions);
+    }
+
+    fn set_presence(&mut self, user: Snowflake, status: &str, activities: &[Activity]) {
+        self.presences.insert(user, PresenceStatus::parse(status));
+        match activity_summary(activities) {
+            Some(a) => self.activities.insert(user, a),
+            None => self.activities.remove(&user),
+        };
+    }
+
+    /// Our own status comes from our sessions rather than PRESENCE_UPDATE: the combined "all" session if
+    /// there is one. Invisible reads as offline.
+    fn set_own_presence(&mut self, sessions: &[SessionInfo]) {
+        let Some(me) = self.me.as_ref().map(|m| m.id) else { return };
+        if let Some(s) = sessions.iter().find(|s| s.session_id == "all").or(sessions.first()) {
+            self.set_presence(me, &s.status, &s.activities);
+        }
+    }
+
+    fn on_member_list(&mut self, u: MemberListUpdate) {
+        // Members (and their presences) are worth keeping whichever list they came in.
+        let items = u.ops.iter().flat_map(|op| op.items.iter().chain(&op.item));
+        let members: Vec<&ListMember> =
+            items.filter_map(|i| if let MemberListItem::Member(m) = i { Some(&**m) } else { None }).collect();
+        let mut presences = Vec::new();
+        let cache = self.members.entry(u.guild_id).or_default();
+        for m in members {
+            let Some(user) = &m.user else { continue };
+            self.users.insert(user.id, user.clone());
+            cache.insert(
+                user.id,
+                Member {
+                    user: Some(user.clone()),
+                    user_id: None,
+                    nick: m.nick.clone(),
+                    avatar: m.avatar.clone(),
+                    roles: m.roles.clone(),
+                    joined_at: m.joined_at,
+                    communication_disabled_until: m.communication_disabled_until,
+                },
+            );
+            if let Some(p) = &m.presence {
+                presences.push((user.id, p.status.clone(), p.activities.clone()));
+            }
+        }
+        let me = self.me.as_ref().map(|m| m.id);
+        for (user, status, activities) in presences.into_iter().filter(|(user, ..)| Some(*user) != me) {
+            self.set_presence(user, &status, &activities);
+        }
+
+        // Only one channel per guild is subscribed. After switching channels, the old list's updates are
+        // ignored until the new one syncs.
+        let list = self.member_lists.entry(u.guild_id).or_default();
+        if list.id != u.id {
+            if !list.id.is_empty() && !u.ops.iter().any(|o| o.op == "SYNC") {
+                return;
+            }
+            *list = MemberList { id: u.id, ..Default::default() };
+        }
+        for op in &u.ops {
+            list.apply(op);
+        }
+        list.member_count = u.member_count;
+        list.online_count = u.online_count;
+        list.groups = u.groups;
+        // Each non-empty group is a header row and its members.
+        let len = list.groups.iter().filter(|g| g.count > 0).map(|g| g.count as usize + 1).sum();
+        list.rows.resize(len, None);
     }
 
     fn add_guild(&mut self, mut g: Guild) {
@@ -952,6 +1096,74 @@ mod tests {
                "read_state":[{"id":"300","last_message_id":"399"}]}"#,
         ));
         s
+    }
+
+    fn list_member(id: u64, status: &str) -> String {
+        format!(r#"{{"member":{{"user":{{"id":"{id}","username":"u{id}"}},"roles":[],"presence":{{"user":{{"id":"{id}"}},"status":"{status}","activities":[{{"type":0,"name":"Chess"}}]}}}}}}"#)
+    }
+
+    #[test]
+    fn member_list_syncs_and_applies_ops() {
+        let mut s = ready_state();
+        let sync = format!(
+            r#"{{"guild_id":"100","id":"everyone","member_count":3,"online_count":2,
+                "groups":[{{"id":"online","count":2}},{{"id":"offline","count":1}}],
+                "ops":[{{"op":"SYNC","range":[0,99],"items":[{{"group":{{"id":"online","count":2}}}},{},{},
+                    {{"group":{{"id":"offline","count":1}}}},{}]}}]}}"#,
+            list_member(5, "online"),
+            list_member(6, "dnd"),
+            list_member(7, "offline"),
+        );
+        s.apply(ev("GUILD_MEMBER_LIST_UPDATE", &sync));
+        let list = s.member_list(Snowflake(100)).unwrap();
+        assert_eq!(list.rows.len(), 5);
+        assert_eq!(list.rows[0], Some(ListRow::Group("online".into())));
+        assert_eq!(list.rows[2], Some(ListRow::Member(Snowflake(6))));
+        assert_eq!(s.presence(Snowflake(6)), PresenceStatus::Dnd);
+        assert_eq!(s.activity(Snowflake(6)), Some("Playing Chess"));
+        assert_eq!(s.display_name(Snowflake(7), Some(Snowflake(100))), "u7");
+
+        // 6 goes offline: deleted from the online group, inserted into the offline one.
+        let update = format!(
+            r#"{{"guild_id":"100","id":"everyone","member_count":3,"online_count":1,
+                "groups":[{{"id":"online","count":1}},{{"id":"offline","count":2}}],
+                "ops":[{{"op":"DELETE","index":2}},{{"op":"INSERT","index":3,"item":{}}}]}}"#,
+            list_member(6, "offline"),
+        );
+        s.apply(ev("GUILD_MEMBER_LIST_UPDATE", &update));
+        let list = s.member_list(Snowflake(100)).unwrap();
+        let rows: Vec<_> = list.rows.iter().map(|r| r.clone().unwrap()).collect();
+        assert_eq!(
+            rows,
+            [
+                ListRow::Group("online".into()),
+                ListRow::Member(Snowflake(5)),
+                ListRow::Group("offline".into()),
+                ListRow::Member(Snowflake(6)),
+                ListRow::Member(Snowflake(7)),
+            ]
+        );
+        assert_eq!(list.group_count("offline"), 2);
+        assert_eq!(s.presence(Snowflake(6)), PresenceStatus::Offline);
+
+        // Another list's updates are ignored until it syncs.
+        let other = r#"{"guild_id":"100","id":"123","member_count":1,"groups":[{"id":"online","count":1}],
+            "ops":[{"op":"INVALIDATE","range":[0,99]}]}"#;
+        s.apply(ev("GUILD_MEMBER_LIST_UPDATE", other));
+        assert_eq!(s.member_list(Snowflake(100)).unwrap().id, "everyone");
+    }
+
+    #[test]
+    fn own_status_comes_from_sessions() {
+        let mut s = ready_state();
+        assert_eq!(s.presence(Snowflake(1)), PresenceStatus::Offline);
+        s.apply(ev(
+            "SESSIONS_REPLACE",
+            r#"[{"session_id":"abc","status":"online"},
+                {"session_id":"all","status":"idle","activities":[{"type":4,"name":"Custom Status","state":"brb","emoji":{"name":"☕"}}]}]"#,
+        ));
+        assert_eq!(s.presence(Snowflake(1)), PresenceStatus::Idle);
+        assert_eq!(s.activity(Snowflake(1)), Some("☕ brb"));
     }
 
     #[test]

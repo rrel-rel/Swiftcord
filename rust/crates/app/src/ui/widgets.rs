@@ -25,8 +25,43 @@ pub fn status_color(s: PresenceStatus) -> Color32 {
         PresenceStatus::Online => theme::GREEN,
         PresenceStatus::Idle => theme::YELLOW,
         PresenceStatus::Dnd => theme::RED,
-        PresenceStatus::Offline => theme::FAINT,
+        PresenceStatus::Offline => theme::OFFLINE,
     }
+}
+
+/// A status dot in Discord's shapes, cut out with `bg`: a moon for idle, a bar for do not disturb and a ring
+/// for offline, so they read without colour too.
+pub fn status_dot(painter: &egui::Painter, c: egui::Pos2, r: f32, status: PresenceStatus, bg: Color32) {
+    painter.circle_filled(c, r, status_color(status));
+    match status {
+        PresenceStatus::Online => {}
+        PresenceStatus::Idle => {
+            // The cut-out reaches past the dot; keep it off the avatar.
+            let clipped = painter.with_clip_rect(egui::Rect::from_center_size(c, Vec2::splat(r * 2.0)).intersect(painter.clip_rect()));
+            clipped.circle_filled(c - Vec2::splat(r * 0.5), r * 0.75, bg);
+        }
+        PresenceStatus::Dnd => {
+            let bar = egui::Rect::from_center_size(c, Vec2::new(r * 1.5, r * 0.5));
+            painter.rect_filled(bar, r * 0.25, bg);
+        }
+        PresenceStatus::Offline => {
+            painter.circle_filled(c, r * 0.5, bg);
+        }
+    }
+}
+
+/// Paints an avatar into `rect` with a status dot in its bottom-right corner, ringed with `bg`.
+pub fn paint_avatar_with_status(ui: &Ui, user: &User, rect: egui::Rect, status: PresenceStatus, bg: Color32) {
+    let size = rect.width();
+    let px = if size <= 32.0 { 64 } else { 128 };
+    egui::Image::from_uri(swiftcord_core::cdn::avatar(user, px))
+        .corner_radius(CornerRadius::same((size / 2.0) as u8))
+        .show_loading_spinner(false)
+        .paint_at(ui, rect);
+    let dot = size * 0.3;
+    let c = rect.right_bottom() - Vec2::splat(dot * 0.5);
+    ui.painter().circle_filled(c, dot * 0.5 + 2.0, bg);
+    status_dot(ui.painter(), c, dot * 0.5, status, bg);
 }
 
 /// An avatar with a presence dot in its bottom-right corner.
@@ -35,7 +70,7 @@ pub fn avatar_with_status(ui: &mut Ui, user: &User, size: f32, status: PresenceS
     let dot = size * 0.3;
     let c = r.rect.right_bottom() - Vec2::splat(dot * 0.5);
     ui.painter().circle_filled(c, dot * 0.5 + 2.0, bg);
-    ui.painter().circle_filled(c, dot * 0.5, status_color(status));
+    status_dot(ui.painter(), c, dot * 0.5, status, bg);
     r
 }
 
