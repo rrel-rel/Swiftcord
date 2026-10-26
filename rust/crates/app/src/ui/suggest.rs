@@ -50,7 +50,7 @@ pub fn suggestions(s: &Session, catalog: &Catalog, channel: &Channel, token: &To
                     id: u.id,
                     display: state.display_name(u.id, channel.guild_id),
                     username: u.username.clone(),
-                    avatar: swiftcord_core::cdn::avatar(u, 64),
+                    avatar: state.avatar_url(u, channel.guild_id, 64),
                 });
             }
             if let Some(g) = channel.guild_id.and_then(|g| state.guild(g)) {

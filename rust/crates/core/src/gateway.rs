@@ -128,6 +128,14 @@ impl Gateway {
         );
     }
 
+    /// Fetches particular members (for their nicknames, roles and server avatars), at most 100 at a time;
+    /// they arrive as GUILD_MEMBERS_CHUNK.
+    pub fn request_members(&self, guild_id: Snowflake, user_ids: &[Snowflake]) {
+        for ids in user_ids.chunks(100) {
+            self.send(op::REQUEST_GUILD_MEMBERS, json!({ "guild_id": [guild_id], "user_ids": ids, "presences": false }));
+        }
+    }
+
     /// Searches a guild's members by name prefix; results arrive as GUILD_MEMBERS_CHUNK.
     pub fn search_members(&self, guild_id: Snowflake, query: &str, limit: u32) {
         self.send(op::REQUEST_GUILD_MEMBERS, json!({ "guild_id": [guild_id], "query": query, "limit": limit, "presences": false }));

@@ -153,7 +153,14 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut
             if let Some(topic) = c.topic.as_deref().filter(|t| !t.is_empty()) {
                 ui.add(egui::Separator::default().vertical().spacing(16.0));
                 let first_line = topic.lines().next().unwrap_or_default();
-                ui.add(egui::Label::new(RichText::new(first_line).size(13.5).color(theme::MUTED)).truncate()).on_hover_text(topic);
+                // Leave room for the buttons and search box on the right, which are laid out after.
+                let icons = [c.guild_id.is_some(), !c.is_forum(), c.has_threads() && !c.is_forum(), c.is_private()].iter().filter(|b| **b).count();
+                let right = 230.0 + 34.0 * icons as f32 + if c.is_thread() { 110.0 } else { 0.0 };
+                let room = (ui.available_width() - right).max(40.0);
+                ui.scope(|ui| {
+                    ui.set_max_width(room);
+                    ui.add(egui::Label::new(RichText::new(first_line).size(13.5).color(theme::MUTED)).truncate()).on_hover_text(topic);
+                });
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 search_field(ui, c, search_box, actions);

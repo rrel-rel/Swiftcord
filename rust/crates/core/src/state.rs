@@ -261,6 +261,21 @@ impl State {
         self.channels.get(&channel).map_or(0, |c| self.permissions_for(c))
     }
 
+    /// Stores our own member after changing our server profile (the gateway also says, but later).
+    pub fn set_my_member(&mut self, guild: Snowflake, mut member: Member) {
+        let Some(me) = self.me.clone() else { return };
+        member.user.get_or_insert(me.clone());
+        self.members.entry(guild).or_default().insert(me.id, member);
+        self.revision += 1;
+    }
+
+    /// The current user's server-wide permissions (from roles, before any channel's overwrites).
+    pub fn guild_permissions(&self, guild_id: Snowflake) -> u64 {
+        let (Some(guild), Some(me)) = (self.guilds.get(&guild_id), &self.me) else { return 0 };
+        let roles = self.member(guild_id, me.id).map(|m| m.roles.as_slice()).unwrap_or(&[]);
+        permissions::compute_base(guild, me.id, roles)
+    }
+
     fn permissions_for(&self, channel: &Channel) -> u64 {
         let Some(guild_id) = channel.guild_id else { return perm::ALL };
         let (Some(guild), Some(me)) = (self.guilds.get(&guild_id), &self.me) else { return 0 };
@@ -351,6 +366,15 @@ impl State {
             return nick;
         }
         self.users.get(&user).map_or_else(|| "Unknown User".to_owned(), |u| u.display_name().to_owned())
+    }
+
+    /// Someone's avatar as shown in a server: their server profile's, if they set one, else their own.
+    pub fn avatar_url(&self, user: &User, guild: Option<Snowflake>, size: u32) -> String {
+        let server = guild.and_then(|g| Some((g, self.member(g, user.id)?.avatar.as_deref().filter(|h| !h.is_empty())?)));
+        match server {
+            Some((g, hash)) => crate::cdn::member_avatar(g, user.id, hash, size),
+            None => crate::cdn::avatar(user, size),
+        }
     }
 
     /// The colour of the member's highest coloured role.

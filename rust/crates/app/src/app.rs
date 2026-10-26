@@ -41,6 +41,9 @@ pub enum AppEvent {
     StickerPacks(Result<Vec<swiftcord_core::models::StickerPack>, String>),
     StreamPreview { key: String, result: Result<Option<String>, String> },
     SearchResults { generation: u64, result: Result<swiftcord_core::rest::SearchResult, String> },
+    /// A picture chosen for a server avatar: its data URI and a preview (`None` if the dialog was cancelled).
+    ServerAvatarPicked(Result<Option<(String, egui::ColorImage)>, String>),
+    ServerProfileSaved { guild: Snowflake, result: Result<swiftcord_core::models::Member, String> },
     /// The frecency settings (favourite GIFs) as read or as saved.
     Frecency(Result<String, String>),
     /// Saving favourites failed; restore these settings.
@@ -109,6 +112,11 @@ pub enum Action {
     WatchStream { guild: Option<Snowflake>, channel: Snowflake, user: Snowflake },
     /// Fetch a Go Live stream's preview picture (by stream key).
     LoadStreamPreview(String),
+    /// Open the editor for our profile in a server (nickname and server avatar).
+    EditServerProfile(Snowflake),
+    PickServerAvatar,
+    SaveServerProfile,
+    CloseServerProfile,
     /// Search messages (the whole server, or the DM) from this channel.
     Search { channel: Snowflake, text: String },
     SearchMore,
@@ -223,6 +231,8 @@ pub struct UiState {
     /// The open message search, and what's typed in the header's search box.
     pub search: Option<crate::search_glue::Search>,
     pub search_box: String,
+    /// The open server profile editor.
+    pub server_profile: Option<ui::server_profile::Editor>,
     /// Favourite GIFs, most recent first (from the synced frecency settings).
     pub favorite_gifs: Vec<swiftcord_core::proto::FavoriteGif>,
     /// Players for GIF-style video clips on screen.
@@ -251,6 +261,8 @@ pub struct App {
     pub sharing: Option<crate::share_glue::Sharing>,
     pub settings: crate::settings::Settings,
     history_failed: HashMap<Snowflake, Instant>,
+    /// Members already asked for (by server), so each is asked for once per connection.
+    members_requested: HashSet<(Snowflake, Snowflake)>,
     /// The frecency settings as last read or written, so favourites can be edited without touching the rest.
     frecency: Option<String>,
 }
@@ -277,6 +289,7 @@ impl App {
             sharing: None,
             settings: crate::settings::Settings::load(),
             history_failed: HashMap::new(),
+            members_requested: HashSet::new(),
             frecency: None,
         };
         app.ui.hide_members = app.settings.hide_members;
@@ -392,7 +405,8 @@ impl App {
                 match result {
                     Ok(page) => {
                         tracing::info!("loaded {} messages in {channel}", page.len());
-                        s.state.add_history(channel, page, HISTORY_PAGE as usize)
+                        s.state.add_history(channel, page, HISTORY_PAGE as usize);
+                        self.request_authors(channel);
                     }
                     Err(e) => {
                         // Don't retry every frame; wait a while before trying this channel again.
@@ -406,7 +420,10 @@ impl App {
                 self.ui.loading.remove(&channel);
                 let Some(s) = &mut self.session else { return };
                 match result {
-                    Ok(page) => s.state.add_newer(channel, page, HISTORY_PAGE as usize),
+                    Ok(page) => {
+                        s.state.add_newer(channel, page, HISTORY_PAGE as usize);
+                        self.request_authors(channel);
+                    }
                     Err(e) => self.banner(format!("Couldn't load messages: {e}")),
                 }
             }
@@ -416,6 +433,7 @@ impl App {
                 match result {
                     Ok(page) if page.iter().any(|m| m.id == message) => {
                         s.state.set_around(channel, page);
+                        self.request_authors(channel);
                         self.ui.chat.entry(channel).or_default().jump_to(message);
                     }
                     Ok(_) => self.banner("That message was deleted or isn't available."),
@@ -501,6 +519,33 @@ impl App {
                 self.banner(format!("Couldn't update favourites: {error}"));
             }
             AppEvent::SearchResults { generation, result } => crate::search_glue::on_results(self, generation, result),
+            AppEvent::ServerAvatarPicked(result) => {
+                let ctx = self.ctx().clone();
+                let Some(ed) = &mut self.ui.server_profile else { return };
+                match result {
+                    Ok(Some((data_uri, image))) => {
+                        let preview = ctx.load_texture("server-avatar-preview", image, egui::TextureOptions::LINEAR);
+                        ed.avatar = ui::server_profile::AvatarChange::Set { data_uri, preview };
+                        ed.error = None;
+                    }
+                    Ok(None) => {}
+                    Err(e) => ed.error = Some(e),
+                }
+            }
+            AppEvent::ServerProfileSaved { guild, result } => match result {
+                Ok(member) => {
+                    if let Some(s) = &mut self.session {
+                        s.state.set_my_member(guild, member);
+                    }
+                    self.ui.server_profile = None;
+                }
+                Err(e) => {
+                    if let Some(ed) = &mut self.ui.server_profile {
+                        ed.busy = false;
+                        ed.error = Some(format!("Couldn't save: {e}"));
+                    }
+                }
+            },
             AppEvent::StreamPreview { key, result } => {
                 let url = result.unwrap_or_else(|e| {
                     tracing::debug!("stream preview for {key}: {e}");
@@ -580,7 +625,34 @@ impl App {
         }
     }
 
+    /// Asks for the members behind a server channel's loaded messages (authors and people mentioned) that we
+    /// don't have yet: history from the API comes without them, and they hold the server profile (nickname
+    /// and server avatar) and roles.
+    fn request_authors(&mut self, channel: Snowflake) {
+        let Some(s) = &self.session else { return };
+        let Some(guild) = s.state.channel(channel).and_then(|c| c.guild_id) else { return };
+        let Some(messages) = s.state.messages(channel) else { return };
+        let mut wanted = Vec::new();
+        for m in messages.list.values() {
+            // The message, and the one it replies to (shown above it).
+            let people = std::iter::once(m).chain(m.referenced_message.as_deref()).flat_map(|m| {
+                let author = (!m.author.bot).then_some(m.author.id);
+                author.into_iter().chain(m.mentions.iter().map(|u| u.id))
+            });
+            for id in people {
+                if s.state.member(guild, id).is_none() && self.members_requested.insert((guild, id)) {
+                    wanted.push(id);
+                }
+            }
+        }
+        if !wanted.is_empty() {
+            tracing::debug!("asking for {} members in {guild}", wanted.len());
+            s.gateway.request_members(guild, &wanted);
+        }
+    }
+
     fn on_ready(&mut self) {
+        self.members_requested.clear();
         let Some(s) = &mut self.session else { return };
         if crate::demo::enabled() {
             crate::demo::install(&mut s.state);
@@ -1025,6 +1097,37 @@ impl App {
                     let _ = rest.typing(c).await;
                 });
             }
+            Action::EditServerProfile(guild) => {
+                if let Some(s) = &self.session {
+                    self.ui.server_profile = Some(ui::server_profile::Editor::new(s, guild));
+                }
+            }
+            Action::PickServerAvatar => {
+                self.spawn(async move {
+                    let picked = rfd::AsyncFileDialog::new()
+                        .set_title("Choose a server avatar")
+                        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
+                        .pick_file()
+                        .await;
+                    let Some(file) = picked else { return AppEvent::ServerAvatarPicked(Ok(None)) };
+                    let bytes = file.read().await;
+                    let result = tokio::task::spawn_blocking(move || ui::server_profile::prepare_avatar(&bytes)).await.map_err(|e| e.to_string()).and_then(|r| r);
+                    AppEvent::ServerAvatarPicked(result.map(Some))
+                });
+            }
+            Action::SaveServerProfile => {
+                let Some(s) = &self.session else { return };
+                let Some(ed) = &mut self.ui.server_profile else { return };
+                ed.busy = true;
+                ed.error = None;
+                let (guild, (nick, avatar)) = (ed.guild, ed.changes());
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    let result = rest.update_server_profile(guild, nick.as_deref(), avatar.as_ref().map(|a| a.as_deref())).await.map_err(|e| e.to_string());
+                    AppEvent::ServerProfileSaved { guild, result }
+                });
+            }
+            Action::CloseServerProfile => self.ui.server_profile = None,
             Action::PickFiles(channel) => {
                 self.spawn(async move {
                     let picked = rfd::AsyncFileDialog::new().set_title("Upload files").pick_files().await.unwrap_or_default();

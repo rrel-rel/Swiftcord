@@ -16,6 +16,11 @@ pub fn avatar(user: &User, size: u32) -> String {
     }
 }
 
+/// A member's server profile avatar (a Nitro perk), when they've set one.
+pub fn member_avatar(guild: Snowflake, user: Snowflake, hash: &str, size: u32) -> String {
+    format!("{CDN}/guilds/{guild}/users/{user}/avatars/{hash}.{}?size={size}", ext(hash, false))
+}
+
 pub fn default_avatar(user: &User) -> String {
     // New usernames index by ID; legacy discriminators by discriminator.
     let index = match user.discriminator.as_deref().and_then(|d| d.parse::<u64>().ok()) {

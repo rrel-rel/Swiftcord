@@ -369,6 +369,19 @@ impl Rest {
     }
 
     /// A channel or thread we haven't been sent (e.g. an archived thread someone linked).
+    /// Changes our server profile: `nick` (empty for none) and/or `avatar` (a data URI, or `None` to remove
+    /// it; a server avatar needs Nitro). Fields left as `None` at the outer level aren't changed.
+    pub async fn update_server_profile(&self, guild: Snowflake, nick: Option<&str>, avatar: Option<Option<&str>>) -> Result<Member> {
+        let mut body = serde_json::Map::new();
+        if let Some(n) = nick {
+            body.insert("nick".into(), json!(n));
+        }
+        if let Some(a) = avatar {
+            body.insert("avatar".into(), json!(a));
+        }
+        self.json(Method::PATCH, &format!("guilds/{guild}/members/@me"), Body::Json(serde_json::Value::Object(body))).await
+    }
+
     /// Searches a server's messages (or, without `guild`, one DM's), with Discord's search parameters
     /// (`content`, `author_id`, `channel_id`, `has`, `mentions`, `min_id`, `max_id`, `offset`), newest first.
     /// A server not yet indexed for search answers `Indexing` with how long to wait.

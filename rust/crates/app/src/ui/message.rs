@@ -132,7 +132,7 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
                     ui.painter().text(rect.right_center() + Vec2::new(4.0, 1.0), egui::Align2::RIGHT_CENTER, t, theme::font(10.5), theme::FAINT);
                 }
             } else {
-                let r = widgets::user_avatar(ui, &msg.author, 40.0);
+                let r = widgets::member_avatar(ui, cx.state, &msg.author, cx.guild, 40.0);
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && Some(msg.author.id) != me {
                     cx.actions.push(Action::OpenDm(msg.author.id));
                 }
@@ -318,6 +318,42 @@ fn edit_box(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     }
 }
 
+/// A message's text for a one-line preview: mentions, roles, channels and custom emoji as their names rather
+/// than their `<@123>` codes, on one line.
+fn plain_preview(content: &str, cx: &Ctx) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(start) = rest.find('<') {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let Some(end) = tail.find('>') else {
+            out.push_str(tail);
+            rest = "";
+            break;
+        };
+        let inner = &tail[1..end];
+        let id = |s: &str| s.parse::<u64>().ok().map(Snowflake);
+        let named = if let Some(u) = inner.strip_prefix("@&").and_then(id) {
+            cx.guild.and_then(|g| cx.state.guild(g)).and_then(|g| g.roles.iter().find(|r| r.id == u)).map(|r| format!("@{}", r.name))
+        } else if let Some(u) = inner.strip_prefix("@!").or_else(|| inner.strip_prefix('@')).and_then(id) {
+            Some(format!("@{}", cx.state.display_name(u, cx.guild)))
+        } else if let Some(c) = inner.strip_prefix('#').and_then(id) {
+            Some(format!("#{}", cx.state.channel(c).map_or_else(|| "unknown".to_owned(), |c| c.label())))
+        } else if inner.starts_with(':') || inner.starts_with("a:") {
+            inner.trim_start_matches('a').split(':').nth(1).map(|n| format!(":{n}:"))
+        } else {
+            None
+        };
+        match named {
+            Some(n) => out.push_str(&n),
+            None => out.push_str(&tail[..=end]),
+        }
+        rest = &tail[end + 1..];
+    }
+    out.push_str(rest);
+    out.replace('\n', " ")
+}
+
 fn reply_preview(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     ui.horizontal(|ui| {
         ui.add_space(GUTTER - 36.0);
@@ -329,10 +365,10 @@ fn reply_preview(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         p.line_segment([rect.left_top() + Vec2::new(4.0, 7.0), rect.right_top() + Vec2::new(-4.0, 7.0)], stroke);
         match msg.referenced_message.as_deref() {
             Some(r) => {
-                widgets::user_avatar(ui, &r.author, 16.0);
+                widgets::member_avatar(ui, cx.state, &r.author, cx.guild, 16.0);
                 let color = cx.guild.and_then(|g| cx.state.role_color(g, r.author.id));
                 ui.label(RichText::new(cx.state.display_name(r.author.id, cx.guild)).font(theme::font_semibold(13.0)).color(theme::role_color(color)));
-                let preview: String = if r.content.is_empty() { "Click to see attachment".into() } else { r.content.replace('\n', " ") };
+                let preview: String = if r.content.is_empty() { "Click to see attachment".into() } else { plain_preview(&r.content, cx) };
                 let resp = ui.add(egui::Label::new(RichText::new(preview).size(13.0).color(theme::MUTED)).truncate().sense(Sense::click()));
                 if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     cx.actions.push(Action::JumpTo { channel: cx.channel, message: Some(r.id) });

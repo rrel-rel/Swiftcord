@@ -106,6 +106,16 @@ fn guild(ui: &mut Ui, state: &State, uis: &UiState, badges: &HashMap<Snowflake, 
     if r.clicked() {
         actions.push(Action::SelectGuild(Some(id)));
     }
+    r.context_menu(|ui| {
+        if ui.button("Edit Server Profile").clicked() {
+            actions.push(Action::EditServerProfile(id));
+            ui.close();
+        }
+        if ui.button("Copy Server ID").clicked() {
+            actions.push(Action::Copy(id.to_string()));
+            ui.close();
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]

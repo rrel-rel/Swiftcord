@@ -29,8 +29,17 @@ pub fn avatar(ui: &mut Ui, url: &str, size: f32) -> Response {
 }
 
 pub fn user_avatar(ui: &mut Ui, user: &User, size: f32) -> Response {
-    let px = if size <= 32.0 { 64 } else { 128 };
-    avatar(ui, &swiftcord_core::cdn::avatar(user, px), size)
+    avatar(ui, &swiftcord_core::cdn::avatar(user, avatar_px(size)), size)
+}
+
+/// Someone's avatar as shown in `guild`: their server profile's, if they have one.
+pub fn member_avatar(ui: &mut Ui, state: &swiftcord_core::state::State, user: &User, guild: Option<swiftcord_core::Snowflake>, size: f32) -> Response {
+    avatar(ui, &state.avatar_url(user, guild, avatar_px(size)), size)
+}
+
+/// The image size to fetch for an avatar shown `size` points wide.
+pub fn avatar_px(size: f32) -> u32 {
+    if size <= 32.0 { 64 } else { 128 }
 }
 
 pub fn status_color(s: PresenceStatus) -> Color32 {
@@ -63,11 +72,10 @@ pub fn status_dot(painter: &egui::Painter, c: egui::Pos2, r: f32, status: Presen
     }
 }
 
-/// Paints an avatar into `rect` with a status dot in its bottom-right corner, ringed with `bg`.
-pub fn paint_avatar_with_status(ui: &Ui, user: &User, rect: egui::Rect, status: PresenceStatus, bg: Color32) {
+/// Paints an avatar (`url`) into `rect` with a status dot in its bottom-right corner, ringed with `bg`.
+pub fn paint_avatar_with_status(ui: &Ui, url: String, rect: egui::Rect, status: PresenceStatus, bg: Color32) {
     let size = rect.width();
-    let px = if size <= 32.0 { 64 } else { 128 };
-    egui::Image::from_uri(swiftcord_core::cdn::avatar(user, px))
+    egui::Image::from_uri(url)
         .corner_radius(CornerRadius::same((size / 2.0) as u8))
         .show_loading_spinner(false)
         .paint_at(ui, rect);

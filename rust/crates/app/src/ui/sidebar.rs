@@ -214,7 +214,7 @@ fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel, actions
         ui.horizontal(|ui| {
             ui.add_space(36.0);
             let r = match state.user(vs.user_id) {
-                Some(u) => widgets::user_avatar(ui, u, 22.0),
+                Some(u) => widgets::member_avatar(ui, state, u, c.guild_id, 22.0),
                 None => ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover()).1,
             };
             if speaking {
