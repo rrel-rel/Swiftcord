@@ -706,6 +706,12 @@ impl App {
             }),
             None => draft.text.trim().to_owned(),
         };
+        // ":wave:" typed out in full becomes the emoji, as in Discord; custom ones from this server.
+        let guild = s.state.channel(channel).and_then(|c| c.guild_id).and_then(|g| s.state.guild(g));
+        let content = crate::ui::emoji::expand_shortcodes(&content, &self.emoji, |name| {
+            let e = guild?.emojis.iter().find(|e| e.name.as_deref() == Some(name))?;
+            Some(format!("<{}:{name}:{}>", if e.animated { "a" } else { "" }, e.id?))
+        });
         draft.mentions.clear();
         draft.dismissed = None;
         let files = std::mem::take(&mut draft.files);

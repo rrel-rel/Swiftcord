@@ -449,17 +449,21 @@ pub fn is_emoji_grapheme(g: &str) -> bool {
     if g.contains('\u{20E3}') {
         return true;
     }
-    // Regional indicator pairs (flags).
+    // Regional indicators: pairs are flags, and Discord shows a lone one as a letter tile.
     if (0x1F1E6..=0x1F1FF).contains(&cp) {
-        return chars.next().is_some_and(|c| (0x1F1E6..=0x1F1FF).contains(&(c as u32)));
+        return chars.next().is_none_or(|c| (0x1F1E6..=0x1F1FF).contains(&(c as u32)));
     }
     // The supplementary planes' emoji blocks (pictographs, emoticons, transport, geometric shapes like 🟢,
     // supplemental symbols…), minus skin-tone modifiers on their own.
     let pictographic = matches!(cp, 0x1F000..=0x1FAFF) && !(0x1F3FB..=0x1F3FF).contains(&cp);
     // Older symbols are only emoji when they're followed by the emoji presentation selector.
     let symbol = matches!(cp, 0x2600..=0x27BF | 0x2300..=0x23FF | 0x2B00..=0x2BFF | 0x00A9 | 0x00AE | 0x203C | 0x2049
-        | 0x2122 | 0x2139 | 0x2194..=0x21AA | 0x3030 | 0x303D | 0x3297 | 0x3299);
-    pictographic || (symbol && (g.contains('\u{FE0F}') || is_default_emoji_symbol(cp)))
+        | 0x2122 | 0x2139 | 0x2194..=0x21AA | 0x24C2 | 0x25AA..=0x25FE | 0x2934 | 0x2935 | 0x3030 | 0x303D | 0x3297 | 0x3299);
+    // A skin tone also makes one an emoji (✌🏽). Discord writes ⚧ without the selector, and shows © ® ™ as
+    // emoji too.
+    let toned = g.chars().any(|c| (0x1F3FB..=0x1F3FF).contains(&(c as u32)));
+    let discord = matches!(cp, 0x26A7 | 0xA9 | 0xAE | 0x2122);
+    pictographic || (symbol && (g.contains('\u{FE0F}') || toned || discord || is_default_emoji_symbol(cp)))
 }
 
 /// Symbols in the BMP that render as emoji by default (Emoji_Presentation=Yes).
@@ -474,6 +478,10 @@ fn is_default_emoji_symbol(cp: u32) -> bool {
 /// The Twemoji asset name for an emoji: code points in hex joined by '-', without FE0F unless it's a ZWJ
 /// sequence.
 pub fn twemoji_name(emoji: &str) -> String {
+    // The eye in a speech bubble is the exception: Twemoji names it without its selectors.
+    if emoji.replace('\u{FE0F}', "") == "\u{1F441}\u{200D}\u{1F5E8}" {
+        return "1f441-200d-1f5e8".into();
+    }
     let keep_fe0f = emoji.contains('\u{200D}');
     emoji
         .chars()
@@ -539,8 +547,12 @@ mod tests {
         assert!(is_emoji_only(&parse("😀 👍🏽")));
         assert!(!is_emoji_only(&parse("😀 hi")));
         assert!(is_emoji_only(&parse("🇯🇵")));
-        assert!(!is_emoji_only(&parse("©")));
+        // As in Discord, © is an emoji; arrows without the selector are text.
+        assert!(is_emoji_only(&parse("©")));
+        assert!(!is_emoji_only(&parse("↔")));
         assert!(is_emoji_only(&parse("🟢 🟡")));
+        assert!(is_emoji_only(&parse("▶️ ◼️ ⤴️ Ⓜ️ 🇦")));
+        assert_eq!(twemoji_name("👁️‍🗨️"), "1f441-200d-1f5e8");
         assert_eq!(twemoji_name("👍🏽"), "1f44d-1f3fd");
         assert_eq!(twemoji_name("❤️"), "2764");
         assert_eq!(twemoji_name("👨‍👩‍👧"), "1f468-200d-1f469-200d-1f467");

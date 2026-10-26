@@ -1,5 +1,7 @@
 //! Emoji picker for reactions and the composer: recents, server emoji, then Unicode by category.
 
+use std::collections::HashMap;
+
 use eframe::egui::{self, Pos2, RichText, Ui, Vec2};
 use serde::Deserialize;
 use swiftcord_core::models::Emoji;
@@ -31,20 +33,36 @@ impl PickerTarget {
 struct Unicode {
     ch: String,
     name: String,
-    terms: String,
+    /// Other names that work as :shortcodes:.
+    aliases: Vec<String>,
+    keywords: String,
     group: usize,
+    /// Light to dark.
+    skins: Option<[String; 5]>,
+}
+
+impl Unicode {
+    fn names(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.name.as_str()).chain(self.aliases.iter().map(String::as_str))
+    }
 }
 
 pub struct Catalog {
     unicode: Vec<Unicode>,
     groups: Vec<String>,
     recent: Vec<Emoji>,
+    /// Every name and alias, and every emoji (with skin tones), to its entry.
+    by_name: HashMap<String, usize>,
+    by_char: HashMap<String, usize>,
+    /// 0 for the default yellow, 1–5 light to dark.
+    skin_tone: usize,
 }
 
 #[derive(Deserialize)]
 struct File {
     groups: Vec<String>,
-    /// [character, name, search terms, group, (skin tones)]; the last is optional, so entries are read loosely.
+    /// [character, name, other names, keywords, group, (skin tones)]; the last is optional, so entries are
+    /// read loosely.
     emoji: Vec<Vec<serde_json::Value>>,
 }
 
@@ -52,17 +70,38 @@ fn recent_path() -> std::path::PathBuf {
     crate::platform::data_dir().join("recent-emoji.json")
 }
 
+fn skin_tone_path() -> std::path::PathBuf {
+    crate::platform::data_dir().join("emoji-skin-tone")
+}
+
 impl Catalog {
     pub fn load() -> Catalog {
         let file: File = serde_json::from_str(EMOJI_JSON).unwrap_or(File { groups: vec![], emoji: vec![] });
-        let unicode = file
+        let unicode: Vec<Unicode> = file
             .emoji
             .into_iter()
             .filter_map(|e| {
                 let s = |i: usize| e.get(i).and_then(|v| v.as_str()).map(str::to_owned);
-                Some(Unicode { ch: s(0)?, name: s(1)?, terms: s(2).unwrap_or_default(), group: e.get(3)?.as_u64()? as usize })
+                Some(Unicode {
+                    ch: s(0)?,
+                    name: s(1)?,
+                    aliases: s(2).unwrap_or_default().split_whitespace().map(str::to_owned).collect(),
+                    keywords: s(3).unwrap_or_default(),
+                    group: e.get(4)?.as_u64()? as usize,
+                    skins: e.get(5).and_then(|v| serde_json::from_value(v.clone()).ok()),
+                })
             })
             .collect();
+        let mut by_name = HashMap::new();
+        let mut by_char = HashMap::new();
+        for (i, u) in unicode.iter().enumerate() {
+            for n in u.names() {
+                by_name.entry(n.to_owned()).or_insert(i);
+            }
+            for c in std::iter::once(&u.ch).chain(u.skins.iter().flatten()) {
+                by_char.insert(c.clone(), i);
+            }
+        }
         let recent = std::fs::read_to_string(recent_path())
             .ok()
             .and_then(|s| serde_json::from_str::<Vec<(Option<Snowflake>, Option<String>, bool)>>(&s).ok())
@@ -70,28 +109,64 @@ impl Catalog {
             .into_iter()
             .map(|(id, name, animated)| Emoji { id, name, animated })
             .collect();
-        Catalog { unicode, groups: file.groups, recent }
+        let skin_tone = std::fs::read_to_string(skin_tone_path()).ok().and_then(|s| s.trim().parse().ok()).filter(|t| *t <= 5).unwrap_or(0);
+        Catalog { unicode, groups: file.groups, recent, by_name, by_char, skin_tone }
     }
 
-    /// Unicode emoji whose short name starts with `query` (then ones whose name or keywords contain it), as
-    /// (character, name).
+    fn toned(&self, u: &Unicode, tone: usize) -> String {
+        match (&u.skins, tone) {
+            (Some(skins), 1..=5) => skins[tone - 1].clone(),
+            _ => u.ch.clone(),
+        }
+    }
+
+    pub fn set_skin_tone(&mut self, tone: usize) {
+        self.skin_tone = tone.min(5);
+        let _ = std::fs::write(skin_tone_path(), self.skin_tone.to_string());
+    }
+
+    /// The emoji a :shortcode: stands for (`thumbsup`, `+1`, `thumbsup_tone2`, `thumbsup::skin-tone-2`), in
+    /// the chosen skin tone unless the code gives one.
+    pub fn by_shortcode(&self, code: &str) -> Option<String> {
+        let valid = |t: &str| t.parse::<usize>().ok().filter(|t| (1..=5).contains(t));
+        let (mut name, mut tone) = match code.split_once("::skin-tone-") {
+            Some((n, t)) => (n, valid(t)?),
+            None => (code, self.skin_tone),
+        };
+        if let Some((n, t)) = name.rsplit_once("_tone").and_then(|(n, t)| Some((n, valid(t)?))) {
+            if self.by_name.contains_key(n) {
+                (name, tone) = (n, t);
+            }
+        }
+        Some(self.toned(&self.unicode[*self.by_name.get(name)?], tone))
+    }
+
+    /// An emoji's :shortcode: name, for showing on hover.
+    pub fn name_of(&self, ch: &str) -> Option<&str> {
+        self.by_char.get(ch).map(|&i| self.unicode[i].name.as_str())
+    }
+
+    /// Unicode emoji named `query` exactly, then ones with a name starting with it, then ones with a word of
+    /// their names or keywords starting with it, then names containing it, as (character, name) in the chosen
+    /// skin tone.
     pub fn search(&self, query: &str, limit: usize) -> Vec<(String, String)> {
         let q = query.to_lowercase();
-        // Name prefix, then a word in the name or keywords starting with the query, then anywhere inside.
         let rank = |u: &Unicode| {
-            if u.name.starts_with(&q) {
+            if u.names().any(|n| n == q) {
                 Some(0)
-            } else if u.name.split('_').chain(u.terms.split_whitespace()).any(|w| w.starts_with(&q)) {
+            } else if u.names().any(|n| n.starts_with(&q)) {
                 Some(1)
-            } else if u.name.contains(&q) {
+            } else if u.names().flat_map(|n| n.split('_')).chain(u.keywords.split_whitespace()).any(|w| w.starts_with(&q)) {
                 Some(2)
+            } else if u.names().any(|n| n.contains(&q)) {
+                Some(3)
             } else {
                 None
             }
         };
         let mut hits: Vec<(u8, usize, &Unicode)> = self.unicode.iter().enumerate().filter_map(|(i, u)| rank(u).map(|r| (r, i, u))).collect();
         hits.sort_by_key(|&(r, i, _)| (r, i));
-        hits.into_iter().take(limit).map(|(_, _, u)| (u.ch.clone(), u.name.clone())).collect()
+        hits.into_iter().take(limit).map(|(_, _, u)| (self.toned(u, self.skin_tone), u.name.clone())).collect()
     }
 
     pub fn note_used(&mut self, e: &Emoji) {
@@ -101,6 +176,58 @@ impl Catalog {
         let raw: Vec<_> = self.recent.iter().map(|e| (e.id, e.name.clone(), e.animated)).collect();
         let _ = std::fs::write(recent_path(), serde_json::to_string(&raw).unwrap_or_default());
     }
+}
+
+/// Replaces :shortcodes: in a message with their emoji, as Discord's client does when sending: Unicode ones
+/// from the catalog (`:thumbsup:`, `:thumbsup::skin-tone-2:`), and custom ones through `custom`, which gives
+/// their `<:name:id>` form. Code spans and blocks, and unknown names, are left alone.
+pub fn expand_shortcodes(text: &str, catalog: &Catalog, custom: impl Fn(&str) -> Option<String>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(ch) = rest.chars().next() {
+        if ch == '`' {
+            let fence = if rest.starts_with("```") { "```" } else { "`" };
+            let n = rest[fence.len()..].find(fence).map_or(rest.len(), |end| end + fence.len() * 2);
+            out.push_str(&rest[..n]);
+            rest = &rest[n..];
+            continue;
+        }
+        // Mentions and custom emoji (<:blob:1>), and links, go through whole.
+        let token = match ch {
+            '<' => rest.find('>').filter(|&end| !rest[..end].contains(char::is_whitespace)).map(|end| end + 1),
+            'h' if rest.starts_with("https://") || rest.starts_with("http://") => Some(rest.find(char::is_whitespace).unwrap_or(rest.len())),
+            _ => None,
+        };
+        if let Some(n) = token {
+            out.push_str(&rest[..n]);
+            rest = &rest[n..];
+            continue;
+        }
+        if ch == ':' {
+            let body = &rest[1..];
+            let end = body.find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '+'))).unwrap_or(body.len());
+            if end > 0 && body[end..].starts_with(':') {
+                let name = &body[..end];
+                let mut used = end + 2;
+                let mut code = name.to_owned();
+                // A skin tone written after it, as Discord shows toned emoji: :thumbsup::skin-tone-2:
+                let after = &body[end + 1..];
+                if let Some(t) = after.strip_prefix(":skin-tone-").and_then(|t| t.get(..2)).filter(|t| t.as_bytes()[0].is_ascii_digit() && t.ends_with(':')) {
+                    code = format!("{name}::skin-tone-{}", &t[..1]);
+                    used += ":skin-tone-".len() + 2;
+                }
+                let found = catalog.by_shortcode(&code).or_else(|| catalog.by_shortcode(name).is_none().then(|| custom(name)).flatten());
+                if let Some(e) = found {
+                    out.push_str(&e);
+                    rest = &rest[used..];
+                    continue;
+                }
+            }
+        }
+        out.push(ch);
+        rest = &rest[ch.len_utf8()..];
+    }
+    out
 }
 
 enum Item {
@@ -145,8 +272,8 @@ fn rows(catalog: &Catalog, state: &State, guild: Option<Snowflake>, query: &str)
         let list: Vec<Emoji> = catalog
             .unicode
             .iter()
-            .filter(|u| u.group == gi && (q.is_empty() || u.name.contains(&q) || u.terms.contains(&q)))
-            .map(|u| Emoji { id: None, name: Some(u.ch.clone()), animated: false })
+            .filter(|u| u.group == gi && (q.is_empty() || u.names().any(|n| n.contains(&q)) || u.keywords.contains(&q)))
+            .map(|u| Emoji { id: None, name: Some(catalog.toned(u, catalog.skin_tone)), animated: false })
             .collect();
         if !list.is_empty() {
             sections.push((group.clone(), list));
@@ -163,6 +290,44 @@ fn rows(catalog: &Catalog, state: &State, guild: Option<Snowflake>, query: &str)
     out
 }
 
+/// The skin tone button beside the search box (a raised hand in the chosen tone) and its menu of tones.
+/// Returns whether the menu was open this frame.
+fn skin_tone_button(ui: &mut Ui, catalog: &mut Catalog) -> bool {
+    let id = egui::Id::unique("emoji-skin-tone-menu");
+    let was_open = ui.memory(|m| m.data.get_temp::<bool>(id).unwrap_or(false));
+    let hands: Vec<String> = (0..=5)
+        .map(|tone| {
+            let ch = catalog.by_name.get("raised_hand").map_or_else(|| "✋".to_owned(), |&i| catalog.toned(&catalog.unicode[i], tone));
+            swiftcord_core::cdn::twemoji(&ch)
+        })
+        .collect();
+    let image = |url: &str| egui::Image::from_uri(url.to_owned()).fit_to_exact_size(Vec2::splat(22.0)).show_loading_spinner(false);
+    let b = ui.add(egui::Button::image(image(&hands[catalog.skin_tone])).frame_when_inactive(false).min_size(Vec2::splat(32.0))).on_hover_text("Skin tone");
+    let mut open = was_open;
+    if b.clicked() {
+        open = !open;
+    }
+    if open {
+        let area = egui::Area::new(id.with("area")).order(egui::Order::Tooltip).fixed_pos(b.rect.left_bottom() + Vec2::new(0.0, 4.0)).show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).fill(theme::SIDEBAR).inner_margin(4).show(ui, |ui| {
+                for tone in 0..=5 {
+                    let r = ui.add(egui::Button::image(image(&hands[tone])).frame_when_inactive(tone == catalog.skin_tone).min_size(Vec2::splat(32.0)));
+                    if r.clicked() {
+                        catalog.set_skin_tone(tone);
+                        open = false;
+                    }
+                }
+            });
+        });
+        // A click anywhere else closes the menu (but not the picker).
+        if was_open && ui.input(|i| i.pointer.any_pressed()) && !area.response.contains_pointer() && !b.contains_pointer() {
+            open = false;
+        }
+    }
+    ui.memory_mut(|m| m.data.insert_temp(id, open));
+    was_open || open
+}
+
 pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog, actions: &mut Vec<Action>) {
     let Some(target) = uis.emoji_picker else { return };
     let ctx = ui.ctx().clone();
@@ -174,14 +339,19 @@ pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog
     let guild = uis.channel().and_then(|c| state.channel(c)).and_then(|c| c.guild_id);
 
     let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+    // The skin tone menu is its own layer, so clicks in it aren't clicks outside the picker.
+    let mut tone_open = false;
     let area = egui::Area::new(egui::Id::unique("emoji-picker")).order(egui::Order::Foreground).fixed_pos(pos).show(&ctx, |ui| {
         egui::Frame::popup(ui.style()).fill(theme::SIDEBAR).inner_margin(10).show(ui, |ui| {
             ui.set_width(size.x - 20.0);
             ui.set_height(size.y - 20.0);
-            let r = ui.add(egui::TextEdit::singleline(&mut uis.emoji_search).hint_text("Find the perfect emoji").desired_width(f32::INFINITY));
-            if !r.has_focus() && uis.emoji_search.is_empty() {
-                r.request_focus();
-            }
+            ui.horizontal(|ui| {
+                let r = ui.add(egui::TextEdit::singleline(&mut uis.emoji_search).hint_text("Find the perfect emoji").desired_width(ui.available_width() - 40.0));
+                if !r.has_focus() && uis.emoji_search.is_empty() {
+                    r.request_focus();
+                }
+                tone_open = skin_tone_button(ui, catalog);
+            });
             ui.add_space(4.0);
             let rows = rows(catalog, state, guild, &uis.emoji_search);
             let mut hovered: Option<String> = None;
@@ -231,12 +401,13 @@ pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog
                 }
             });
             ui.separator();
-            let footer = hovered.map(|n| if n.chars().count() <= 2 { n } else { format!(":{n}:") }).unwrap_or_default();
+            // Unicode emoji are named by their character; show their :shortcode: instead.
+            let footer = hovered.map(|n| format!(":{}:", catalog.name_of(&n).unwrap_or(&n))).unwrap_or_default();
             ui.label(RichText::new(footer).color(theme::MUTED));
         });
     });
     // Clicking anywhere else closes it.
-    if ctx.input(|i| i.pointer.any_pressed()) && !area.response.contains_pointer() && !ctx.is_being_dragged(area.response.id) {
+    if ctx.input(|i| i.pointer.any_pressed()) && !tone_open && !area.response.contains_pointer() && !ctx.is_being_dragged(area.response.id) {
         let just_opened = ctx.memory(|m| m.data.get_temp::<bool>(egui::Id::unique("emoji-picker-open")).is_none());
         if !just_opened {
             close = true;
@@ -261,5 +432,66 @@ mod tests {
         assert!(c.groups.len() >= 8);
         let hits = c.search("thumbs", 5);
         assert!(hits.iter().any(|(ch, _)| ch.starts_with('👍')), "{hits:?}");
+    }
+
+    fn catalog() -> Catalog {
+        let mut c = Catalog::load();
+        c.skin_tone = 0;
+        c
+    }
+
+    #[test]
+    fn uses_discord_names() {
+        let c = catalog();
+        assert_eq!(c.unicode.len(), 1932, "Discord's count of default emoji");
+        for (code, emoji) in [("thumbsup", "👍"), ("+1", "👍"), ("slight_smile", "🙂"), ("flag_us", "🇺🇸"), ("heart", "❤️"), ("regional_indicator_a", "🇦"), ("face_with_bags_under_eyes", "🫩")] {
+            assert_eq!(c.by_shortcode(code).as_deref(), Some(emoji), "{code}");
+        }
+        assert_eq!(c.by_shortcode("thumbsup::skin-tone-2").as_deref(), Some("👍🏼"));
+        assert_eq!(c.by_shortcode("thumbsup_tone5").as_deref(), Some("👍🏿"));
+        assert_eq!(c.name_of("👍🏽"), Some("thumbsup"));
+        assert_eq!(c.search("slight_sm", 1)[0].0, "🙂");
+    }
+
+    #[test]
+    fn skin_tone_applies_to_search_and_shortcodes() {
+        let mut c = catalog();
+        c.skin_tone = 3;
+        assert_eq!(c.by_shortcode("wave").as_deref(), Some("👋🏽"));
+        assert_eq!(c.search("thumbsup", 1)[0].0, "👍🏽");
+        // Emoji without tones are unaffected.
+        assert_eq!(c.by_shortcode("joy").as_deref(), Some("😂"));
+    }
+
+    #[test]
+    fn expands_shortcodes_outside_code() {
+        let c = catalog();
+        let custom = |n: &str| (n == "blob").then(|| "<:blob:1>".to_owned());
+        assert_eq!(expand_shortcodes("hi :wave: :thumbsup::skin-tone-1: :blob: :nope:", &c, custom), "hi 👋 👍🏻 <:blob:1> :nope:");
+        assert_eq!(expand_shortcodes("`:wave:` ```\n:wave:\n``` :wave:", &c, custom), "`:wave:` ```\n:wave:\n``` 👋");
+        assert_eq!(expand_shortcodes("10:30:45 and a:b", &c, custom), "10:30:45 and a:b");
+        assert_eq!(expand_shortcodes("<:wave:12> <@34> https://x.com/:b:/ :b:", &c, custom), "<:wave:12> <@34> https://x.com/:b:/ 🅱️");
+    }
+
+    /// Lists emoji (and skin tones) without a Twemoji picture or not recognised in messages, given a list of
+    /// Twemoji asset names (`SWIFTCORD_TWEMOJI_LIST`, one per line, e.g. from jsDelivr's file listing).
+    #[test]
+    fn audit_coverage() {
+        let Ok(list) = std::env::var("SWIFTCORD_TWEMOJI_LIST") else { return };
+        let names: std::collections::HashSet<String> = std::fs::read_to_string(list).unwrap().lines().map(|l| l.trim().trim_start_matches('\u{feff}').to_owned()).collect();
+        let c = Catalog::load();
+        let (mut no_image, mut not_detected) = (Vec::new(), Vec::new());
+        for u in &c.unicode {
+            for ch in std::iter::once(&u.ch).chain(u.skins.iter().flatten()) {
+                if !names.contains(&swiftcord_core::markdown::twemoji_name(ch)) {
+                    no_image.push(format!("{ch} {}", u.name));
+                }
+                if !swiftcord_core::markdown::is_emoji_grapheme(ch) {
+                    not_detected.push(format!("{ch} {}", u.name));
+                }
+            }
+        }
+        println!("no image: {} {:?}", no_image.len(), &no_image[..no_image.len().min(60)]);
+        println!("not detected: {} {:?}", not_detected.len(), &not_detected[..not_detected.len().min(60)]);
     }
 }

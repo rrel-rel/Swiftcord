@@ -58,7 +58,7 @@ pub fn media_proxy(proxy_url: &str, width: u32, height: u32) -> String {
 
 pub fn twemoji(emoji: &str) -> String {
     format!(
-        "https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/{}.png",
+        "https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/72x72/{}.png",
         crate::markdown::twemoji_name(emoji)
     )
 }
