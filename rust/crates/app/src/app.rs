@@ -44,6 +44,15 @@ pub enum AppEvent {
     FrecencyRejected { previous: Option<String>, error: String },
     Stream { generation: u64, event: swiftcord_voice::Event },
     Share { generation: u64, event: swiftcord_voice::Event },
+    /// A page of a channel's threads: active ones (first page only) and archived ones.
+    Threads {
+        channel: Snowflake,
+        active: Option<Result<swiftcord_core::rest::ThreadPage, String>>,
+        archived: Result<swiftcord_core::rest::ThreadPage, String>,
+    },
+    /// A thread was fetched or created; show it.
+    ThreadOpened(Result<swiftcord_core::models::Channel, String>),
+    ThreadJoinFailed { thread: Snowflake, joined: bool, error: String },
 }
 
 /// Things the UI asks for; applied after the frame is drawn so drawing only borrows state.
@@ -71,6 +80,16 @@ pub enum Action {
     ToggleFavoriteGif(swiftcord_core::proto::FavoriteGif),
     OpenDm(Snowflake),
     ShowPins(Snowflake),
+    /// Open or close the thread list beside a channel.
+    ShowThreads(Snowflake),
+    /// Load a channel's threads (forums do this when shown), or with `more` the next page of archived ones.
+    LoadThreads { channel: Snowflake, more: bool },
+    OpenThread(Snowflake),
+    /// Ask for a name for a new thread (from `message`, if given) or forum post in `channel`.
+    StartThread { channel: Snowflake, message: Option<Snowflake>, name: String },
+    CloseThreadPrompt,
+    CreateThread,
+    SetThreadJoined(Snowflake, bool),
     ToggleMemberList,
     /// Online, idle, do not disturb or invisible (`Offline`).
     SetStatus(swiftcord_core::models::PresenceStatus),
@@ -157,6 +176,10 @@ pub struct UiState {
     pub emoji_picker: Option<ui::emoji::PickerTarget>,
     pub emoji_search: String,
     pub pins: Option<(Snowflake, Option<Vec<Message>>)>,
+    /// The channel whose thread list is open beside the chat.
+    pub threads_panel: Option<Snowflake>,
+    pub thread_browsers: HashMap<Snowflake, crate::threads_glue::Browser>,
+    pub thread_prompt: Option<crate::threads_glue::Prompt>,
     pub banner: Option<(String, Instant)>,
     pub login: ui::login::LoginUi,
     pub self_mute: bool,
@@ -255,7 +278,7 @@ impl App {
     }
 
     /// Runs a future on the runtime and delivers its result as an event.
-    fn spawn<F>(&self, fut: F)
+    pub(crate) fn spawn<F>(&self, fut: F)
     where
         F: std::future::Future<Output = AppEvent> + Send + 'static,
     {
@@ -420,6 +443,9 @@ impl App {
             AppEvent::Voice { generation, event } => crate::voice_glue::on_event(self, generation, event),
             AppEvent::Stream { generation, event } => crate::stream_glue::on_event(self, generation, event),
             AppEvent::Share { generation, event } => crate::share_glue::on_event(self, generation, event),
+            AppEvent::Threads { channel, active, archived } => crate::threads_glue::on_loaded(self, channel, active, archived),
+            AppEvent::ThreadOpened(result) => crate::threads_glue::on_opened(self, result),
+            AppEvent::ThreadJoinFailed { thread, joined, error } => crate::threads_glue::on_join_failed(self, thread, joined, error),
             AppEvent::Gifs { query, result } => {
                 if let Some(p) = self.ui.gif_picker.as_mut().filter(|p| p.requested() == Some(query.as_str())) {
                     match result {
@@ -620,6 +646,12 @@ impl App {
         self.ui.focus_composer = true;
         self.ui.emoji_picker = None;
         self.ui.pins = None;
+        self.ui.threads_panel = None;
+        // Forums have posts (threads), not messages.
+        if self.session.as_ref().and_then(|s| s.state.channel(channel)).is_some_and(|c| c.is_forum()) {
+            crate::threads_glue::load(self, channel, false);
+            return;
+        }
         self.ensure_history(channel);
         self.mark_viewed(channel);
     }
@@ -728,7 +760,7 @@ impl App {
         });
     }
 
-    fn apply(&mut self, action: Action) {
+    pub(crate) fn apply(&mut self, action: Action) {
         match action {
             Action::SelectGuild(g) => {
                 self.ui.guild = g;
@@ -959,6 +991,13 @@ impl App {
                 s.subscribed.insert(guild);
                 self.ui.member_sub = Some((channel, ranges));
             }
+            Action::ShowThreads(channel) => crate::threads_glue::toggle_panel(self, channel),
+            Action::LoadThreads { channel, more } => crate::threads_glue::load(self, channel, more),
+            Action::OpenThread(thread) => crate::threads_glue::open(self, thread),
+            Action::StartThread { channel, message, name } => crate::threads_glue::open_prompt(self, channel, message, name),
+            Action::CloseThreadPrompt => self.ui.thread_prompt = None,
+            Action::CreateThread => crate::threads_glue::create(self),
+            Action::SetThreadJoined(thread, joined) => crate::threads_glue::set_joined(self, thread, joined),
             Action::ShowPins(channel) => {
                 if matches!(self.ui.pins, Some((c, _)) if c == channel) {
                     self.ui.pins = None;
@@ -966,6 +1005,7 @@ impl App {
                 }
                 let Some(s) = &self.session else { return };
                 self.ui.pins = Some((channel, None));
+                self.ui.threads_panel = None;
                 let rest = s.rest.clone();
                 self.spawn(async move {
                     let result = rest.pins(channel).await.map_err(|e| e.to_string());

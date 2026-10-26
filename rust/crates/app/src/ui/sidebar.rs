@@ -87,7 +87,65 @@ fn guild_channels(ui: &mut Ui, state: &State, uis: &mut UiState, guild: Snowflak
             if c.is_voice() {
                 voice_members(ui, state, uis, c, actions);
             }
+            if c.has_threads() {
+                thread_rows(ui, state, c, selected, collapsed, actions);
+            }
         }
+    }
+}
+
+/// Joined threads under their channel, and the open thread even if not joined, joined to it by a line.
+fn thread_rows(ui: &mut Ui, state: &State, parent: &Channel, selected: Option<Snowflake>, collapsed: bool, actions: &mut Vec<Action>) {
+    let mut threads = state.joined_threads(parent.id);
+    if let Some(open) = selected.and_then(|id| state.channel(id)).filter(|t| t.is_thread() && t.parent_id == Some(parent.id)) {
+        if !threads.iter().any(|t| t.id == open.id) {
+            threads.push(open);
+        }
+    }
+    let top = ui.cursor().top() - 4.0;
+    for t in threads {
+        let is_selected = selected == Some(t.id);
+        let unread = state.is_unread(t.id);
+        if collapsed && !is_selected && !unread {
+            continue;
+        }
+        let r = row(ui, is_selected, 30.0, |ui, hovered| {
+            ui.add_space(22.0);
+            let color = if is_selected || unread { theme::HEADER } else if hovered { theme::TEXT } else { theme::MUTED };
+            let font = if unread || is_selected { theme::font_semibold(14.5) } else { theme::font(14.5) };
+            ui.add(egui::Label::new(RichText::new(t.label()).font(font).color(color)).truncate().selectable(false));
+            let mentions = state.mention_count(t.id);
+            if mentions > 0 {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(22.0, 16.0), Sense::hover());
+                    widgets::badge(ui, rect.center(), mentions, Color32::TRANSPARENT);
+                });
+            }
+        });
+        // The connector: down from the channel, then across to this thread.
+        let x = r.rect.left() + 18.0;
+        let y = r.rect.center().y;
+        let stroke = egui::Stroke::new(1.5, Color32::from_rgb(0x4e, 0x50, 0x58));
+        ui.painter().line_segment([egui::pos2(x, top), egui::pos2(x, y - 6.0)], stroke);
+        ui.painter().add(egui::Shape::QuadraticBezier(egui::epaint::QuadraticBezierShape::from_points_stroke(
+            [egui::pos2(x, y - 6.0), egui::pos2(x, y), egui::pos2(x + 8.0, y)],
+            false,
+            Color32::TRANSPARENT,
+            stroke,
+        )));
+        if r.clicked() {
+            actions.push(Action::SelectChannel(t.id));
+        }
+        r.context_menu(|ui| {
+            if ui.button("Leave Thread").clicked() {
+                actions.push(Action::SetThreadJoined(t.id, false));
+                ui.close();
+            }
+            if ui.button("Copy channel ID").clicked() {
+                actions.push(Action::Copy(t.id.to_string()));
+                ui.close();
+            }
+        });
     }
 }
 

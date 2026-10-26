@@ -278,9 +278,70 @@ pub struct Channel {
     pub bitrate: Option<u32>,
     pub user_limit: Option<u32>,
     pub rate_limit_per_user: Option<u32>,
+    /// Threads: archived and locked state.
+    pub thread_metadata: Option<ThreadMetadata>,
+    /// Threads: our membership, present once we've joined.
+    pub member: Option<ThreadMember>,
+    /// Threads: who started it.
+    pub owner_id: Option<Snowflake>,
+    /// Threads: messages sent in it (not counting the starter message).
+    pub message_count: Option<u32>,
+    pub member_count: Option<u32>,
+    /// Forum channels: the tags posts can carry.
+    #[serde(deserialize_with = "null_as_default")]
+    pub available_tags: Vec<ForumTag>,
+    /// Forum posts: the tags it carries.
+    #[serde(deserialize_with = "null_as_default")]
+    pub applied_tags: Vec<Snowflake>,
+    /// Forum posts: 2 = pinned to the top of the forum.
+    #[serde(deserialize_with = "null_as_default")]
+    pub flags: u64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ThreadMetadata {
+    #[serde(deserialize_with = "null_as_default")]
+    pub archived: bool,
+    #[serde(deserialize_with = "null_as_default")]
+    pub locked: bool,
+    pub archive_timestamp: Option<DateTime<Utc>>,
+    pub auto_archive_duration: Option<u32>,
+    pub create_timestamp: Option<DateTime<Utc>>,
+}
+
+/// Someone's membership of a thread; `id` is the thread and `user_id` the member (both omitted in some payloads).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ThreadMember {
+    pub id: Option<Snowflake>,
+    pub user_id: Option<Snowflake>,
+    pub join_timestamp: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ForumTag {
+    pub id: Snowflake,
+    pub name: String,
+    pub emoji_id: Option<Snowflake>,
+    pub emoji_name: Option<String>,
 }
 
 impl Channel {
+    pub fn is_archived(&self) -> bool {
+        self.thread_metadata.as_ref().is_some_and(|m| m.archived)
+    }
+
+    pub fn is_forum(&self) -> bool {
+        matches!(self.kind, ChannelType::Forum | ChannelType::Media)
+    }
+
+    /// Channels that can have threads started in them.
+    pub fn has_threads(&self) -> bool {
+        matches!(self.kind, ChannelType::Text | ChannelType::Announcement) || self.is_forum()
+    }
+
     pub fn is_private(&self) -> bool {
         matches!(self.kind, ChannelType::Dm | ChannelType::GroupDm)
     }
@@ -479,6 +540,8 @@ pub mod message_type {
     pub const THREAD_CREATED: u8 = 18;
     pub const REPLY: u8 = 19;
     pub const CHAT_INPUT_COMMAND: u8 = 20;
+    /// First message of a thread started from a message: shows that message (`referenced_message`).
+    pub const THREAD_STARTER_MESSAGE: u8 = 21;
     pub const CONTEXT_MENU_COMMAND: u8 = 23;
 }
 
@@ -602,6 +665,8 @@ pub struct Message {
     pub sticker_items: Vec<StickerItem>,
     #[serde(deserialize_with = "null_as_default")]
     pub components: Vec<Component>,
+    /// The thread started from this message.
+    pub thread: Option<Box<Channel>>,
     pub message_reference: Option<MessageReference>,
     pub referenced_message: Option<Box<Message>>,
     #[serde(deserialize_with = "null_as_default")]

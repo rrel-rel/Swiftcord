@@ -73,6 +73,19 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
         crate::ui::call::panel(ui, s, uis, channel, actions);
     }
 
+    // Forums list posts (threads) instead of messages.
+    if channel.is_forum() {
+        if !uis.hide_members {
+            egui::Panel::right(("members", channel.id)).exact_size(crate::ui::members::WIDTH).frame(egui::Frame::new().fill(theme::SIDEBAR)).show(ui, |ui| {
+                crate::ui::members::panel(ui, s, channel, actions);
+            });
+        }
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT)).show(ui, |ui| {
+            crate::ui::threads::forum(ui, s, uis, channel, actions);
+        });
+        return;
+    }
+
     egui::Panel::bottom(("composer", channel.id)).frame(egui::Frame::new().fill(theme::CHAT).inner_margin(egui::Margin { left: 16, right: 16, top: 0, bottom: 20 })).show(ui, |ui| {
         typing_line(ui, s, channel);
         composer(ui, s, uis, catalog, channel, perms, actions);
@@ -82,6 +95,10 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
     if let Some(pins) = pins {
         egui::Panel::right(("pins", channel.id)).exact_size(380.0).frame(egui::Frame::new().fill(theme::SIDEBAR).inner_margin(8)).show(ui, |ui| {
             pins_panel(ui, s, uis, channel, pins.as_deref(), actions);
+        });
+    } else if uis.threads_panel == Some(channel.id) {
+        egui::Panel::right(("threads", channel.id)).exact_size(340.0).frame(egui::Frame::new().fill(theme::SIDEBAR).inner_margin(8)).show(ui, |ui| {
+            crate::ui::threads::panel(ui, s, uis, channel, actions);
         });
     } else if channel.guild_id.is_some() && !channel.is_voice() && !uis.hide_members {
         egui::Panel::right(("members", channel.id)).exact_size(crate::ui::members::WIDTH).frame(egui::Frame::new().fill(theme::SIDEBAR)).show(ui, |ui| {
@@ -98,15 +115,30 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, actions: &mut Ve
     egui::Panel::top(("chat-header", c.id)).frame(egui::Frame::new().fill(theme::CHAT).inner_margin(egui::Margin::symmetric(16, 0))).show(ui, |ui| {
         ui.set_height(48.0);
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            // In a thread: "# parent › thread", the parent leading back to its channel.
+            let parent = c.parent_id.filter(|_| c.is_thread()).and_then(|p| s.state.channel(p));
+            if let Some(p) = parent {
+                ui.label(RichText::new(if p.is_forum() { "💬" } else { "#" }).font(theme::font(20.0)).color(theme::FAINT));
+                let r = ui.add(egui::Label::new(RichText::new(p.label()).font(theme::font_semibold(15.0)).color(theme::MUTED)).sense(Sense::click()));
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    actions.push(Action::SelectChannel(p.id));
+                }
+                ui.label(RichText::new(icon::CHEVRON_RIGHT).font(theme::icon_font(10.0)).color(theme::FAINT));
+            }
             let glyph = match c.kind {
                 ChannelType::Dm => "@",
                 ChannelType::GroupDm => icon::PEOPLE,
                 _ if c.is_voice() => icon::SPEAKER,
+                _ if c.is_thread() => icon::CHAT,
+                _ if c.is_forum() => "💬",
                 _ => "#",
             };
-            let font = if glyph == "#" || glyph == "@" { theme::font(22.0) } else { theme::icon_font(18.0) };
+            let font = if glyph == "#" || glyph == "@" { theme::font(22.0) } else if glyph == "💬" { theme::font(18.0) } else { theme::icon_font(18.0) };
             ui.label(RichText::new(glyph).font(font).color(theme::FAINT));
             ui.label(RichText::new(c.label()).font(theme::font_semibold(16.0)).color(theme::HEADER));
+            if c.is_archived() {
+                ui.label(RichText::new("Archived").size(12.0).color(theme::FAINT));
+            }
             if c.kind == ChannelType::Dm {
                 if let Some(u) = c.recipients.first() {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
@@ -122,8 +154,17 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, actions: &mut Ve
                 if c.guild_id.is_some() && widgets::icon_button(ui, icon::PEOPLE, "Member List").clicked() {
                     actions.push(Action::ToggleMemberList);
                 }
-                if widgets::icon_button(ui, icon::PIN, "Pinned Messages").clicked() {
+                if !c.is_forum() && widgets::icon_button(ui, icon::PIN, "Pinned Messages").clicked() {
                     actions.push(Action::ShowPins(c.id));
+                }
+                if c.has_threads() && !c.is_forum() && widgets::icon_button(ui, icon::CHAT, "Threads").clicked() {
+                    actions.push(Action::ShowThreads(c.id));
+                }
+                if c.is_thread() {
+                    let (label, join) = if c.member.is_some() { ("Leave Thread", false) } else { ("Join Thread", true) };
+                    if ui.button(label).clicked() {
+                        actions.push(Action::SetThreadJoined(c.id, join));
+                    }
                 }
                 if c.is_private() && !in_call && s.state.call(c.id).is_none() && widgets::icon_button(ui, icon::PHONE, "Start Voice Call").clicked() {
                     actions.push(Action::JoinVoice { guild: None, channel: c.id });
@@ -329,10 +370,15 @@ fn top_row(ui: &mut Ui, s: &Session, c: &Channel, reached_start: bool) {
                     ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "#", theme::font(42.0), theme::HEADER);
                 }
             }
-            let title = if c.is_private() { c.label() } else { format!("Welcome to #{}!", c.label()) };
+            let title = if c.is_private() || c.is_thread() { c.label() } else { format!("Welcome to #{}!", c.label()) };
             ui.label(RichText::new(title).font(theme::font_bold(28.0)).color(theme::HEADER));
             let sub = if c.is_private() {
                 format!("This is the beginning of your direct message history with {}.", c.label())
+            } else if c.is_thread() {
+                match c.owner_id {
+                    Some(o) => format!("Started by {}.", s.state.display_name(o, c.guild_id)),
+                    None => "This is the start of the thread.".to_owned(),
+                }
             } else {
                 format!("This is the start of the #{} channel.", c.label())
             };

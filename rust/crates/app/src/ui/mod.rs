@@ -14,4 +14,5 @@ pub mod suggest;
 pub mod settings;
 pub mod share;
 pub mod sidebar;
+pub mod threads;
 pub mod widgets;

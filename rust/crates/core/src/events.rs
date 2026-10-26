@@ -311,6 +311,32 @@ pub struct PresenceUpdate {
     pub activities: Vec<Activity>,
 }
 
+/// THREAD_LIST_SYNC: the active threads of a guild (or of some of its channels), and which of them we're in.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ThreadListSync {
+    pub guild_id: Snowflake,
+    /// The channels this sync covers; all of the guild's when absent.
+    pub channel_ids: Option<Vec<Snowflake>>,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub threads: Vec<Channel>,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub members: Vec<ThreadMember>,
+}
+
+/// THREAD_MEMBERS_UPDATE: people joined or left a thread.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ThreadMembersUpdate {
+    pub id: Snowflake,
+    pub guild_id: Snowflake,
+    pub member_count: Option<u32>,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub added_members: Vec<ThreadMember>,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub removed_member_ids: Vec<Snowflake>,
+}
+
 /// GUILD_MEMBER_LIST_UPDATE: changes to the member list shown beside a channel. Channels whose view
 /// permissions match share a list (`id`). Rows are group headers and members, in display order.
 #[derive(Debug, Default, Deserialize)]
@@ -443,6 +469,10 @@ pub enum Event {
     CallUpdate(Box<CallEvent>),
     GuildMembersChunk(Box<GuildMembersChunk>),
     MemberListUpdate(Box<MemberListUpdate>),
+    ThreadListSync(Box<ThreadListSync>),
+    /// Our own membership of a thread changed (we joined it).
+    ThreadMemberUpdate(ThreadMember),
+    ThreadMembersUpdate(Box<ThreadMembersUpdate>),
     SessionsReplace(Vec<SessionInfo>),
     CallDelete(Snowflake),
     /// Anything else, kept raw for subsystems (e.g. Go Live streams) that parse it themselves.
@@ -487,6 +517,9 @@ impl Event {
             "CALL_CREATE" | "CALL_UPDATE" => Event::CallUpdate(p(d)?),
             "GUILD_MEMBERS_CHUNK" => Event::GuildMembersChunk(p(d)?),
             "GUILD_MEMBER_LIST_UPDATE" => Event::MemberListUpdate(p(d)?),
+            "THREAD_LIST_SYNC" => Event::ThreadListSync(p(d)?),
+            "THREAD_MEMBER_UPDATE" => Event::ThreadMemberUpdate(p(d)?),
+            "THREAD_MEMBERS_UPDATE" => Event::ThreadMembersUpdate(p(d)?),
             "SESSIONS_REPLACE" => Event::SessionsReplace(parse_lenient_list(d.get())?),
             "CALL_DELETE" => {
                 #[derive(Deserialize)]

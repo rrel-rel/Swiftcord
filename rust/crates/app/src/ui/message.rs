@@ -87,6 +87,12 @@ pub struct Ctx<'a> {
 
 /// Draws a message inside `rect` (whose height is the cached estimate) and returns the height used.
 pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
+    // A thread opens with the message it was started from.
+    if msg.kind == message_type::THREAD_STARTER_MESSAGE {
+        if let Some(original) = &msg.referenced_message {
+            return show(ui, original, false, cx);
+        }
+    }
     let me = cx.state.me.as_ref().map(|m| m.id);
     // Highlighted like Discord, including when you mention yourself.
     let mentioned = me.is_some() && cx.state.mentions_me(msg);
@@ -270,6 +276,12 @@ fn body(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     if !msg.components.is_empty() {
         crate::ui::components::show(ui, &msg.components, msg, cx);
     }
+    // The thread this message started (not shown inside that thread itself).
+    if let Some(t) = msg.thread.as_deref().filter(|t| t.id != cx.channel) {
+        // The state's copy is kept current (name, message count); the message's may be from when it loaded.
+        let t = cx.state.channel(t.id).unwrap_or(t);
+        crate::ui::threads::chip(ui, t, cx.actions);
+    }
     for s in &msg.sticker_items {
         match swiftcord_core::cdn::sticker(s.id, s.format_type) {
             Some(url) => {
@@ -353,11 +365,18 @@ fn system_line(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         message_type::THREAD_CREATED => ("#", format!("{author} started a thread: {}", msg.content)),
         _ => ("•", if msg.content.is_empty() { format!("{author} did something.") } else { msg.content.clone() }),
     };
+    // "Started a thread" points at the thread; clicking opens it.
+    let thread = (msg.kind == message_type::THREAD_CREATED).then(|| msg.message_reference.as_ref().and_then(|r| r.channel_id)).flatten();
     ui.horizontal(|ui| {
         ui.add_space(GUTTER - 40.0);
         ui.add_sized(Vec2::new(24.0, 18.0), egui::Label::new(RichText::new(glyph).color(theme::GREEN)));
         ui.add_space(12.0);
         ui.label(RichText::new(text).color(theme::MUTED));
+        if let Some(t) = thread {
+            if ui.link(RichText::new("See Thread ›").size(13.0)).clicked() {
+                cx.actions.push(Action::OpenThread(t));
+            }
+        }
         ui.label(RichText::new(time_label(msg.timestamp())).size(11.5).color(theme::FAINT));
     });
 }
@@ -832,6 +851,14 @@ fn context_menu(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     if cx.perms & perm::ADD_REACTIONS != 0 && ui.button("Add Reaction").clicked() {
         let at = ui.ctx().pointer_latest_pos().unwrap_or_default();
         cx.uis.emoji_picker = Some(PickerTarget::Reaction { channel: msg.channel_id, message: msg.id, at });
+        ui.close();
+    }
+    // Threads start from messages in text and announcement channels, once per message.
+    let in_channel = cx.state.channel(msg.channel_id).is_some_and(|c| c.has_threads() && !c.is_forum());
+    if in_channel && msg.thread.is_none() && msg.is_regular() && cx.perms & perm::CREATE_PUBLIC_THREADS != 0 && ui.button("Create Thread").clicked() {
+        // Named after the message, as Discord suggests.
+        let name: String = msg.content.lines().next().unwrap_or_default().chars().take(40).collect();
+        cx.actions.push(Action::StartThread { channel: msg.channel_id, message: Some(msg.id), name });
         ui.close();
     }
     ui.separator();

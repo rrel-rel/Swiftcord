@@ -357,6 +357,43 @@ impl Rest {
     }
 
     /// Rings everyone in a DM or group DM call.
+    // MARK: Threads
+
+    /// A page of a channel's threads (or a forum's posts), most recently active first: active ones, or archived
+    /// ones with `archived`. Messages that started them come back too, as forum posts show them.
+    pub async fn search_threads(&self, channel: Snowflake, archived: bool, offset: u32) -> Result<ThreadPage> {
+        let path = format!("channels/{channel}/threads/search?archived={archived}&sort_by=last_message_time&sort_order=desc&limit=25&offset={offset}");
+        self.json(Method::GET, &path, Body::None).await
+    }
+
+    /// A channel or thread we haven't been sent (e.g. an archived thread someone linked).
+    pub async fn channel(&self, id: Snowflake) -> Result<Channel> {
+        self.json(Method::GET, &format!("channels/{id}"), Body::None).await
+    }
+
+    pub async fn join_thread(&self, thread: Snowflake) -> Result<()> {
+        self.empty(Method::PUT, &format!("channels/{thread}/thread-members/@me"), Body::None).await
+    }
+
+    pub async fn leave_thread(&self, thread: Snowflake) -> Result<()> {
+        self.empty(Method::DELETE, &format!("channels/{thread}/thread-members/@me"), Body::None).await
+    }
+
+    /// Starts a thread from a message (the thread takes the message's ID).
+    pub async fn create_thread_from_message(&self, channel: Snowflake, message: Snowflake, name: &str) -> Result<Channel> {
+        let body = Body::Json(json!({ "name": name, "auto_archive_duration": 1440 }));
+        self.json(Method::POST, &format!("channels/{channel}/messages/{message}/threads"), body).await
+    }
+
+    /// Starts a public thread in a text channel, or (with `content`) a post in a forum.
+    pub async fn create_thread(&self, channel: Snowflake, name: &str, content: Option<&str>) -> Result<Channel> {
+        let body = match content {
+            Some(text) => json!({ "name": name, "auto_archive_duration": 1440, "message": { "content": text } }),
+            None => json!({ "name": name, "auto_archive_duration": 1440, "type": 11 }),
+        };
+        self.json(Method::POST, &format!("channels/{channel}/threads"), Body::Json(body)).await
+    }
+
     pub async fn ring(&self, channel: Snowflake) -> Result<()> {
         self.empty(Method::POST, &format!("channels/{channel}/call/ring"), Body::Json(json!({ "recipients": null }))).await
     }
@@ -423,6 +460,21 @@ impl Rest {
         let r: R = self.json(Method::POST, "users/@me/remote-auth/login", Body::Json(json!({ "ticket": ticket }))).await?;
         Ok(r.encrypted_token)
     }
+}
+
+/// A page of thread search results.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ThreadPage {
+    #[serde(deserialize_with = "crate::events::lenient_vec")]
+    pub threads: Vec<Channel>,
+    /// Our memberships among them.
+    #[serde(deserialize_with = "crate::events::lenient_vec")]
+    pub members: Vec<ThreadMember>,
+    /// The messages that started them (forum posts' opening messages).
+    #[serde(deserialize_with = "crate::events::lenient_vec")]
+    pub first_messages: Vec<Message>,
+    pub has_more: bool,
 }
 
 /// A GIF from Discord's Tenor search. Sending one means sending its `url`.

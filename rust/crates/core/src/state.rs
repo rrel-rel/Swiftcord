@@ -265,12 +265,20 @@ impl State {
         let Some(guild_id) = channel.guild_id else { return perm::ALL };
         let (Some(guild), Some(me)) = (self.guilds.get(&guild_id), &self.me) else { return 0 };
         // Threads inherit permissions from their parent channel.
+        let thread = channel.is_thread().then_some(channel);
         let channel = match channel.parent_id {
             Some(p) if channel.is_thread() => self.channels.get(&p).unwrap_or(channel),
             _ => channel,
         };
         let roles = self.member(guild_id, me.id).map(|m| m.roles.as_slice()).unwrap_or(&[]);
-        permissions::compute(guild, channel, me.id, roles)
+        let mut perms = permissions::compute(guild, channel, me.id, roles);
+        // In a thread, sending is governed by Send Messages in Threads, and a locked thread only by moderators.
+        if let Some(t) = thread {
+            let locked = t.thread_metadata.as_ref().is_some_and(|m| m.locked);
+            let can_send = perms & perm::SEND_MESSAGES_IN_THREADS != 0 && (!locked || perms & perm::MANAGE_THREADS != 0);
+            perms = if can_send { perms | perm::SEND_MESSAGES } else { perms & !perm::SEND_MESSAGES };
+        }
+        perms
     }
 
     pub fn is_unread(&self, channel: Snowflake) -> bool {
@@ -553,12 +561,56 @@ impl State {
         entry.mention_count = 0;
     }
 
-    pub fn add_channel(&mut self, channel: Channel) {
+    pub fn add_channel(&mut self, mut channel: Channel) {
         for r in &channel.recipients {
             self.users.insert(r.id, r.clone());
         }
+        if let Some(old) = self.channels.get(&channel.id) {
+            // Thread payloads often leave out our membership and the latest message.
+            if channel.member.is_none() {
+                channel.member = old.member.clone();
+            }
+            if channel.last_message_id.is_none() || old.last_message_id > channel.last_message_id {
+                channel.last_message_id = old.last_message_id;
+            }
+        }
+        if channel.is_thread() {
+            self.link_thread(&channel);
+        }
         self.channels.insert(channel.id, channel);
         self.revision += 1;
+    }
+
+    /// Threads started from a message share its ID; keep that message's thread chip current.
+    fn link_thread(&mut self, thread: &Channel) {
+        let Some(parent) = thread.parent_id else { return };
+        if let Some(m) = self.message_mut(parent, thread.id) {
+            m.thread = Some(Box::new(thread.clone()));
+        }
+    }
+
+    /// Active threads under a channel, most recently active first.
+    pub fn threads(&self, parent: Snowflake) -> Vec<&Channel> {
+        let mut v: Vec<&Channel> =
+            self.channels.values().filter(|c| c.is_thread() && c.parent_id == Some(parent) && !c.is_archived()).collect();
+        v.sort_by_key(|c| std::cmp::Reverse(c.last_message_id.unwrap_or(c.id)));
+        v
+    }
+
+    /// Active threads we've joined under a channel, as the sidebar lists them.
+    pub fn joined_threads(&self, parent: Snowflake) -> Vec<&Channel> {
+        let mut v: Vec<&Channel> = self.threads(parent).into_iter().filter(|c| c.member.is_some()).collect();
+        v.sort_by_key(|c| c.id);
+        v
+    }
+
+    /// Records joining or leaving a thread before Discord confirms it.
+    pub fn set_thread_joined(&mut self, thread: Snowflake, joined: bool) {
+        let me = self.me.as_ref().map(|m| m.id);
+        if let Some(c) = self.channels.get_mut(&thread) {
+            c.member = joined.then(|| ThreadMember { id: Some(thread), user_id: me, join_timestamp: None });
+            self.revision += 1;
+        }
     }
 
     pub fn set_folders(&mut self, folders: Vec<GuildFolder>) {
@@ -672,8 +724,38 @@ impl State {
                         c.recipients = old.recipients.clone();
                     }
                 }
-                self.channels.insert(c.id, *c);
-                self.revision += 1;
+                self.add_channel(*c);
+            }
+            Event::ThreadListSync(sync) => {
+                let joined: HashSet<Snowflake> = sync.members.iter().filter_map(|m| m.id).collect();
+                for mut t in sync.threads {
+                    t.guild_id = t.guild_id.or(Some(sync.guild_id));
+                    if joined.contains(&t.id) {
+                        t.member = sync.members.iter().find(|m| m.id == Some(t.id)).cloned();
+                    }
+                    self.add_channel(t);
+                }
+            }
+            Event::ThreadMemberUpdate(m) => {
+                if let Some(id) = m.id {
+                    if let Some(c) = self.channels.get_mut(&id) {
+                        c.member = Some(m);
+                        self.revision += 1;
+                    }
+                }
+            }
+            Event::ThreadMembersUpdate(u) => {
+                let me = self.me.as_ref().map(|m| m.id);
+                if let Some(c) = self.channels.get_mut(&u.id) {
+                    c.member_count = u.member_count.or(c.member_count);
+                    if let Some(m) = u.added_members.into_iter().find(|m| m.user_id.is_some() && m.user_id == me) {
+                        c.member = Some(m);
+                    }
+                    if me.is_some_and(|me| u.removed_member_ids.contains(&me)) {
+                        c.member = None;
+                    }
+                    self.revision += 1;
+                }
             }
             Event::ChannelDelete(c) => {
                 self.channels.remove(&c.id);
@@ -951,7 +1033,8 @@ impl State {
         self.revision += 1;
     }
 
-    fn cache_author(&mut self, m: &Message) {
+    /// Remembers a message's author (and their server profile), e.g. for messages shown outside a channel.
+    pub fn cache_author(&mut self, m: &Message) {
         if m.author.id.is_none() {
             return;
         }
@@ -973,8 +1056,16 @@ impl State {
         let (channel_id, message_id) = (m.channel_id, m.id);
         let copy = Box::new(m.clone());
 
+        let mut thread = None;
         if let Some(c) = self.channels.get_mut(&channel_id) {
             c.last_message_id = Some(message_id);
+            if c.is_thread() {
+                c.message_count = Some(c.message_count.unwrap_or(0) + 1);
+                thread = Some(c.clone());
+            }
+        }
+        if let Some(t) = thread {
+            self.link_thread(&t);
         }
         if let Some(t) = self.typing.get_mut(&channel_id) {
             t.remove(&m.author.id);
@@ -1122,6 +1213,43 @@ mod tests {
 
     fn list_member(id: u64, status: &str) -> String {
         format!(r#"{{"member":{{"user":{{"id":"{id}","username":"u{id}"}},"roles":[],"presence":{{"user":{{"id":"{id}"}},"status":"{status}","activities":[{{"type":0,"name":"Chess"}}]}}}}}}"#)
+    }
+
+    #[test]
+    fn threads_sync_join_and_link_to_their_message() {
+        let mut s = ready_state();
+        // A message in #general that a thread is then started from (threads share the message's ID).
+        s.add_history(Snowflake(200), vec![ev_message(r#"{"id":"500","channel_id":"200","author":{"id":"5","username":"u5"},"content":"hi"}"#)], 50);
+        s.apply(ev(
+            "THREAD_LIST_SYNC",
+            r#"{"guild_id":"100","threads":[
+                {"id":"500","type":11,"name":"Plans","parent_id":"200","guild_id":"100","message_count":2,"thread_metadata":{"archived":false}},
+                {"id":"501","type":11,"name":"Old","parent_id":"200","thread_metadata":{"archived":true}},
+                {"id":"502","type":11,"name":"Joined","parent_id":"200","thread_metadata":{"archived":false}}],
+               "members":[{"id":"502","user_id":"1"}]}"#,
+        ));
+        let names = |v: Vec<&Channel>| v.iter().map(|c| c.label()).collect::<Vec<_>>();
+        assert_eq!(names(s.threads(Snowflake(200))).len(), 2, "archived threads aren't active");
+        assert_eq!(names(s.joined_threads(Snowflake(200))), ["Joined"]);
+        assert_eq!(s.channel(Snowflake(501)).unwrap().guild_id, Some(Snowflake(100)));
+
+        // Our membership arrives separately; later updates without it keep it.
+        s.apply(ev("THREAD_MEMBER_UPDATE", r#"{"id":"500","user_id":"1","guild_id":"100"}"#));
+        s.apply(ev("THREAD_UPDATE", r#"{"id":"500","type":11,"name":"Plans!","parent_id":"200","guild_id":"100","message_count":2}"#));
+        assert_eq!(names(s.joined_threads(Snowflake(200))), ["Plans!", "Joined"]);
+
+        // New messages count up on the thread and on its starter message's chip.
+        s.apply(ev("MESSAGE_CREATE", r#"{"id":"600","channel_id":"500","author":{"id":"5","username":"u5"},"content":"x"}"#));
+        let chip = s.message(Snowflake(200), Snowflake(500)).unwrap().thread.as_ref().unwrap();
+        assert_eq!((chip.label().as_str(), chip.message_count), ("Plans!", Some(3)));
+
+        s.apply(ev("THREAD_MEMBERS_UPDATE", r#"{"id":"500","guild_id":"100","member_count":4,"removed_member_ids":["1"]}"#));
+        assert_eq!(names(s.joined_threads(Snowflake(200))), ["Joined"]);
+        assert_eq!(s.channel(Snowflake(500)).unwrap().member_count, Some(4));
+    }
+
+    fn ev_message(json: &str) -> Message {
+        serde_json::from_str(json).unwrap()
     }
 
     #[test]
