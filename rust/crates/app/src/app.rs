@@ -46,6 +46,8 @@ pub enum AppEvent {
     SearchResults { generation: u64, result: Result<swiftcord_core::rest::SearchResult, String> },
     /// A picture chosen for the profile editor: its data URI and a preview (`None` if the dialog was cancelled).
     ProfileImagePicked { server: bool, kind: ui::profile_edit::ImageKind, result: Result<Option<(String, egui::ColorImage)>, String> },
+    /// A server's (or DM's) slash commands, by the server or DM channel ID.
+    Commands { key: Snowflake, result: Result<swiftcord_core::commands::Index, String> },
     /// An interaction request went out (or didn't).
     InteractionSent { nonce: String, result: Result<(), String> },
     /// Profile changes saved: each request's path and response, then the error that stopped the rest, if any.
@@ -132,6 +134,10 @@ pub enum Action {
     UseComponent { msg: Box<Message>, component: Box<swiftcord_core::models::Component>, values: Option<Vec<String>> },
     SubmitModal,
     CloseModal,
+    /// Fetch the slash commands usable in this server (or DM).
+    LoadCommands { guild: Option<Snowflake>, channel: Snowflake },
+    /// Run the slash command being filled in, in this channel's composer.
+    RunCommand(Snowflake),
     /// Search messages (the whole server, or the DM) from this channel.
     Search { channel: Snowflake, text: String },
     SearchMore,
@@ -192,6 +198,8 @@ pub struct Draft {
     /// The token start the user dismissed suggestions for (Escape).
     pub dismissed: Option<usize>,
     pub selected: usize,
+    /// A slash command being filled in, shown in place of the text box.
+    pub command: Option<ui::commands::CommandDraft>,
 }
 
 /// Retained copies of failed sends so they can be retried.
@@ -259,6 +267,8 @@ pub struct UiState {
     pub profile_editor: Option<ui::profile_edit::Editor>,
     /// Apps' buttons and menus waiting for an answer, and an app's open form.
     pub interactions: crate::interactions_glue::Interactions,
+    /// Slash commands, by server (or DM channel) ID.
+    pub commands: HashMap<Snowflake, ui::commands::Loaded>,
     /// One-click reactions for the server being viewed, and what they were worked out for (server, emoji
     /// catalog version, state revision).
     pub quick_reactions: (Option<(Option<Snowflake>, u64, u64)>, Vec<Emoji>),
@@ -574,6 +584,16 @@ impl App {
             }
             AppEvent::ProfileSaved { done, error } => self.on_profile_saved(done, error),
             AppEvent::InteractionSent { nonce, result } => crate::interactions_glue::on_sent(self, nonce, result),
+            AppEvent::Commands { key, result } => {
+                let loaded = match result {
+                    Ok(index) => ui::commands::Loaded::Ready(index),
+                    Err(e) => {
+                        tracing::info!("slash commands for {key}: {e}");
+                        ui::commands::Loaded::Failed
+                    }
+                };
+                self.ui.commands.insert(key, loaded);
+            }
             AppEvent::Profile { user, guild, result } => {
                 if let Err(e) = &result {
                     tracing::info!("profile of {user}: {e}");
@@ -1254,6 +1274,20 @@ impl App {
             Action::UseComponent { msg, component, values } => crate::interactions_glue::use_component(self, &msg, &component, values),
             Action::SubmitModal => crate::interactions_glue::submit_modal(self),
             Action::CloseModal => self.ui.interactions.modal = None,
+            Action::LoadCommands { guild, channel } => {
+                let Some(s) = &self.session else { return };
+                let key = guild.unwrap_or(channel);
+                if self.ui.commands.contains_key(&key) {
+                    return;
+                }
+                self.ui.commands.insert(key, ui::commands::Loaded::Loading);
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    let result = rest.command_index(guild, channel).await.map_err(|e| e.to_string());
+                    AppEvent::Commands { key, result }
+                });
+            }
+            Action::RunCommand(channel) => crate::interactions_glue::run_command(self, channel),
             Action::PickFiles(channel) => {
                 self.spawn(async move {
                     let picked = rfd::AsyncFileDialog::new().set_title("Upload files").pick_files().await.unwrap_or_default();

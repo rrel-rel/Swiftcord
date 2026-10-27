@@ -10,6 +10,8 @@ pub mod perm {
     pub const STREAM: u64 = 1 << 9;
     pub const VIEW_CHANNEL: u64 = 1 << 10;
     pub const SEND_MESSAGES: u64 = 1 << 11;
+    /// Slash commands.
+    pub const USE_APPLICATION_COMMANDS: u64 = 1 << 31;
     pub const SEND_TTS_MESSAGES: u64 = 1 << 12;
     pub const MANAGE_MESSAGES: u64 = 1 << 13;
     pub const EMBED_LINKS: u64 = 1 << 14;

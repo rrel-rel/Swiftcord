@@ -375,6 +375,22 @@ impl Rest {
         self.json(Method::PATCH, path, Body::Json(serde_json::Value::Object(body))).await
     }
 
+    /// The slash commands usable in a server (`guild`) or a DM (`channel`), together with those of apps we've
+    /// installed ourselves.
+    pub async fn command_index(&self, guild: Option<Snowflake>, channel: Snowflake) -> Result<crate::commands::Index> {
+        let path = match guild {
+            Some(g) => format!("guilds/{g}/application-command-index"),
+            None => format!("channels/{channel}/application-command-index"),
+        };
+        let raw: serde_json::Value = self.json(Method::GET, &path, Body::None).await?;
+        let mut index = crate::commands::Index::parse(&raw);
+        // Our own apps aren't essential: a failure there still leaves the place's commands.
+        if let Ok(mine) = self.json::<serde_json::Value>(Method::GET, "users/@me/application-command-index", Body::None).await {
+            index.merge(crate::commands::Index::parse(&mine));
+        }
+        Ok(index)
+    }
+
     /// Uses an app's button, menu or modal (bodies from [`crate::interactions`]). Discord answers 204; the
     /// app's response comes over the gateway.
     pub async fn interact(&self, body: serde_json::Value) -> Result<()> {

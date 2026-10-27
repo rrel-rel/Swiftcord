@@ -21,6 +21,8 @@ pub enum Suggestion {
     Channel { id: Snowflake, name: String },
     /// A Unicode emoji (inserted as itself, and drawn from the emoji sheet) or a custom one (`image`).
     Emoji { text: String, name: String, image: String, custom: Option<(Snowflake, bool)> },
+    /// An app's slash command (`index` into the place's commands).
+    Command { index: usize, name: String, description: String, app: String },
 }
 
 impl Suggestion {
@@ -35,6 +37,8 @@ impl Suggestion {
             Suggestion::Emoji { name, custom: Some((id, animated)), .. } => {
                 (format!(":{name}:"), Some(format!("<{}:{name}:{id}>", if *animated { "a" } else { "" })))
             }
+            // Picking a command opens its form instead of inserting text.
+            Suggestion::Command { name, .. } => (format!("/{name}"), None),
         }
     }
 }
@@ -106,16 +110,17 @@ pub fn suggestions(s: &Session, catalog: &Catalog, channel: &Channel, token: &To
 /// Draws the list above `anchor` (the composer's rect); returns a clicked suggestion's index.
 pub fn popup(ui: &Ui, anchor: egui::Rect, items: &[Suggestion], selected: usize, title: &str) -> Option<usize> {
     const ROW: f32 = 34.0;
-    let height = items.len() as f32 * ROW + 34.0;
+    // Rows are separated by the usual item spacing, so the list sits clear of the composer.
+    let height = items.len() as f32 * (ROW + ui.spacing().item_spacing.y) + 34.0;
     let pos = anchor.left_top() - Vec2::new(0.0, height + 6.0);
     let mut clicked = None;
-    egui::Area::new(egui::Id::unique("composer-suggestions")).order(egui::Order::Foreground).fixed_pos(pos).show(ui.ctx(), |ui| {
+    let area = egui::Area::new(egui::Id::unique("composer-suggestions")).order(egui::Order::Foreground).fixed_pos(pos).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).fill(theme::SIDEBAR()).corner_radius(8).inner_margin(6).show(ui, |ui| {
             ui.set_width(anchor.width() - 12.0);
             ui.label(RichText::new(title).font(theme::font_semibold(11.5)).color(theme::MUTED()));
             for (i, item) in items.iter().enumerate() {
-                let (rect, r) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
-                if i == selected || r.hovered() {
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::hover());
+                if i == selected || ui.rect_contains_pointer(rect) {
                     ui.painter().rect_filled(rect, 4, theme::SELECTED());
                 }
                 let mut row = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(8.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
@@ -146,12 +151,39 @@ pub fn popup(ui: &Ui, anchor: egui::Rect, items: &[Suggestion], selected: usize,
                         row.add(img);
                         row.label(RichText::new(format!(":{name}:")).color(theme::HEADER()));
                     }
+                    Suggestion::Command { name, description, app, .. } => {
+                        row.label(RichText::new(format!("/{name}")).font(theme::font_semibold(14.0)).color(theme::HEADER()));
+                        row.add(egui::Label::new(RichText::new(description).size(12.5).color(theme::MUTED())).truncate());
+                        row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(RichText::new(app).size(12.0).color(theme::FAINT()));
+                        });
+                    }
                 }
-                if r.clicked() {
+                // Registered after the row's contents so it's on top of them: the labels (selectable) and
+                // avatars would otherwise take the click.
+                let r = ui.interact(rect, ui.scope_id().with(("suggestion", i)), Sense::click());
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     clicked = Some(i);
                 }
             }
         });
     });
+    ui.ctx().memory_mut(|m| m.data.insert_temp(rect_id(), area.response.rect));
     clicked
+}
+
+fn rect_id() -> egui::Id {
+    egui::Id::unique("composer-suggestions-rect")
+}
+
+/// Whether the pointer is over the list as last drawn. Pressing on it takes focus from the text box, so the
+/// composer keeps showing it while it's pointed at, or the click would be lost.
+pub fn pointed_at(ctx: &egui::Context) -> bool {
+    let rect = ctx.memory(|m| m.data.get_temp::<egui::Rect>(rect_id()));
+    rect.zip(ctx.pointer_latest_pos()).is_some_and(|(r, p)| r.contains(p))
+}
+
+/// Forgets the list's position once it's no longer shown.
+pub fn hidden(ctx: &egui::Context) {
+    ctx.memory_mut(|m| m.data.remove::<egui::Rect>(rect_id()));
 }

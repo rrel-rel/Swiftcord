@@ -149,6 +149,32 @@ pub fn tick(app: &mut App) {
     }
 }
 
+/// Runs the slash command filled in in `channel`'s composer, or says what's missing.
+pub fn run_command(app: &mut App, channel: Snowflake) {
+    let Some(s) = &app.session else { return };
+    let session_id = s.state.session_id.clone();
+    let guild = s.state.channel(channel).and_then(|c| c.guild_id);
+    let Some(draft) = app.ui.drafts.get_mut(&channel) else { return };
+    let Some(cmd) = &mut draft.command else { return };
+    let (path, options) = match cmd.values() {
+        Ok(v) => v,
+        Err(e) => {
+            cmd.error = Some(e);
+            return;
+        }
+    };
+    let nonce = swiftcord_core::nonce_now();
+    let body = swiftcord_core::commands::command_body(&cmd.command, &path, options, guild, channel, &session_id, nonce);
+    let app_name = cmd.app.clone();
+    draft.command = None;
+    app.ui.focus_composer = true;
+    app.ui.interactions.pending.insert(
+        nonce.to_string(),
+        Pending { message: Snowflake::NONE, custom_id: String::new(), channel, guild, app_name, sent: Instant::now() },
+    );
+    send(app, nonce, body);
+}
+
 /// Sends the open form.
 pub fn submit_modal(app: &mut App) {
     let Some(s) = &app.session else { return };

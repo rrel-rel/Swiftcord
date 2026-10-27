@@ -445,6 +445,22 @@ fn byte_at(text: &str, chars: usize) -> usize {
     text.char_indices().nth(chars).map_or(text.len(), |(i, _)| i)
 }
 
+/// Takes a picked suggestion: a slash command opens its form; anything else replaces the token being typed.
+fn choose(ctx: &egui::Context, edit_id: egui::Id, draft: &mut crate::app::Draft, token: Option<&Token>, item: &Suggestion, commands: Option<&swiftcord_core::commands::Index>) {
+    if let Suggestion::Command { index, app, .. } = item {
+        if let Some(cmd) = commands.and_then(|i| i.commands.get(*index)) {
+            draft.command = Some(crate::ui::commands::CommandDraft::new(cmd.clone(), app.clone()));
+            draft.text.clear();
+            draft.caret = 0;
+            draft.selected = 0;
+        }
+        return;
+    }
+    if let Some(t) = token {
+        accept(ctx, edit_id, draft, t, item);
+    }
+}
+
 /// Replaces the token being typed with a picked suggestion and moves the caret after it.
 fn accept(ctx: &egui::Context, edit_id: egui::Id, draft: &mut crate::app::Draft, token: &Token, item: &Suggestion) {
     let caret = byte_at(&draft.text, draft.caret);
@@ -474,7 +490,8 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
         return;
     }
     let edit_id = egui::Id::unique(("composer", c.id));
-    let focused = ui.ctx().memory(|m| m.has_focus(edit_id));
+    // Clicking a suggestion takes focus from the text box first; the list stays while it's pointed at.
+    let focused = ui.ctx().memory(|m| m.has_focus(edit_id)) || suggest::pointed_at(ui.ctx());
     let draft = uis.drafts.entry(c.id).or_default();
 
     // Autocomplete for the @/#/: token at the caret.
@@ -484,7 +501,30 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
         draft.dismissed = None;
     }
     let token = at_caret.filter(|t| draft.dismissed != Some(t.start));
-    let items = token.as_ref().map(|t| suggest::suggestions(s, catalog, c, t, perms)).unwrap_or_default();
+    let mut items = token.as_ref().map(|t| suggest::suggestions(s, catalog, c, t, perms)).unwrap_or_default();
+    // Slash commands: `/` at the very start lists the apps' commands (fetched the first time).
+    let command_key = c.guild_id.unwrap_or(c.id);
+    let slash = focused
+        && perms & perm::USE_APPLICATION_COMMANDS != 0
+        && draft.command.is_none()
+        && draft.text.starts_with('/')
+        && !draft.text.contains(char::is_whitespace);
+    let index = match uis.commands.get(&command_key) {
+        Some(crate::ui::commands::Loaded::Ready(i)) => Some(i),
+        _ => None,
+    };
+    if slash {
+        match (uis.commands.get(&command_key), index) {
+            (None, _) => actions.push(Action::LoadCommands { guild: c.guild_id, channel: c.id }),
+            (_, Some(index)) => {
+                items = crate::ui::commands::matching(index, &draft.text[1..], 8)
+                    .into_iter()
+                    .map(|(index, name, description, app)| Suggestion::Command { index, name, description, app })
+                    .collect();
+            }
+            _ => {}
+        }
+    }
     draft.selected = draft.selected.min(items.len().saturating_sub(1));
 
     // Server members aren't all known locally, so ask Discord as the user types (once they pause).
@@ -525,9 +565,14 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
             draft.selected = (draft.selected + 1) % n;
         }
         if enter || tab {
-            accept(ui.ctx(), edit_id, draft, token.as_ref().unwrap(), &items[draft.selected]);
+            let item = items[draft.selected].clone();
+            choose(ui.ctx(), edit_id, draft, token.as_ref(), &item, index);
         }
         if esc {
+            if slash {
+                // The command list goes with what was typed for it.
+                draft.text.clear();
+            }
             draft.dismissed = token.as_ref().map(|t| t.start);
         }
     } else if esc {
@@ -584,6 +629,18 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
             });
         }
 
+        // A slash command being filled in takes the text box's place.
+        if let Some(cmd) = uis.drafts.entry(c.id).or_default().command.as_mut() {
+            match crate::ui::commands::form(ui, state, c, cmd) {
+                crate::ui::commands::FormResult::Run => actions.push(Action::RunCommand(c.id)),
+                crate::ui::commands::FormResult::Cancel => {
+                    uis.drafts.entry(c.id).or_default().command = None;
+                    uis.focus_composer = true;
+                }
+                crate::ui::commands::FormResult::Nothing => {}
+            }
+            return;
+        }
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             if perms & perm::ATTACH_FILES != 0 && widgets::icon_button(ui, icon::ADD, "Upload a file").clicked() {
@@ -643,17 +700,25 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
     });
 
     // Suggestions float above the composer.
-    if let Some(t) = token.as_ref().filter(|_| !items.is_empty()) {
-        let title = match t.trigger {
-            '@' => "MEMBERS",
-            '#' => "TEXT CHANNELS",
-            _ => "EMOJI",
+    if !items.is_empty() && (token.is_some() || slash) {
+        let title = match token.as_ref().map(|t| t.trigger) {
+            Some('@') => "MEMBERS",
+            Some('#') => "TEXT CHANNELS",
+            Some(_) => "EMOJI",
+            None => "COMMANDS",
+        };
+        let index = match uis.commands.get(&command_key) {
+            Some(crate::ui::commands::Loaded::Ready(i)) => Some(i),
+            _ => None,
         };
         let draft = uis.drafts.entry(c.id).or_default();
         if let Some(i) = suggest::popup(ui, frame.response.rect, &items, draft.selected, title) {
-            accept(ui.ctx(), edit_id, draft, t, &items[i]);
+            choose(ui.ctx(), edit_id, draft, token.as_ref(), &items[i], index);
+            suggest::hidden(ui.ctx());
             ui.ctx().memory_mut(|m| m.request_focus(edit_id));
         }
+    } else {
+        suggest::hidden(ui.ctx());
     }
     if enter {
         actions.push(Action::Send(c.id));

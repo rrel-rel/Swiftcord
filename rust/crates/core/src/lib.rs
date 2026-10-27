@@ -1,6 +1,7 @@
 //! Swiftcord's platform-independent Discord client: REST, gateway, state cache, markdown and permissions.
 
 pub mod cdn;
+pub mod commands;
 pub mod events;
 pub mod gateway;
 pub mod interactions;
