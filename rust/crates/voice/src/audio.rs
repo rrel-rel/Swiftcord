@@ -14,7 +14,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
 use parking_lot::Mutex;
 
-use crate::codec::{Decoder, FRAME, SAMPLE_RATE};
+use crate::codec::{Decoder, FRAME, SAMPLE_RATE, SILENCE};
 
 /// Linear resampling: plenty for voice, and nearly free.
 struct Resampler {
@@ -61,10 +61,12 @@ impl Resampler {
 
 /// One remote speaker: a jitter buffer of Opus packets, decoded as they're played.
 ///
-/// Packets wait until `target` frames are buffered, then play in sequence order. A missing packet is
-/// concealed by the decoder (packet-loss concealment) instead of leaving a gap; if the buffer runs dry while
-/// the speaker is still sending, `target` grows so the next run has more cushion, and shrinks again after a
-/// stretch without trouble.
+/// Packets wait until `target` frames are buffered, then play in sequence order. A packet missing while later
+/// ones have arrived is concealed by the decoder (packet-loss concealment) instead of leaving a gap. When
+/// the speaker stops (silence frames, or nothing more arrives), the last few milliseconds of real sound fade
+/// out; the next talk spurt starts a fresh decoder and fades in. If the buffer runs dry while the speaker is
+/// still sending, `target` grows so the next run has more cushion, and shrinks again after a stretch
+/// without trouble.
 struct Stream {
     decoder: Decoder,
     packets: BTreeMap<u64, Vec<u8>>,
@@ -73,8 +75,9 @@ struct Stream {
     next: u64,
     pcm: VecDeque<f32>,
     playing: bool,
-    /// The next decoded frame starts a talk spurt and is faded in.
-    fade_in: bool,
+    /// Between talk spurts: what was playing has been faded out, so the next real packet starts a fresh
+    /// decoder and fades in.
+    quiet: bool,
     target: usize,
     concealed: u32,
     last_arrival: Instant,
@@ -84,6 +87,8 @@ struct Stream {
 // Internet jitter of a few tens of ms is normal, so keep at least 60 ms of cushion.
 const MIN_TARGET: usize = 3;
 const MAX_TARGET: usize = 12;
+/// Decoded sound kept in hand (5 ms, in stereo samples) so a stop can be faded.
+const HOLD: usize = SAMPLE_RATE as usize / 200 * 2;
 /// More than this many frames beyond the target are skipped to catch up (we've fallen behind).
 const MAX_BACKLOG: usize = 25;
 
@@ -96,7 +101,7 @@ impl Stream {
             next: 0,
             pcm: VecDeque::new(),
             playing: false,
-            fade_in: true,
+            quiet: true,
             target: 4,
             concealed: 0,
             last_arrival: Instant::now(),
@@ -118,8 +123,8 @@ impl Stream {
     fn push(&mut self, seq: u16, opus: Vec<u8>) {
         let ext = self.unwrap_seq(seq);
         self.last_arrival = Instant::now();
-        if self.playing && ext < self.next {
-            return; // Too late; already concealed.
+        if ext < self.next {
+            return; // Too late: already concealed or faded past.
         }
         self.highest = Some(self.highest.map_or(ext, |h| h.max(ext)));
         self.packets.insert(ext, opus);
@@ -142,47 +147,55 @@ impl Stream {
             self.playing = true;
             self.next = *self.packets.keys().next().unwrap();
             self.concealed = 0;
-            // A new talk spurt (or a restart after running dry): start the decoder afresh, since blending the
-            // first frame with what it last played clicks, and ramp up from silence.
-            self.decoder.reset();
-            self.fade_in = true;
         }
-        let n = if let Some(p) = self.packets.remove(&self.next) {
-            self.concealed = 0;
-            let n = self.decoder.decode(Some(&p), scratch);
-            if std::mem::take(&mut self.fade_in) {
-                // 5 ms.
-                let ramp = (SAMPLE_RATE as usize / 200 * 2).min(n);
-                for (i, s) in scratch[..ramp].iter_mut().enumerate() {
-                    *s *= (i / 2) as f32 / (ramp / 2) as f32;
+        let n = match self.packets.remove(&self.next) {
+            // The silence frames sent as someone stops talking: end with our own fade rather than decoding
+            // them, which makes the decoder switch modes abruptly (a click).
+            Some(p) if p == SILENCE => {
+                if !self.quiet {
+                    self.fade_out();
                 }
+                self.pcm.extend(std::iter::repeat_n(0.0, FRAME * 2));
+                self.next += 1;
+                return true;
             }
-            n
-        } else if !self.packets.is_empty() || (self.concealed < 3 && self.last_arrival.elapsed() < Duration::from_millis(80)) {
-            // Lost or late: conceal. After several concealed frames with later packets waiting, skip ahead.
-            self.concealed += 1;
-            if self.concealed > 5 {
-                if let Some(&first) = self.packets.keys().next() {
-                    self.next = first;
-                    self.concealed = 0;
-                    return true;
+            Some(p) => {
+                self.concealed = 0;
+                // A new talk spurt: start the decoder afresh, since blending the first frame with what it last
+                // played clicks, and ramp up from silence over 5 ms.
+                let fade_in = std::mem::take(&mut self.quiet);
+                if fade_in {
+                    self.decoder.reset();
                 }
+                let n = self.decoder.decode(Some(&p), scratch);
+                if fade_in {
+                    let ramp = (SAMPLE_RATE as usize / 200 * 2).min(n);
+                    for (i, s) in scratch[..ramp].iter_mut().enumerate() {
+                        *s *= (i / 2) as f32 / (ramp / 2) as f32;
+                    }
+                }
+                n
             }
-            // Conceal exactly one frame (the decoder would otherwise fill the whole buffer).
-            self.decoder.decode(None, &mut scratch[..FRAME * 2])
-        } else {
-            // Ran dry. If they're still talking, the buffer was too shallow: deepen it.
-            self.playing = false;
-            if self.last_arrival.elapsed() < Duration::from_millis(60) {
-                self.target = (self.target + 1).min(MAX_TARGET);
-                self.last_underrun = Instant::now();
+            None if !self.packets.is_empty() => self.conceal(scratch),
+            None => {
+                // Ran dry: they've stopped (or the network stalled). If packets were still arriving, the buffer
+                // was too shallow: deepen it. Either way, fade out now instead of having the decoder invent
+                // more speech and then stop, which pops.
+                self.playing = false;
+                if self.last_arrival.elapsed() < Duration::from_millis(60) {
+                    self.target = (self.target + 1).min(MAX_TARGET);
+                    self.last_underrun = Instant::now();
+                }
+                if self.quiet {
+                    return false;
+                }
+                self.fade_out();
+                return true;
             }
-            // Fade out over one concealed frame rather than stopping dead, which would click.
-            let n = self.decoder.decode(None, &mut scratch[..FRAME * 2]);
-            let len = n.max(1) as f32;
-            self.pcm.extend(scratch[..n].iter().enumerate().map(|(i, &s)| s * (1.0 - i as f32 / len)));
-            return n > 0;
         };
+        if n == usize::MAX {
+            return true;
+        }
         self.next += 1;
         if self.last_underrun.elapsed() > Duration::from_secs(15) && self.target > MIN_TARGET {
             self.target -= 1;
@@ -190,6 +203,40 @@ impl Stream {
         }
         self.pcm.extend(&scratch[..n]);
         true
+    }
+
+    /// Fades out the real sound still waiting to play (the mixer keeps [`HOLD`] of it in hand), then marks
+    /// the stream quiet. Concealment isn't used for this: on a sudden stop it tends to burst, which pops.
+    fn fade_out(&mut self) {
+        let from = self.pcm.len().saturating_sub(HOLD);
+        let frames = ((self.pcm.len() - from) / 2).max(1) as f32;
+        for (i, s) in self.pcm.iter_mut().skip(from).enumerate() {
+            *s *= 1.0 - ((i / 2) as f32 + 1.0) / frames;
+        }
+        self.quiet = true;
+    }
+
+    /// A packet is missing but later ones have arrived: conceal it, or after several in a row skip ahead to
+    /// what's there. Returns the samples concealed, or `usize::MAX` after skipping.
+    fn conceal(&mut self, scratch: &mut [f32]) -> usize {
+        if self.quiet {
+            // Nothing playing to continue: just move on.
+            self.next = *self.packets.keys().next().unwrap();
+            return usize::MAX;
+        }
+        {
+            // Lost or late: conceal. After several concealed frames with later packets waiting, skip ahead.
+            self.concealed += 1;
+            if self.concealed > 5 {
+                // Skipping is a jump in the sound: fade out first, and the next packet fades in.
+                self.fade_out();
+                self.next = *self.packets.keys().next().unwrap();
+                self.concealed = 0;
+                return usize::MAX;
+            }
+            // Conceal exactly one frame (the decoder would otherwise fill the whole buffer).
+            self.decoder.decode(None, &mut scratch[..FRAME * 2])
+        }
     }
 }
 
@@ -233,16 +280,11 @@ impl Mixer {
         let mut scratch = [0f32; FRAME * 2 * 6];
         for (ssrc, s) in streams.iter_mut() {
             let g = gains.get(ssrc).copied().unwrap_or(1.0);
-            let mut i = 0;
-            while i < out.len() {
-                if s.pcm.is_empty() && !s.decode_next(&mut scratch) {
-                    break;
-                }
-                let n = (out.len() - i).min(s.pcm.len());
-                for (o, v) in out[i..i + n].iter_mut().zip(s.pcm.drain(..n)) {
-                    *o += v * g;
-                }
-                i += n;
+            // Decode ahead so HOLD of real sound is always left over: if the speaker stops, that's what fades.
+            while s.pcm.len() < out.len() + HOLD && s.decode_next(&mut scratch) {}
+            let n = out.len().min(s.pcm.len());
+            for (o, v) in out[..n].iter_mut().zip(s.pcm.drain(..n)) {
+                *o += v * g;
             }
         }
         for o in out.iter_mut() {
@@ -606,12 +648,13 @@ mod tests {
         }
         // They've stopped sending (rather than a packet being merely late).
         std::thread::sleep(Duration::from_millis(100));
-        // Four frames of audio, then one frame of tail.
+        // Four frames of audio whose last 5 ms fade out, then silence.
         let mut out = vec![0.0; FRAME * 2 * 5];
         m.mix(&mut out);
-        let tail = &out[FRAME * 2 * 4..];
-        assert!(energy(&tail[..FRAME]) > energy(&tail[FRAME..]), "fades");
-        assert!(tail[tail.len() - 2..].iter().all(|s| s.abs() < 0.01), "ends near silence");
+        let last = &out[FRAME * 2 * 3..FRAME * 2 * 4];
+        assert!(energy(&last[..FRAME]) > 0.01, "plays to the end");
+        assert!(last[last.len() - 2..].iter().all(|s| s.abs() < 0.01), "ends near silence");
+        assert_eq!(energy(&out[FRAME * 2 * 4..]), 0.0, "then stops");
     }
 
     #[test]
@@ -632,6 +675,54 @@ mod tests {
         m.mix(&mut out);
         assert!(out[..8].iter().all(|s| s.abs() < 0.02), "starts near silence: {:?}", &out[..8]);
         assert!(energy(&out[FRAME..]) > 0.01, "then plays at full level");
+    }
+
+    /// The largest jump between neighbouring samples (a click shows up as a big one).
+    fn max_step(out: &[f32]) -> f32 {
+        out.chunks(2).map(|f| f[0]).collect::<Vec<_>>().windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn silence_frames_end_a_spurt_with_a_fade_and_the_next_one_ramps_up() {
+        let m = Mixer::default();
+        let p = packets(12);
+        for i in 0..4 {
+            m.push(1, i, p[i as usize].clone());
+        }
+        for i in 4..9 {
+            m.push(1, i, SILENCE.to_vec());
+        }
+        // Speech again straight after the silence frames (no gap in sequence numbers).
+        for i in 9..13 {
+            m.push(1, i, p[i as usize - 1].clone());
+        }
+        let mut out = vec![0.0; FRAME * 2 * 13];
+        m.mix(&mut out);
+        let frame = |k: usize| &out[FRAME * 2 * k..FRAME * 2 * (k + 1)];
+        // Four frames of speech fading out at the end, then the silence frames as silence.
+        assert!(energy(frame(3)) > 0.01);
+        assert!(frame(3)[FRAME * 2 - 2..].iter().all(|s| s.abs() < 0.01), "fades to silence");
+        assert!((4..9).all(|k| energy(frame(k)) == 0.0), "silence frames play as silence");
+        // The next spurt starts from silence rather than jumping in.
+        assert!(frame(9)[..8].iter().all(|s| s.abs() < 0.02), "{:?}", &frame(9)[..8]);
+        assert!(energy(frame(10)) > 0.01);
+        // And nowhere does the sound jump: the test tone moves at most ~0.03 per sample.
+        assert!(max_step(&out) < 0.1, "largest step {}", max_step(&out));
+    }
+
+    #[test]
+    fn running_dry_mid_word_fades_instead_of_inventing_speech() {
+        let m = Mixer::default();
+        let p = packets(4);
+        for (i, pk) in p.iter().enumerate() {
+            m.push(1, i as u16, pk.clone());
+        }
+        // Packets stop arriving (but only just: this used to be concealed for up to 60 ms first).
+        let mut out = vec![0.0; FRAME * 2 * 7];
+        m.mix(&mut out);
+        let tail = &out[FRAME * 2 * 4..];
+        assert_eq!(energy(tail), 0.0, "silent once the real sound has faded");
+        assert!(max_step(&out) < 0.1, "largest step {}", max_step(&out));
     }
 
     #[test]
