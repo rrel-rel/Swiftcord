@@ -375,6 +375,12 @@ impl Rest {
         self.json(Method::PATCH, path, Body::Json(serde_json::Value::Object(body))).await
     }
 
+    /// Uses an app's button, menu or modal (bodies from [`crate::interactions`]). Discord answers 204; the
+    /// app's response comes over the gateway.
+    pub async fn interact(&self, body: serde_json::Value) -> Result<()> {
+        self.empty(Method::POST, "interactions", Body::Json(body)).await
+    }
+
     /// Someone's profile for their profile card, with their server profile in `guild`.
     pub async fn user_profile(&self, user: Snowflake, guild: Option<Snowflake>) -> Result<Profile> {
         let mut path = format!("users/{user}/profile?with_mutual_guilds=false&with_mutual_friends=false&with_mutual_friends_count=false");

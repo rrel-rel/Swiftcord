@@ -116,6 +116,8 @@ impl MemberList {
 #[derive(Default)]
 pub struct State {
     pub me: Option<User>,
+    /// This gateway session's ID (interactions with apps name it).
+    pub session_id: String,
     /// Bumped when anything affecting channel lists or permissions changes, for UI caches.
     pub revision: u64,
     guild_order: Vec<Snowflake>,
@@ -919,7 +921,7 @@ impl State {
     }
 
     fn on_ready(&mut self, r: Ready) {
-        *self = State { revision: self.revision + 1, ..State::default() };
+        *self = State { revision: self.revision + 1, session_id: r.session_id.clone(), ..State::default() };
         self.users.insert(r.user.id, r.user.clone());
         self.me = Some(r.user);
         for u in r.users {

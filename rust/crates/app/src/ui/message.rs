@@ -215,6 +215,22 @@ fn header(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
 }
 
 fn body(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
+    use swiftcord_core::models::message_flags::{EPHEMERAL, LOADING};
+    // An app that deferred its reply: "… is thinking" until the reply replaces this message.
+    if msg.flags & LOADING != 0 && msg.content.is_empty() && msg.embeds.is_empty() && msg.components.is_empty() {
+        ui.horizontal(|ui| {
+            ui.add(egui::Spinner::new().size(12.0));
+            ui.label(RichText::new(format!("{} is thinking…", msg.author.display_name())).italics().color(theme::MUTED));
+        });
+    }
+    if msg.flags & EPHEMERAL != 0 {
+        // Above an app's private reply.
+        ui.label(RichText::new("Only you can see this").size(12.0).italics().color(theme::MUTED));
+    }
+    body_content(ui, msg, cx);
+}
+
+fn body_content(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     let editing = cx.uis.editing.as_ref().is_some_and(|(id, _)| *id == msg.id);
     if editing {
         edit_box(ui, msg, cx);

@@ -705,11 +705,24 @@ pub mod message_flags {
     pub const SUPPRESS_NOTIFICATIONS: u64 = 1 << 12;
     /// The message is laid out entirely by `components`; `content` and `embeds` are unused.
     pub const IS_COMPONENTS_V2: u64 = 1 << 15;
+    /// Only the person who used the app can see it.
+    pub const EPHEMERAL: u64 = 1 << 6;
+    /// An app's deferred reply: "is thinking…" until it answers.
+    pub const LOADING: u64 = 1 << 7;
 }
 
 pub mod component_type {
     pub const ACTION_ROW: u8 = 1;
     pub const BUTTON: u8 = 2;
+    pub const STRING_SELECT: u8 = 3;
+    /// A text field in a modal.
+    pub const TEXT_INPUT: u8 = 4;
+    pub const USER_SELECT: u8 = 5;
+    pub const ROLE_SELECT: u8 = 6;
+    pub const MENTIONABLE_SELECT: u8 = 7;
+    pub const CHANNEL_SELECT: u8 = 8;
+    /// A labelled field in a modal (its `component`).
+    pub const LABEL: u8 = 18;
     pub const SECTION: u8 = 9;
     pub const TEXT_DISPLAY: u8 = 10;
     pub const THUMBNAIL: u8 = 11;
@@ -761,8 +774,33 @@ pub struct Component {
     pub disabled: bool,
     /// Select menus' prompt.
     pub placeholder: Option<String>,
-    /// Alt text of thumbnails.
+    /// Alt text of thumbnails; a modal label's help text.
     pub description: Option<String>,
+    /// What the app gets back when a button or menu is used, or a modal field filled.
+    pub custom_id: Option<String>,
+    /// A string select's choices.
+    #[serde(deserialize_with = "null_as_default")]
+    pub options: Vec<SelectOption>,
+    pub min_values: Option<u32>,
+    pub max_values: Option<u32>,
+    /// Text inputs (style 1 short, 2 paragraph): the prefilled value, limits and whether it's required.
+    pub value: Option<String>,
+    pub required: Option<bool>,
+    pub min_length: Option<u32>,
+    pub max_length: Option<u32>,
+    /// A modal label's field.
+    pub component: Option<Box<Component>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SelectOption {
+    pub label: String,
+    pub value: String,
+    pub description: Option<String>,
+    pub emoji: Option<Emoji>,
+    #[serde(deserialize_with = "null_as_default")]
+    pub default: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -827,6 +865,8 @@ pub struct Message {
     #[serde(deserialize_with = "null_as_default")]
     pub message_snapshots: Vec<MessageSnapshot>,
     pub webhook_id: Option<Snowflake>,
+    /// The app that sent it (for interaction replies and app messages).
+    pub application_id: Option<Snowflake>,
     #[serde(deserialize_with = "null_as_default")]
     pub flags: u64,
     #[serde(deserialize_with = "null_as_default")]

@@ -43,6 +43,8 @@ pub enum AppEvent {
     SearchResults { generation: u64, result: Result<swiftcord_core::rest::SearchResult, String> },
     /// A picture chosen for the profile editor: its data URI and a preview (`None` if the dialog was cancelled).
     ProfileImagePicked { server: bool, kind: ui::profile_edit::ImageKind, result: Result<Option<(String, egui::ColorImage)>, String> },
+    /// An interaction request went out (or didn't).
+    InteractionSent { nonce: String, result: Result<(), String> },
     /// Profile changes saved: each request's path and response, then the error that stopped the rest, if any.
     ProfileSaved { done: Vec<(String, serde_json::Value)>, error: Option<String> },
     Profile { user: Snowflake, guild: Option<Snowflake>, result: Result<swiftcord_core::models::Profile, String> },
@@ -123,6 +125,10 @@ pub enum Action {
     PickProfileImage { server: bool, kind: ui::profile_edit::ImageKind },
     SaveProfile,
     CloseProfileEditor,
+    /// Use an app's button (`values: None`) or select menu on a message.
+    UseComponent { msg: Box<Message>, component: Box<swiftcord_core::models::Component>, values: Option<Vec<String>> },
+    SubmitModal,
+    CloseModal,
     /// Search messages (the whole server, or the DM) from this channel.
     Search { channel: Snowflake, text: String },
     SearchMore,
@@ -246,6 +252,8 @@ pub struct UiState {
     pub search_box: String,
     /// The open profile editor.
     pub profile_editor: Option<ui::profile_edit::Editor>,
+    /// Apps' buttons and menus waiting for an answer, and an app's open form.
+    pub interactions: crate::interactions_glue::Interactions,
     pub profile_card: Option<ui::profile::Card>,
     pub profiles: ui::profile::Profiles,
     /// The watched stream's sound: volume (0–2) and whether it plays while deafened (from settings).
@@ -555,6 +563,7 @@ impl App {
                 }
             }
             AppEvent::ProfileSaved { done, error } => self.on_profile_saved(done, error),
+            AppEvent::InteractionSent { nonce, result } => crate::interactions_glue::on_sent(self, nonce, result),
             AppEvent::Profile { user, guild, result } => {
                 if let Err(e) = &result {
                     tracing::info!("profile of {user}: {e}");
@@ -1228,6 +1237,9 @@ impl App {
                 });
             }
             Action::CloseProfileEditor => self.ui.profile_editor = None,
+            Action::UseComponent { msg, component, values } => crate::interactions_glue::use_component(self, &msg, &component, values),
+            Action::SubmitModal => crate::interactions_glue::submit_modal(self),
+            Action::CloseModal => self.ui.interactions.modal = None,
             Action::PickFiles(channel) => {
                 self.spawn(async move {
                     let picked = rfd::AsyncFileDialog::new().set_title("Upload files").pick_files().await.unwrap_or_default();
@@ -1484,6 +1496,7 @@ impl eframe::App for App {
         }
         crate::voice_glue::tick(self);
         self.ring_sounds();
+        crate::interactions_glue::tick(self);
         crate::share_glue::tick(self);
         self.ui.clips.tick();
         self.ui.videos.tick();

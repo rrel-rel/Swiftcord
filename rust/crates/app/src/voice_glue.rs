@@ -219,7 +219,11 @@ pub fn on_notice(app: &mut App, notice: Notice) {
             drop(call.voice.take());
             connect(app);
         }
-        Notice::Other(name, data) => crate::stream_glue::on_gateway(app, &name, &data),
+        Notice::Other(name, data) => {
+            if !crate::interactions_glue::on_gateway(app, &name, &data) {
+                crate::stream_glue::on_gateway(app, &name, &data);
+            }
+        }
         Notice::MessageCreated { .. } | Notice::Ring(_) | Notice::RingStopped(_) | Notice::FrecencyChanged => {}
     }
 }

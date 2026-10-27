@@ -70,15 +70,15 @@ fn component(ui: &mut Ui, c: &Component, msg: &Message, n: &mut u16, cx: &mut Ct
             ui.horizontal_wrapped(|ui| {
                 for child in &c.components {
                     if child.kind == kind::BUTTON {
-                        button(ui, child, cx);
+                        button(ui, child, msg, cx);
                     } else if kind::is_select(child.kind) {
-                        select(ui, child);
+                        select(ui, child, msg, cx);
                     }
                 }
             });
         }
         kind::BUTTON => {
-            button(ui, c, cx);
+            button(ui, c, msg, cx);
         }
         _ => {}
     }
@@ -125,7 +125,7 @@ fn section(ui: &mut Ui, c: &Component, msg: &Message, n: &mut u16, cx: &mut Ctx)
         if let Some(a) = accessory {
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| match a.kind {
                 kind::THUMBNAIL => thumbnail(ui, a, msg, n, cx),
-                kind::BUTTON => button(ui, a, cx),
+                kind::BUTTON => button(ui, a, msg, cx),
                 _ => {}
             });
         }
@@ -169,8 +169,9 @@ fn text(ui: &mut Ui, content: &str, msg: &Message, cx: &mut Ctx) {
     md::blocks(ui, &blocks, &mut mcx);
 }
 
-fn button(ui: &mut Ui, c: &Component, cx: &mut Ctx) {
+fn button(ui: &mut Ui, c: &Component, msg: &Message, cx: &mut Ctx) {
     let style = c.style.unwrap_or(2);
+    let waiting = c.custom_id.as_deref().is_some_and(|id| cx.uis.interactions.is_pending(msg.id, id));
     let fill = match style {
         1 | 6 => theme::BLURPLE,
         3 => Color32::from_rgb(0x24, 0x80, 0x46),
@@ -190,29 +191,146 @@ fn button(ui: &mut Ui, c: &Component, cx: &mut Ctx) {
         Some(e) => egui::Button::new(RichText::new(format!("{} {}", e.name.as_deref().unwrap_or_default(), c.label.as_deref().unwrap_or_default())).font(theme::font_semibold(14.0)).color(Color32::WHITE)),
         None => egui::Button::new(text),
     };
-    let r = ui.add_enabled(!c.disabled, button.fill(fill).corner_radius(4).min_size(Vec2::new(60.0, 32.0)));
+    let r = ui.add_enabled(!c.disabled && !waiting && !cx.read_only, button.fill(fill).corner_radius(4).min_size(Vec2::new(60.0, 32.0)));
+    if waiting {
+        // The app is working on it.
+        egui::Spinner::new().size(14.0).color(Color32::WHITE).paint_at(ui, Rect::from_center_size(r.rect.right_center() - Vec2::new(12.0, 0.0), Vec2::splat(14.0)));
+    }
     match (&c.url, style) {
         (Some(url), 5) => {
             if r.on_hover_text(url).clicked() {
                 cx.actions.push(Action::OpenLink(url.clone()));
             }
         }
+        // Premium buttons open a store page, which Swiftcord doesn't have.
+        (_, 6) => {
+            r.on_hover_text("Purchases aren't available in Swiftcord.");
+        }
         _ => {
             if r.clicked() {
-                cx.actions.push(Action::Notice("App buttons aren't supported in Swiftcord yet.".into()));
+                cx.actions.push(Action::UseComponent { msg: Box::new(msg.clone()), component: Box::new(c.clone()), values: None });
             }
         }
     }
 }
 
-/// Select menus are shown but can't be used yet.
-/// Painted at a fixed size: it sits in a wrapping row, where there's no width to fill.
-fn select(ui: &mut Ui, c: &Component) {
-    let (rect, r) = ui.allocate_exact_size(Vec2::new(260.0, 36.0), egui::Sense::hover());
+/// A choice in a select menu: the value sent, its label, and an optional description.
+struct Choice {
+    value: String,
+    label: String,
+    description: Option<String>,
+}
+
+/// What a select menu offers: a string select's options, or the server's people, roles or channels.
+fn choices(c: &Component, query: &str, cx: &Ctx) -> Vec<Choice> {
+    let roles = || -> Vec<Choice> {
+        let Some(g) = cx.guild.and_then(|g| cx.state.guild(g)) else { return Vec::new() };
+        let q = query.to_lowercase();
+        let mut roles: Vec<_> = g.roles.iter().filter(|r| r.id != g.id && r.name.to_lowercase().contains(&q)).collect();
+        roles.sort_by_key(|r| -r.position);
+        roles.into_iter().take(25).map(|r| Choice { value: r.id.to_string(), label: format!("@{}", r.name), description: None }).collect()
+    };
+    let users = || -> Vec<Choice> {
+        let Some(ch) = cx.state.channel(cx.channel) else { return Vec::new() };
+        cx.state
+            .search_people(ch, query, 25)
+            .into_iter()
+            .map(|u| Choice { value: u.id.to_string(), label: cx.state.display_name(u.id, cx.guild), description: Some(u.tag()) })
+            .collect()
+    };
+    match c.kind {
+        kind::STRING_SELECT => c.options.iter().map(|o| Choice { value: o.value.clone(), label: o.label.clone(), description: o.description.clone() }).collect(),
+        kind::ROLE_SELECT => roles(),
+        kind::USER_SELECT => users(),
+        kind::MENTIONABLE_SELECT => users().into_iter().chain(roles()).collect(),
+        kind::CHANNEL_SELECT => {
+            let Some(g) = cx.guild else { return Vec::new() };
+            let q = query.to_lowercase();
+            cx.state
+                .channel_tree(g)
+                .into_iter()
+                .flat_map(|(_, chans)| chans)
+                .filter(|ch| ch.label().to_lowercase().contains(&q))
+                .take(25)
+                .map(|ch| Choice { value: ch.id.to_string(), label: format!("#{}", ch.label()), description: None })
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// An app's select menu. One choice is sent as soon as it's picked; for several, they're ticked and then
+/// applied. Painted at a fixed size: it sits in a wrapping row, where there's no width to fill.
+fn select(ui: &mut Ui, c: &Component, msg: &Message, cx: &mut Ctx) {
+    let custom_id = c.custom_id.clone().unwrap_or_default();
+    let waiting = cx.uis.interactions.is_pending(msg.id, &custom_id);
+    let enabled = !c.disabled && !waiting && !cx.read_only;
+    let (rect, r) = ui.allocate_exact_size(Vec2::new(260.0, 36.0), if enabled { egui::Sense::click() } else { egui::Sense::hover() });
     let p = ui.painter();
-    p.rect_filled(rect, 4, theme::INPUT);
-    let prompt = c.placeholder.as_deref().unwrap_or("Make a selection");
-    p.text(rect.left_center() + Vec2::new(10.0, 0.0), egui::Align2::LEFT_CENTER, prompt, theme::font(14.0), theme::MUTED);
-    p.text(rect.right_center() - Vec2::new(12.0, 0.0), egui::Align2::RIGHT_CENTER, icon::CHEVRON_DOWN, theme::icon_font(12.0), theme::MUTED);
-    r.on_hover_text("Menus from apps aren't supported in Swiftcord yet.");
+    p.rect_filled(rect, 4, if r.hovered() && enabled { theme::SELECTED } else { theme::INPUT });
+    let defaults: Vec<&str> = c.options.iter().filter(|o| o.default).map(|o| o.label.as_str()).collect();
+    let (text, color) = if defaults.is_empty() { (c.placeholder.clone().unwrap_or_else(|| "Make a selection".into()), theme::MUTED) } else { (defaults.join(", "), theme::TEXT) };
+    let galley = p.layout(text, theme::font(14.0), if enabled { color } else { color.gamma_multiply(0.5) }, rect.width() - 44.0);
+    p.galley(rect.left_center() + Vec2::new(10.0, -galley.size().y / 2.0), galley, color);
+    if waiting {
+        egui::Spinner::new().size(14.0).paint_at(ui, Rect::from_center_size(rect.right_center() - Vec2::new(16.0, 0.0), Vec2::splat(14.0)));
+    } else {
+        p.text(rect.right_center() - Vec2::new(12.0, 0.0), egui::Align2::RIGHT_CENTER, icon::CHEVRON_DOWN, theme::icon_font(12.0), theme::MUTED);
+    }
+    if !enabled {
+        return;
+    }
+    let many = c.max_values.unwrap_or(1) > 1;
+    let min = c.min_values.unwrap_or(1) as usize;
+    let max = c.max_values.unwrap_or(1) as usize;
+    let searchable = c.kind != kind::STRING_SELECT;
+    let key = (msg.id, custom_id.clone());
+    let query_id = ui.scope_id().with(("select-query", msg.id, &custom_id));
+    egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        ui.set_min_width(260.0);
+        ui.set_max_height(320.0);
+        let mut query: String = ui.ctx().data(|d| d.get_temp(query_id)).unwrap_or_default();
+        if searchable && ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search").desired_width(f32::INFINITY)).changed() {
+            ui.ctx().data_mut(|d| d.insert_temp(query_id, query.clone()));
+        }
+        let list = choices(c, &query, cx);
+        if list.is_empty() {
+            ui.label(RichText::new("Nothing to choose from.").color(theme::MUTED));
+        }
+        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+            for ch in &list {
+                if many {
+                    let chosen = cx.uis.interactions.choosing.entry(key.clone()).or_default();
+                    let mut on = chosen.contains(&ch.value);
+                    if ui.checkbox(&mut on, &ch.label).changed() {
+                        chosen.retain(|v| v != &ch.value);
+                        if on && chosen.len() < max {
+                            chosen.push(ch.value.clone());
+                        }
+                    }
+                } else if ui.selectable_label(false, &ch.label).clicked() {
+                    cx.actions.push(Action::UseComponent { msg: Box::new(msg.clone()), component: Box::new(c.clone()), values: Some(vec![ch.value.clone()]) });
+                    ui.close();
+                }
+                if let Some(d) = &ch.description {
+                    ui.label(RichText::new(d).size(11.5).color(theme::MUTED));
+                }
+            }
+        });
+        if many {
+            ui.separator();
+            let chosen = cx.uis.interactions.choosing.get(&key).cloned().unwrap_or_default();
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("{} chosen (pick {min}–{max})", chosen.len())).size(12.0).color(theme::MUTED));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let ok = (min..=max).contains(&chosen.len());
+                    if ui.add_enabled(ok, egui::Button::new("Apply")).clicked() {
+                        cx.uis.interactions.choosing.remove(&key);
+                        cx.actions.push(Action::UseComponent { msg: Box::new(msg.clone()), component: Box::new(c.clone()), values: Some(chosen) });
+                        ui.close();
+                    }
+                });
+            });
+        }
+    });
 }

@@ -121,7 +121,7 @@ const SAMPLES: &str = r##"[
    {"type":10,"content":"-# <t:1793023201:R> • [Link](https://x.com/ence/status/2114718698422284713)"},
    {"type":14,"divider":true,"spacing":1},
    {"type":1,"components":[{"type":2,"style":5,"label":"Open post","url":"https://x.com/ence/status/2114718698422284713"},
-     {"type":2,"style":1,"label":"Translate","custom_id":"t"},{"type":3,"custom_id":"m","options":[],"placeholder":"More options"}]}]}]},
+     {"type":2,"style":1,"label":"Translate","custom_id":"t"},{"type":3,"custom_id":"m","options":[{"label":"Show original","value":"o","description":"Before translation"},{"label":"Report","value":"r"}],"placeholder":"More options"}]}]}]},
 {"id":"1400000000000000010","channel_id":"{CH}","author":{"id":"{ME}","username":"me"},
  "timestamp":"2026-10-25T10:09:00+00:00","content":"A video with sound:",
  "attachments":[{"id":"1","filename":"mov_bbb.mp4","size":788493,"content_type":"video/mp4","width":320,"height":176,
