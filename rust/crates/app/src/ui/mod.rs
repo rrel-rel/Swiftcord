@@ -12,6 +12,7 @@ pub mod search;
 pub mod shell;
 pub mod stream;
 pub mod suggest;
+pub mod profile;
 pub mod server_profile;
 pub mod settings;
 pub mod share;

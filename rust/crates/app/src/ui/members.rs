@@ -96,6 +96,10 @@ fn member_row(ui: &Ui, state: &State, guild: Snowflake, user_id: Snowflake, rect
     }
 
     let me = state.me.as_ref().is_some_and(|m| m.id == user_id);
+    if r.clicked() {
+        // Beside the list, which is at the window's right edge: open to its left.
+        actions.push(Action::OpenProfile { user: user_id, guild: Some(guild), at: rect.left_top() - Vec2::new(300.0 + 16.0, 0.0) });
+    }
     r.clone().on_hover_text(user.tag()).context_menu(|ui| {
         if !me && ui.button("Message").clicked() {
             actions.push(Action::OpenDm(user_id));

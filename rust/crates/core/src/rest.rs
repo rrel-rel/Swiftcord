@@ -382,6 +382,15 @@ impl Rest {
         self.json(Method::PATCH, &format!("guilds/{guild}/members/@me"), Body::Json(serde_json::Value::Object(body))).await
     }
 
+    /// Someone's profile for their profile card, with their server profile in `guild`.
+    pub async fn user_profile(&self, user: Snowflake, guild: Option<Snowflake>) -> Result<Profile> {
+        let mut path = format!("users/{user}/profile?with_mutual_guilds=false&with_mutual_friends=false&with_mutual_friends_count=false");
+        if let Some(g) = guild {
+            path.push_str(&format!("&guild_id={g}"));
+        }
+        self.json(Method::GET, &path, Body::None).await
+    }
+
     /// Searches a server's messages (or, without `guild`, one DM's), with Discord's search parameters
     /// (`content`, `author_id`, `channel_id`, `has`, `mentions`, `min_id`, `max_id`, `offset`), newest first.
     /// A server not yet indexed for search answers `Indexing` with how long to wait.

@@ -133,8 +133,9 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
                 }
             } else {
                 let r = widgets::member_avatar(ui, cx.state, &msg.author, cx.guild, 40.0);
-                if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && Some(msg.author.id) != me {
-                    cx.actions.push(Action::OpenDm(msg.author.id));
+                // Webhook "authors" aren't real users and have no profile.
+                if msg.webhook_id.is_none() && r.clone().on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    cx.actions.push(crate::ui::profile::open(msg.author.id, cx.guild, &r));
                 }
             }
             ui.add_space(16.0);
@@ -200,8 +201,8 @@ fn header(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         };
         let color = cx.guild.and_then(|g| cx.state.role_color(g, msg.author.id));
         let r = ui.add(egui::Label::new(RichText::new(name).font(theme::font_semibold(15.5)).color(theme::role_color(color))).sense(Sense::click()));
-        if r.clicked() {
-            cx.actions.push(Action::OpenDm(msg.author.id));
+        if r.clicked() && msg.webhook_id.is_none() {
+            cx.actions.push(crate::ui::profile::open(msg.author.id, cx.guild, &r));
         }
         r.on_hover_text(msg.author.tag());
         if msg.author.bot || msg.webhook_id.is_some() {

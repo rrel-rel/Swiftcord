@@ -44,6 +44,7 @@ pub enum AppEvent {
     /// A picture chosen for a server avatar: its data URI and a preview (`None` if the dialog was cancelled).
     ServerAvatarPicked(Result<Option<(String, egui::ColorImage)>, String>),
     ServerProfileSaved { guild: Snowflake, result: Result<swiftcord_core::models::Member, String> },
+    Profile { user: Snowflake, guild: Option<Snowflake>, result: Result<swiftcord_core::models::Profile, String> },
     /// The frecency settings (favourite GIFs) as read or as saved.
     Frecency(Result<String, String>),
     /// Saving favourites failed; restore these settings.
@@ -88,6 +89,9 @@ pub enum Action {
     CloseGifPicker,
     ToggleFavoriteGif(swiftcord_core::proto::FavoriteGif),
     OpenDm(Snowflake),
+    /// Show someone's profile card (as they appear in `guild`) at `at`.
+    OpenProfile { user: Snowflake, guild: Option<Snowflake>, at: egui::Pos2 },
+    CloseProfile,
     ShowPins(Snowflake),
     /// Open or close the thread list beside a channel.
     ShowThreads(Snowflake),
@@ -235,6 +239,8 @@ pub struct UiState {
     pub search_box: String,
     /// The open server profile editor.
     pub server_profile: Option<ui::server_profile::Editor>,
+    pub profile_card: Option<ui::profile::Card>,
+    pub profiles: ui::profile::Profiles,
     /// The watched stream's sound: volume (0–2) and whether it plays while deafened (from settings).
     pub stream_audio: (f32, bool),
     /// Favourite GIFs, most recent first (from the synced frecency settings).
@@ -551,6 +557,12 @@ impl App {
                     }
                 }
             },
+            AppEvent::Profile { user, guild, result } => {
+                if let Err(e) = &result {
+                    tracing::info!("profile of {user}: {e}");
+                }
+                self.ui.profiles.insert((user, guild), Some(result));
+            }
             AppEvent::StreamPreview { key, result } => {
                 let url = result.unwrap_or_else(|e| {
                     tracing::debug!("stream preview for {key}: {e}");
@@ -1159,6 +1171,22 @@ impl App {
                     }
                 });
             }
+            Action::OpenProfile { user, guild, at } => {
+                let Some(s) = &self.session else { return };
+                self.ui.profile_card = Some(ui::profile::Card { user, guild, at });
+                // Fetched once per session (failures are retried on the next open). Bots and webhooks have
+                // profiles too, but webhook authors aren't users, which the request reports.
+                if matches!(self.ui.profiles.get(&(user, guild)), Some(Some(Ok(_))) | Some(None)) {
+                    return;
+                }
+                self.ui.profiles.insert((user, guild), None);
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    let result = rest.user_profile(user, guild).await.map_err(|e| e.to_string());
+                    AppEvent::Profile { user, guild, result }
+                });
+            }
+            Action::CloseProfile => self.ui.profile_card = None,
             Action::SetStatus(status) => {
                 let Some(s) = &mut self.session else { return };
                 // The gateway update shows it right away; the settings write keeps it across sessions and devices.

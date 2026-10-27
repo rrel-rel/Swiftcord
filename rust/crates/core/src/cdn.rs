@@ -21,6 +21,25 @@ pub fn member_avatar(guild: Snowflake, user: Snowflake, hash: &str, size: u32) -
     format!("{CDN}/guilds/{guild}/users/{user}/avatars/{hash}.{}?size={size}", ext(hash, false))
 }
 
+/// A profile banner, still (animated ones are only fetched as such with `animated`). `guild` for a server
+/// profile's banner.
+pub fn banner(user: Snowflake, guild: Option<Snowflake>, hash: &str, animated: bool) -> String {
+    let path = match guild {
+        Some(g) => format!("guilds/{g}/users/{user}/banners"),
+        None => format!("banners/{user}"),
+    };
+    format!("{CDN}/{path}/{hash}.{}?size=600", if animated && hash.starts_with("a_") { "gif" } else { "png" })
+}
+
+/// An avatar decoration (the frame some people have around their avatar), still.
+pub fn avatar_decoration(asset: &str) -> String {
+    format!("{CDN}/avatar-decoration-presets/{asset}.png?size=160&passthrough=false")
+}
+
+pub fn badge_icon(icon: &str) -> String {
+    format!("{CDN}/badge-icons/{icon}.png")
+}
+
 pub fn default_avatar(user: &User) -> String {
     // New usernames index by ID; legacy discriminators by discriminator.
     let index = match user.discriminator.as_deref().and_then(|d| d.parse::<u64>().ok()) {

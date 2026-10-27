@@ -162,9 +162,8 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
             let name = cx.state.display_name(*id, cx.guild);
             let r = mention(ui, &format!("@{name}"), size);
             if r.clicked() {
-                cx.actions.push(Action::OpenDm(*id));
+                cx.actions.push(crate::ui::profile::open(*id, cx.guild, &r));
             }
-            r.on_hover_text("Message");
         }
         Span::Role(id) => {
             let role = cx.guild.and_then(|g| cx.state.guild(g)).and_then(|g| g.roles.iter().find(|r| r.id == *id));

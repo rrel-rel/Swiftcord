@@ -81,6 +81,100 @@ impl Member {
     }
 }
 
+// MARK: Profiles
+
+/// Someone's profile as shown on their profile card (`users/{id}/profile`), with their server profile when
+/// asked for one server.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Profile {
+    pub user: ProfileUser,
+    pub user_profile: Option<ProfileDetails>,
+    /// Their profile in the server asked about (Nitro): set fields replace their main profile's.
+    pub guild_member_profile: Option<ProfileDetails>,
+    pub guild_member: Option<ProfileMember>,
+    #[serde(deserialize_with = "null_as_default")]
+    pub badges: Vec<Badge>,
+    pub premium_since: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ProfileUser {
+    pub banner: Option<String>,
+    pub accent_color: Option<u32>,
+    pub bio: Option<String>,
+    pub avatar_decoration_data: Option<AvatarDecoration>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ProfileMember {
+    pub joined_at: Option<DateTime<Utc>>,
+    pub avatar_decoration_data: Option<AvatarDecoration>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ProfileDetails {
+    pub bio: Option<String>,
+    pub pronouns: Option<String>,
+    pub banner: Option<String>,
+    pub accent_color: Option<u32>,
+    /// Nitro profile theme: the primary and accent colours the card is shaded with.
+    pub theme_colors: Option<Vec<u32>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct AvatarDecoration {
+    pub asset: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Badge {
+    pub id: String,
+    pub description: String,
+    pub icon: String,
+}
+
+/// What the card shows after combining someone's main profile with their server profile.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProfileView {
+    pub bio: String,
+    pub pronouns: String,
+    /// The banner image hash, and whether it's a server banner (they live at different CDN paths).
+    pub banner: Option<(String, bool)>,
+    pub accent_color: Option<u32>,
+    pub theme_colors: Option<[u32; 2]>,
+    pub decoration: Option<String>,
+}
+
+impl Profile {
+    pub fn view(&self) -> ProfileView {
+        let main = self.user_profile.clone().unwrap_or_default();
+        let server = self.guild_member_profile.clone().unwrap_or_default();
+        let pick = |s: &Option<String>, m: &Option<String>| s.clone().filter(|v| !v.is_empty()).or_else(|| m.clone().filter(|v| !v.is_empty()));
+        let theme = |d: &ProfileDetails| d.theme_colors.as_ref().filter(|c| c.len() >= 2).map(|c| [c[0], c[1]]);
+        let banner = server
+            .banner
+            .clone()
+            .filter(|b| !b.is_empty())
+            .map(|b| (b, true))
+            .or_else(|| pick(&main.banner, &self.user.banner).map(|b| (b, false)));
+        let decoration = self.guild_member.as_ref().and_then(|m| m.avatar_decoration_data.as_ref()).or(self.user.avatar_decoration_data.as_ref());
+        ProfileView {
+            bio: pick(&server.bio, &main.bio).or_else(|| self.user.bio.clone()).unwrap_or_default(),
+            pronouns: pick(&server.pronouns, &main.pronouns).unwrap_or_default(),
+            banner,
+            accent_color: server.accent_color.or(main.accent_color).or(self.user.accent_color),
+            theme_colors: theme(&server).or_else(|| theme(&main)),
+            decoration: decoration.map(|d| d.asset.clone()).filter(|a| !a.is_empty()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Role {
@@ -863,6 +957,29 @@ impl PresenceStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_profile_overrides_the_main_one() {
+        let p: Profile = serde_json::from_str(
+            r#"{"user":{"id":"1","banner":"a_main","accent_color":255,"bio":"old","avatar_decoration_data":{"asset":"deco","sku_id":"9"}},
+                "user_profile":{"bio":"main bio","pronouns":"they/them","banner":"a_main","theme_colors":[1,2]},
+                "guild_member_profile":{"bio":"","pronouns":"","banner":"srv","theme_colors":null},
+                "guild_member":{"joined_at":"2020-01-01T00:00:00+00:00","avatar_decoration_data":null},
+                "badges":[{"id":"premium","description":"Subscriber","icon":"2ba8"}],"premium_since":null}"#,
+        )
+        .unwrap();
+        let v = p.view();
+        assert_eq!(v.bio, "main bio", "an empty server bio falls back");
+        assert_eq!(v.pronouns, "they/them");
+        assert_eq!(v.banner, Some(("srv".into(), true)));
+        assert_eq!(v.theme_colors, Some([1, 2]));
+        assert_eq!(v.accent_color, Some(255));
+        assert_eq!(v.decoration.as_deref(), Some("deco"));
+        assert_eq!(p.badges[0].icon, "2ba8");
+
+        let bare: Profile = serde_json::from_str(r#"{"user":{"id":"1"},"user_profile":null,"badges":null}"#).unwrap();
+        assert_eq!(bare.view(), ProfileView::default());
+    }
 
     #[test]
     fn reads_components_v2_messages() {
