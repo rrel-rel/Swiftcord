@@ -515,9 +515,16 @@ pub struct Attachment {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub description: Option<String>,
+    /// Voice messages: the length, and a loudness outline (base64, one byte per point).
+    pub duration_secs: Option<f64>,
+    pub waveform: Option<String>,
 }
 
 impl Attachment {
+    pub fn is_voice_message(&self) -> bool {
+        self.waveform.is_some() && self.content_type.as_deref().is_none_or(|t| t.starts_with("audio/"))
+    }
+
     pub fn is_image(&self) -> bool {
         self.width.is_some() && self.content_type.as_deref().is_none_or(|t| t.starts_with("image/"))
     }

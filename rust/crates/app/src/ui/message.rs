@@ -487,6 +487,11 @@ pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
         ui.label(RichText::new(format!("{} ({})", a.filename, widgets::human_size(a.size))).color(theme::MUTED));
         return;
     }
+    if a.is_voice_message() {
+        let (output, volume) = (cx.uis.videos.output.clone(), cx.uis.videos.volume.unwrap_or(1.0));
+        cx.uis.voice_messages.show(ui, a, output, volume);
+        return;
+    }
     if a.is_video() {
         let size = fit(a.width.or(Some(480)), a.height.or(Some(270)), within(ui, MAX_MEDIA));
         let ppp = ui.ctx().pixels_per_point();
@@ -956,7 +961,9 @@ pub fn estimate_height(msg: &Message, compact: bool) -> f32 {
     let lines = msg.content.lines().map(|l| 1 + l.len() / 90).sum::<usize>().max(1);
     h += (lines.saturating_sub(1)) as f32 * 21.0;
     for a in &msg.attachments {
-        h += if a.is_image() || a.is_video() { fit(a.width.or(Some(480)), a.height.or(Some(270)), MAX_MEDIA).y + 6.0 } else { 64.0 };
+        h += if a.is_voice_message() {
+            58.0
+        } else if a.is_image() || a.is_video() { fit(a.width.or(Some(480)), a.height.or(Some(270)), MAX_MEDIA).y + 6.0 } else { 64.0 };
     }
     h += msg.embeds.len() as f32 * 120.0;
     h += msg.components.len() as f32 * 160.0;

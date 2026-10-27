@@ -5,6 +5,7 @@ pub mod audio;
 pub mod capture;
 pub mod codec;
 mod connection;
+pub mod ogg;
 pub mod rtp;
 pub mod transmit;
 pub mod video;
