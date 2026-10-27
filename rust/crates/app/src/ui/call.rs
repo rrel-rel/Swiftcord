@@ -10,6 +10,8 @@ use crate::ui::widgets;
 use crate::voice_glue::Status;
 
 const BG: Color32 = Color32::from_rgb(0x11, 0x12, 0x14);
+/// A camera in the DM call screen.
+const CAMERA_TILE: Vec2 = Vec2::new(256.0, 144.0);
 
 /// Shown when the DM has a call going on, or we're in one there.
 pub fn panel(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, actions: &mut Vec<Action>) {
@@ -33,8 +35,7 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, actions
     egui::Panel::top(("call", channel.id)).frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::symmetric(16, 18))).show(ui, |ui| {
         ui.vertical_centered(|ui| {
             ui.horizontal(|ui| {
-                let tile = 96.0;
-                let width = people.len() as f32 * (tile + 24.0);
+                let width: f32 = people.iter().map(|u| if in_call.contains(&u.id) && uis.cameras.contains_key(&u.id) { CAMERA_TILE.x } else { 96.0 } + 24.0).sum();
                 ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
                 for u in &people {
                     participant(ui, s, uis, channel, u, in_call.contains(&u.id), ringing.contains(&u.id), actions);
@@ -53,7 +54,7 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, actions
             ui.label(RichText::new(status).color(theme::MUTED));
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                let buttons = if mine.is_some() { 3.0 } else if ringing_me { 2.0 } else { 1.0 };
+                let buttons = if mine.is_some() { 4.0 } else if ringing_me { 2.0 } else { 1.0 };
                 ui.add_space(((ui.available_width() - buttons * 56.0) / 2.0).max(0.0));
                 if mine.is_some() {
                     if round(ui, if uis.self_mute { icon::MIC_OFF } else { icon::MIC }, if uis.self_mute { Color32::WHITE } else { theme::TEXT }, if uis.self_mute { theme::RED } else { theme::SELECTED }, "Mute").clicked() {
@@ -61,6 +62,10 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, actions
                     }
                     if round(ui, if uis.self_deaf { icon::DEAFENED } else { icon::HEADPHONES }, if uis.self_deaf { Color32::WHITE } else { theme::TEXT }, if uis.self_deaf { theme::RED } else { theme::SELECTED }, "Deafen").clicked() {
                         actions.push(Action::ToggleDeafen);
+                    }
+                    let (fg, bg, tip) = if uis.self_video { (Color32::WHITE, theme::GREEN, "Turn Off Camera") } else { (theme::TEXT, theme::SELECTED, "Turn On Camera") };
+                    if round(ui, icon::CAMERA, fg, bg, tip).clicked() {
+                        actions.push(Action::ToggleCamera);
                     }
                     if round(ui, icon::HANG_UP, Color32::WHITE, theme::RED, "Leave call").clicked() {
                         actions.push(Action::LeaveVoice);
@@ -78,20 +83,89 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, actions
     });
 }
 
+/// One person's camera in `rect`: the picture filling it (cropped, not stretched), their name, and a green
+/// ring while they talk. Our own is mirrored, like a mirror.
+pub fn camera_tile(ui: &Ui, s: &Session, uis: &UiState, guild: Option<Snowflake>, user: Snowflake, rect: egui::Rect) {
+    let Some(tex) = uis.cameras.get(&user) else { return };
+    let mine = s.state.me.as_ref().is_some_and(|m| m.id == user);
+    // Crop the picture to the tile's shape around its centre.
+    let (pic, tile) = (tex.size_vec2(), rect.size());
+    let (pa, ta) = (pic.x / pic.y.max(1.0), tile.x / tile.y.max(1.0));
+    let (mut u0, mut u1, mut v0, mut v1) = (0.0, 1.0, 0.0, 1.0);
+    if pa > ta {
+        let keep = ta / pa;
+        (u0, u1) = ((1.0 - keep) / 2.0, (1.0 + keep) / 2.0);
+    } else {
+        let keep = pa / ta;
+        (v0, v1) = ((1.0 - keep) / 2.0, (1.0 + keep) / 2.0);
+    }
+    if mine {
+        (u0, u1) = (u1, u0);
+    }
+    egui::Image::new(tex).uv(egui::Rect::from_min_max(egui::pos2(u0, v0), egui::pos2(u1, v1))).corner_radius(8).paint_at(ui, rect);
+    if uis.speaking.contains(&user) {
+        ui.painter().rect_stroke(rect, 8, egui::Stroke::new(3.0, theme::GREEN), egui::StrokeKind::Inside);
+    }
+    let name = s.state.display_name(user, guild);
+    let galley = ui.painter().layout_no_wrap(name, theme::font_semibold(12.5), Color32::WHITE);
+    let label = egui::Rect::from_min_size(rect.left_bottom() + Vec2::new(8.0, -galley.size().y - 12.0), galley.size() + Vec2::new(10.0, 4.0));
+    ui.painter().rect_filled(label.intersect(rect), 4, Color32::from_black_alpha(150));
+    ui.painter().with_clip_rect(rect).galley(label.min + Vec2::new(5.0, 2.0), galley, Color32::WHITE);
+}
+
+/// The cameras of everyone in a server voice call who has one on, above the channel's chat.
+pub fn camera_grid(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel) {
+    let mut users: Vec<Snowflake> = uis.cameras.keys().copied().collect();
+    if users.is_empty() {
+        return;
+    }
+    users.sort();
+    egui::Panel::top(("cameras", channel.id)).frame(egui::Frame::new().fill(BG).inner_margin(12)).show(ui, |ui| {
+        // Up to three across, 16:9, and no taller than a third of the window per row.
+        let columns = users.len().min(3);
+        let gap = 8.0;
+        let max_h = ui.ctx().content_rect().height() / 3.0;
+        let w = ((ui.available_width() - gap * (columns - 1) as f32) / columns as f32).min(max_h * 16.0 / 9.0);
+        let size = Vec2::new(w, w * 9.0 / 16.0);
+        for row in users.chunks(columns) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                let used = row.len() as f32 * (size.x + gap) - gap;
+                ui.add_space(((ui.available_width() - used) / 2.0).max(0.0));
+                for &u in row {
+                    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                    camera_tile(ui, s, uis, channel.guild_id, u, rect);
+                }
+            });
+            ui.add_space(gap);
+        }
+    });
+}
+
 #[allow(clippy::too_many_arguments)]
 fn participant(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, u: &User, joined: bool, ringing: bool, actions: &mut Vec<Action>) {
     let vs = s.state.voice_state(None, u.id).filter(|v| v.channel_id == Some(channel.id));
+    let camera = joined && uis.cameras.contains_key(&u.id);
+    let width = if camera { CAMERA_TILE.x } else { 96.0 };
     ui.vertical(|ui| {
-        ui.set_width(96.0);
+        ui.set_width(width);
         ui.vertical_centered(|ui| {
-            let r = widgets::user_avatar(ui, u, 80.0);
-            if !joined {
-                // Not in the call (yet): dimmed.
-                ui.painter().circle_filled(r.rect.center(), 40.0, BG.gamma_multiply(0.6));
-            }
-            if uis.speaking.contains(&u.id) && joined {
-                ui.painter().circle_stroke(r.rect.center(), 42.0, egui::Stroke::new(3.0, theme::GREEN));
-            }
+            // Their camera takes the place of their avatar and name (the tile shows the name itself).
+            let r = if camera {
+                let (rect, r) = ui.allocate_exact_size(CAMERA_TILE, Sense::hover());
+                camera_tile(ui, s, uis, None, u.id, rect);
+                r
+            } else {
+                let r = widgets::user_avatar(ui, u, 80.0);
+                if !joined {
+                    // Not in the call (yet): dimmed.
+                    ui.painter().circle_filled(r.rect.center(), 40.0, BG.gamma_multiply(0.6));
+                }
+                if uis.speaking.contains(&u.id) && joined {
+                    ui.painter().circle_stroke(r.rect.center(), 42.0, egui::Stroke::new(3.0, theme::GREEN));
+                }
+                r
+            };
             if let Some(v) = vs {
                 let badge = if v.self_deaf || v.deaf { Some(icon::DEAFENED) } else if v.self_mute || v.mute { Some(icon::MIC_OFF) } else { None };
                 if let Some(b) = badge {
@@ -100,7 +174,9 @@ fn participant(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, u: &U
                     ui.painter().text(c, Align2::CENTER_CENTER, b, theme::icon_font(11.0), Color32::WHITE);
                 }
             }
-            ui.add(egui::Label::new(RichText::new(u.display_name()).color(theme::HEADER)).truncate());
+            if !camera {
+                ui.add(egui::Label::new(RichText::new(u.display_name()).color(theme::HEADER)).truncate());
+            }
             if ringing && !joined {
                 ui.label(RichText::new("Ringing…").small().color(theme::MUTED));
             }

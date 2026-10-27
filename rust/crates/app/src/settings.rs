@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub struct Settings {
     pub input_device: Option<String>,
     pub output_device: Option<String>,
+    /// The webcam for calls (`None`: the first one).
+    pub camera_device: Option<String>,
     /// Voice activity threshold in dBFS.
     pub vad_threshold_db: f32,
     pub notifications: bool,
@@ -29,6 +31,7 @@ impl Default for Settings {
         Self {
             input_device: None,
             output_device: None,
+            camera_device: None,
             vad_threshold_db: -50.0,
             notifications: true,
             hide_members: false,

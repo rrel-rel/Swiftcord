@@ -204,7 +204,8 @@ pub fn on_event(app: &mut App, generation: u64, event: Event) {
                 None => view.texture = Some(ctx.load_texture("go-live", image, TextureOptions::LINEAR)),
             }
         }
-        Event::Connected { .. } | Event::Connecting => {}
+        // Stream connections have no camera.
+        Event::Connected { .. } | Event::Connecting | Event::CameraStopped => {}
         Event::Error(e) => app.banner(e),
         Event::Disconnected(reason) => {
             tracing::info!("stream connection closed: {reason}");

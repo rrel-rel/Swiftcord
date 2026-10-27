@@ -2,6 +2,7 @@
 //! UDP, Opus, and WASAPI audio through cpal.
 
 pub mod audio;
+pub mod camera;
 pub mod capture;
 pub mod codec;
 mod connection;
@@ -10,6 +11,7 @@ pub mod rtp;
 pub mod transmit;
 pub mod video;
 
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -81,6 +83,8 @@ pub enum Event {
     Error(String),
     /// A new video picture is ready (see [`Voice::take_picture`]).
     VideoFrame,
+    /// Our camera stopped by itself (it failed or was unplugged); the reason has been sent as an `Error`.
+    CameraStopped,
     Disconnected(String),
 }
 
@@ -112,6 +116,16 @@ impl Voice {
 
     pub fn set_noise_suppression(&self, on: bool) {
         self.shared.noise_suppression.store(on, Ordering::Relaxed);
+    }
+
+    /// Turns our camera on (the named one, or the first) or off.
+    pub fn set_camera(&self, camera: Option<Option<String>>) {
+        let _ = self.cmd.send(connection::Cmd::Camera(camera));
+    }
+
+    /// Camera pictures that arrived since the last call, by user (our own preview included).
+    pub fn take_cameras(&self) -> HashMap<u64, video::Picture> {
+        std::mem::take(&mut *self.shared.cameras.lock())
     }
 
     /// 0.0–2.0 for one person's volume.

@@ -139,6 +139,7 @@ pub enum Action {
     LeaveVoice,
     ToggleMute,
     ToggleDeafen,
+    ToggleCamera,
     Copy(String),
     /// A clicked link: Discord channel/message links open in the app, others in the browser.
     OpenLink(String),
@@ -210,6 +211,10 @@ pub struct UiState {
     pub login: ui::login::LoginUi,
     pub self_mute: bool,
     pub self_deaf: bool,
+    /// Our camera is on in the current call.
+    pub self_video: bool,
+    /// The latest camera picture of each person in our call with theirs on (ours is a mirror preview).
+    pub cameras: HashMap<Snowflake, egui::TextureHandle>,
     pub focus_composer: bool,
     /// Users heard in the current call just now (including us).
     pub speaking: HashSet<Snowflake>,
@@ -677,6 +682,8 @@ impl App {
         let Some(s) = &mut self.session else { return };
         if crate::demo::enabled() {
             crate::demo::install(&mut s.state);
+            // The demo bot's camera, for checking call layouts without a webcam.
+            self.ui.cameras.insert(Snowflake(2), self.ctx.load_texture("demo-camera", crate::demo::camera_picture(), egui::TextureOptions::LINEAR));
         }
         // The selection may point at something that no longer exists after a fresh READY.
         if let Some(g) = self.ui.guild {
@@ -1339,6 +1346,7 @@ impl App {
                 self.ui.self_mute = self.ui.self_deaf || self.ui.self_mute;
                 crate::voice_glue::update_self_state(self);
             }
+            Action::ToggleCamera => crate::voice_glue::toggle_camera(self),
             Action::Copy(text) => self.ctx.copy_text(text),
             Action::OpenLink(url) => match swiftcord_core::links::parse(&url) {
                 Some(link) => self.apply(Action::JumpTo { channel: link.channel, message: link.message }),
@@ -1394,7 +1402,8 @@ impl App {
             Action::StartQrLogin => self.start_qr_login(),
             Action::OpenSettings => {
                 let (inputs, outputs) = swiftcord_voice::list_devices();
-                self.ui.settings_draft = Some(ui::settings::Draft { settings: self.settings.clone(), inputs, outputs, mic_test: None });
+                let cameras = swiftcord_voice::camera::list();
+                self.ui.settings_draft = Some(ui::settings::Draft { settings: self.settings.clone(), inputs, outputs, cameras, mic_test: None });
             }
             Action::SaveSettings(s) => {
                 let (vad, noise_suppression) = (s.vad_threshold_db, s.noise_suppression);

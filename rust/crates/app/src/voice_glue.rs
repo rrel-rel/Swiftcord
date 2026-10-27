@@ -66,11 +66,13 @@ pub fn join(app: &mut App, guild: Option<Snowflake>, channel: Snowflake) {
         app.banner("You don't have permission to join that voice channel.");
         return;
     }
-    // Switching channels: the old connection goes, the gateway moves us.
+    // Switching channels: the old connection goes, the gateway moves us. A new call starts with the camera off.
     if let Some(old) = app.voice.take() {
         drop(old.voice);
     }
-    s.gateway.update_voice_state(guild, Some(channel), app.ui.self_mute, app.ui.self_deaf);
+    app.ui.self_video = false;
+    app.ui.cameras.clear();
+    s.gateway.update_voice_state(guild, Some(channel), app.ui.self_mute, app.ui.self_deaf, false);
     if guild.is_none() && s.state.call(channel).is_none() {
         // Starting a DM call (not answering one): ring the other people, as the official client does.
         let rest = s.rest.clone();
@@ -97,23 +99,75 @@ pub fn leave(app: &mut App) {
     }
     drop(call.voice);
     if let Some(s) = &app.session {
-        s.gateway.update_voice_state(call.guild, None, false, false);
+        s.gateway.update_voice_state(call.guild, None, false, false, false);
     }
     app.ui.speaking.clear();
     app.ui.voice = None;
+    app.ui.self_video = false;
+    app.ui.cameras.clear();
 }
 
 pub fn update_self_state(app: &mut App) {
-    let (mute, deaf) = (app.ui.self_mute, app.ui.self_deaf);
+    let (mute, deaf, video) = (app.ui.self_mute, app.ui.self_deaf, app.ui.self_video);
     let Some(call) = &app.voice else { return };
     if let Some(v) = &call.voice {
         v.set_muted(mute);
         v.set_deafened(deaf);
     }
     if let Some(s) = &app.session {
-        s.gateway.update_voice_state(call.guild, Some(call.channel), mute, deaf);
+        s.gateway.update_voice_state(call.guild, Some(call.channel), mute, deaf, video);
     }
     crate::stream_glue::update_self_state(app);
+}
+
+/// Turns our camera on or off in the current call.
+pub fn toggle_camera(app: &mut App) {
+    let connected = app.voice.as_ref().is_some_and(|c| matches!(c.status, Status::Connected { .. }) && c.voice.is_some());
+    if !connected {
+        app.banner("Join a voice channel or call to turn on your camera.");
+        return;
+    }
+    app.ui.self_video = !app.ui.self_video;
+    let device = app.settings.camera_device.clone();
+    if let Some(v) = app.voice.as_ref().and_then(|c| c.voice.as_ref()) {
+        v.set_camera(app.ui.self_video.then_some(device));
+    }
+    if !app.ui.self_video {
+        if let Some(me) = app.session.as_ref().and_then(|s| s.state.me.as_ref()) {
+            app.ui.cameras.remove(&me.id);
+        }
+    }
+    update_self_state(app);
+}
+
+/// Uploads new camera pictures, and forgets the cameras of people who turned theirs off or left.
+fn update_cameras(app: &mut App) {
+    let Some(s) = &app.session else { return };
+    let me = s.state.me.as_ref().map(|m| m.id);
+    let Some(call) = &app.voice else { return };
+    let ctx = app.ctx().clone();
+    if let Some(v) = &call.voice {
+        for (user, p) in v.take_cameras() {
+            let user = Snowflake(user);
+            if Some(user) == me && !app.ui.self_video {
+                continue;
+            }
+            let image = egui::ColorImage::from_rgba_unmultiplied([p.width, p.height], &p.rgba);
+            match app.ui.cameras.get_mut(&user) {
+                Some(t) => t.set(image, egui::TextureOptions::LINEAR),
+                None => {
+                    let t = ctx.load_texture(format!("camera-{user}"), image, egui::TextureOptions::LINEAR);
+                    app.ui.cameras.insert(user, t);
+                }
+            }
+        }
+    }
+    let on: HashSet<Snowflake> = s
+        .state
+        .channel(call.channel)
+        .map(|c| s.state.voice_members(c).iter().filter(|v| v.self_video).map(|v| v.user_id).collect())
+        .unwrap_or_default();
+    app.ui.cameras.retain(|u, _| on.contains(u) || (Some(*u) == me && app.ui.self_video));
 }
 
 pub fn on_notice(app: &mut App, notice: Notice) {
@@ -218,6 +272,10 @@ pub fn on_event(app: &mut App, generation: u64, event: Event) {
         }
         Event::Error(e) => app.banner(e),
         Event::VideoFrame => {}
+        Event::CameraStopped => {
+            app.ui.self_video = false;
+            update_self_state(app);
+        }
         Event::Disconnected(reason) => {
             tracing::info!("voice disconnected: {reason}");
             app.banner(reason);
@@ -248,6 +306,7 @@ fn join_leave_sounds(app: &mut App) {
 
 pub fn tick(app: &mut App) {
     join_leave_sounds(app);
+    update_cameras(app);
     let Some(call) = &app.voice else { return };
     let mut speaking: HashSet<Snowflake> = HashSet::new();
     if let Some(v) = &call.voice {
@@ -311,6 +370,17 @@ pub fn status_panel(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<A
                 }
                 if uis.share.is_none() && matches!(call.status, Status::Connected { .. }) && crate::ui::widgets::icon_button(ui, icon::SCREEN, "Share Your Screen").clicked() {
                     actions.push(Action::OpenSharePicker);
+                }
+                if matches!(call.status, Status::Connected { .. }) {
+                    let tip = if uis.self_video { "Turn Off Camera" } else { "Turn On Camera" };
+                    let r = ui.add(
+                        egui::Button::new(RichText::new(icon::CAMERA).font(theme::icon_font(16.0)).color(if uis.self_video { theme::GREEN } else { theme::MUTED }))
+                            .frame(false)
+                            .min_size(egui::vec2(28.0, 28.0)),
+                    );
+                    if r.on_hover_text(tip).clicked() {
+                        actions.push(Action::ToggleCamera);
+                    }
                 }
             });
         });

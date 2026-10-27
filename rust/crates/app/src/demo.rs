@@ -30,7 +30,7 @@ pub fn install(state: &mut State) {
     state.add_history(CHANNEL, msgs, 50);
     // A pretend incoming call from the demo bot, to show the call screen and popup.
     let call = format!(
-        r#"{{"channel_id":"{CHANNEL}","ringing":["{}"],"voice_states":[{{"user_id":"2","channel_id":"{CHANNEL}","session_id":"demo"}}]}}"#,
+        r#"{{"channel_id":"{CHANNEL}","ringing":["{}"],"voice_states":[{{"user_id":"2","channel_id":"{CHANNEL}","session_id":"demo","self_video":true}}]}}"#,
         me.id
     );
     if let Ok(raw) = serde_json::value::RawValue::from_string(call) {
@@ -38,6 +38,23 @@ pub fn install(state: &mut State) {
             state.apply(e);
         }
     }
+}
+
+/// A 640×360 test picture standing in for the demo bot's camera.
+pub fn camera_picture() -> eframe::egui::ColorImage {
+    let (w, h) = (640usize, 360usize);
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        for x in 0..w {
+            let (r, g) = ((x * 255 / w) as u8, (y * 255 / h) as u8);
+            // A light circle in the middle, like a face, so cropping and mirroring are easy to see.
+            let (dx, dy) = (x as i32 - 320, y as i32 - 180);
+            let face = dx * dx + dy * dy < 90 * 90;
+            let px = if face { [240, 220, 200, 255] } else { [r, g, 160, 255] };
+            rgba.extend_from_slice(&px);
+        }
+    }
+    eframe::egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba)
 }
 
 const SAMPLES: &str = r##"[

@@ -71,6 +71,8 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
     header(ui, s, channel, in_call, &mut uis.search_box, actions);
     if channel.is_private() {
         crate::ui::call::panel(ui, s, uis, channel, actions);
+    } else if channel.is_voice() && in_call {
+        crate::ui::call::camera_grid(ui, s, uis, channel);
     }
 
     // Forums list posts (threads) instead of messages.

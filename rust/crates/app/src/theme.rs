@@ -66,6 +66,7 @@ pub mod icon {
     pub const CHAT: &str = "\u{E8BD}";
     /// A monitor: screens, and going live.
     pub const SCREEN: &str = "\u{E7F4}";
+    pub const CAMERA: &str = "\u{E714}";
     pub const WINDOW: &str = "\u{E7C4}";
     pub const STAR: &str = "\u{E734}";
     pub const STAR_FILLED: &str = "\u{E735}";

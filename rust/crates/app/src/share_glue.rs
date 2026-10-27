@@ -202,7 +202,8 @@ pub fn on_event(app: &mut App, generation: u64, event: Event) {
                 view.status = ShareStatus::Live;
             }
         }
-        Event::Connecting => {}
+        // Stream connections have no camera.
+        Event::Connecting | Event::CameraStopped => {}
         Event::Error(e) => app.banner(e),
         Event::Disconnected(reason) => {
             tracing::info!("stream connection closed: {reason}");

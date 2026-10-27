@@ -101,11 +101,11 @@ impl Gateway {
         let _ = self.tx.send(Command::Stop);
     }
 
-    /// Joins, moves between or (with `channel_id: None`) leaves voice channels.
-    pub fn update_voice_state(&self, guild_id: Option<Snowflake>, channel_id: Option<Snowflake>, mute: bool, deaf: bool) {
+    /// Joins, moves between or (with `channel_id: None`) leaves voice channels; `video` says our camera is on.
+    pub fn update_voice_state(&self, guild_id: Option<Snowflake>, channel_id: Option<Snowflake>, mute: bool, deaf: bool, video: bool) {
         self.send(
             op::VOICE_STATE_UPDATE,
-            json!({ "guild_id": guild_id, "channel_id": channel_id, "self_mute": mute, "self_deaf": deaf, "self_video": false }),
+            json!({ "guild_id": guild_id, "channel_id": channel_id, "self_mute": mute, "self_deaf": deaf, "self_video": video }),
         );
     }
 

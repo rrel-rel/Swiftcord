@@ -77,6 +77,17 @@ pub(crate) struct Shared {
     /// While sharing: a viewer asked for a keyframe.
     pub keyframe: AtomicBool,
     pub share_stats: Mutex<Option<crate::ShareStats>>,
+    /// Calls: the newest camera picture from each user since the app last took them (ours is a preview).
+    pub cameras: Mutex<HashMap<u64, crate::video::Picture>>,
+    /// Calls: whose camera video each SSRC carries.
+    pub video_users: Mutex<HashMap<u32, u64>>,
+    /// Calls: packets of our camera video that viewers lost, for the sender to retransmit.
+    pub rtx_requests: Mutex<Vec<u16>>,
+    /// Calls: our camera, when it's on (the device name, or `None` for the first).
+    pub camera: Mutex<Option<Option<String>>>,
+    /// The encryption nonce counter for everything we send. Audio and video share the key, so they must never
+    /// reuse a nonce.
+    pub nonce: AtomicU32,
 }
 
 #[derive(Default)]
@@ -106,6 +117,11 @@ impl Shared {
             video_resync: AtomicBool::new(false),
             keyframe: AtomicBool::new(false),
             share_stats: Mutex::new(None),
+            cameras: Mutex::new(HashMap::new()),
+            video_users: Mutex::new(HashMap::new()),
+            rtx_requests: Mutex::new(Vec::new()),
+            camera: Mutex::new(None),
+            nonce: AtomicU32::new(0),
         }
     }
 }
@@ -139,16 +155,45 @@ struct Media {
 struct Running {
     audio: Option<audio::AudioIo>,
     threads: Vec<std::thread::JoinHandle<()>>,
+    /// The current key, for starting the camera mid-call.
+    cipher: Option<Arc<Cipher>>,
+    /// Our camera's capture and send threads, and the flag that stops them.
+    camera: Option<(Arc<AtomicBool>, Vec<std::thread::JoinHandle<()>>)>,
 }
 
 impl Running {
     fn stop(&mut self, shared: &Shared) {
+        self.stop_camera(shared);
         shared.stop.store(true, Ordering::Relaxed);
         self.audio = None;
         for t in self.threads.drain(..) {
             let _ = t.join();
         }
         shared.stop.store(false, Ordering::Relaxed);
+    }
+
+    /// Starts sending our camera (calls only; needs the key, so after the session description).
+    fn start_camera(&mut self, media: &Media, device: Option<String>, user: u64, shared: &Arc<Shared>, cmd: &mpsc::UnboundedSender<Cmd>, events: &Arc<dyn Fn(Event) + Send + Sync>) {
+        self.stop_camera(shared);
+        let Some(cipher) = self.cipher.clone() else { return };
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = std::sync::mpsc::sync_channel(4);
+        shared.rtx_requests.lock().clear();
+        let threads = vec![
+            spawn_camera(device, tx, user, stop.clone(), shared.clone(), cmd.clone(), events.clone()),
+            // Feedback for it arrives through the receiver, which owns the socket's reads in a call.
+            spawn_video_sender(media, cipher, rx, shared.clone(), false),
+        ];
+        self.camera = Some((stop, threads));
+    }
+
+    fn stop_camera(&mut self, shared: &Shared) {
+        let Some((stop, threads)) = self.camera.take() else { return };
+        stop.store(true, Ordering::Relaxed);
+        for t in threads {
+            let _ = t.join();
+        }
+        shared.cameras.lock().clear();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -159,9 +204,10 @@ impl Running {
             // Sharing sends video and nothing else: no microphone, no playback.
             let (tx, rx) = std::sync::mpsc::sync_channel(4);
             self.threads.push(spawn_capture(share.clone(), tx, shared.clone(), cmd.clone(), events.clone()));
-            self.threads.push(spawn_video_sender(media, cipher, rx, shared.clone()));
+            self.threads.push(spawn_video_sender(media, cipher, rx, shared.clone(), true));
             return;
         }
+        self.cipher = Some(cipher.clone());
         let stream = info.stream_owner.is_some();
         let (mic_tx, mic_rx) = std::sync::mpsc::sync_channel(256);
         // Watching a stream plays its audio but never opens the microphone.
@@ -175,7 +221,12 @@ impl Running {
             self.threads.push(spawn_video_decoder(rx, shared.clone(), events.clone()));
             tx
         });
-        self.threads.push(spawn_receiver(&media.socket, cipher, media.ssrc, info.stream_owner, video, shared.clone()));
+        self.threads.push(spawn_receiver(&media.socket, cipher, media.ssrc, info.stream_owner, video, shared.clone(), events.clone()));
+        if !stream {
+            if let Some(device) = shared.camera.lock().clone() {
+                self.start_camera(media, device, info.user_id, shared, cmd, events);
+            }
+        }
         // Device errors are reported from their own thread; it ends when the audio stops.
         let ev = events.clone();
         std::thread::spawn(move || {
@@ -214,6 +265,8 @@ struct ReadyData {
 
 pub(crate) enum Cmd {
     Speaking(bool),
+    /// Turn our camera on (`Some(device)`) or off (`None`).
+    Camera(Option<Option<String>>),
     Disconnect,
     /// Ended from our side for a reason (a shared window closed).
     End(String),
@@ -294,8 +347,9 @@ async fn session(
                 "user_id": info.user_id.to_string(),
                 "session_id": info.session_id,
                 "token": info.token,
-                "video": is_stream(info),
-                "streams": if is_stream(info) { json!([{ "type": "screen", "rid": "100", "quality": 100 }]) } else { json!([]) },
+                // Calls carry cameras; stream connections carry the shared screen.
+                "video": true,
+                "streams": [{ "type": if is_stream(info) { "screen" } else { "video" }, "rid": "100", "quality": 100 }],
                 "max_dave_protocol_version": davey::DAVE_PROTOCOL_VERSION,
             }),
         )
@@ -357,7 +411,8 @@ async fn session(
                                 send!(json_msg(op::SELECT_PROTOCOL, json!({
                                     "protocol": "udp",
                                     "data": { "address": my_ip, "port": my_port, "mode": mode.name() },
-                                    "codecs": codecs(is_stream(info), info.share.is_some()),
+                                    // We encode when sharing, and in calls (our camera); watching only decodes.
+                                    "codecs": codecs(info.stream_owner.is_none()),
                                 })));
                             }
                             op::SESSION_DESCRIPTION => {
@@ -396,8 +451,14 @@ async fn session(
                                 }
                                 if info.stream_owner.is_some() {
                                     check_video_codec(&f.d, events);
-                                    // Ask for the stream's video at full quality.
+                                }
+                                if info.share.is_none() {
+                                    // Ask for video (the stream, or everyone's cameras) at full quality.
                                     send!(json_msg(op::MEDIA_SINK_WANTS, json!({ "any": 100 })));
+                                }
+                                let camera_on = !is_stream(info) && shared.camera.lock().is_some();
+                                if camera_on {
+                                    send!(camera_announcement(m, true));
                                 }
                                 events(Event::Connected { e2ee: dave_version > 0 });
                             }
@@ -422,15 +483,27 @@ async fn session(
                             op::VIDEO => {
                                 // Which SSRCs carry the video and its retransmissions.
                                 tracing::info!("video sources: {}", f.d);
+                                // Per-person cameras are a call thing; a stream connection carries one video.
+                                let user = f.d["user_id"].as_str().and_then(|u| u.parse::<u64>().ok()).filter(|_| !is_stream(info));
+                                if let Some(u) = user {
+                                    // In a call, each op 12 replaces what that person sends (a camera turned off
+                                    // comes as SSRC 0 or an inactive stream).
+                                    forget_video(shared, u);
+                                }
                                 let mut map = shared.video_ssrcs.lock();
                                 let streams = f.d["streams"].as_array().cloned().unwrap_or_default();
-                                let top = [json!({ "ssrc": f.d["video_ssrc"], "rtx_ssrc": f.d["rtx_ssrc"] })];
+                                let top_on = f.d["video_ssrc"].as_u64().is_some_and(|v| v != 0);
+                                let top = [json!({ "ssrc": f.d["video_ssrc"], "rtx_ssrc": f.d["rtx_ssrc"], "active": top_on })];
                                 for s in streams.iter().chain(top.iter()) {
                                     let media = s["ssrc"].as_u64().filter(|&v| v != 0);
-                                    if let Some(m) = media {
+                                    let active = s["active"].as_bool().unwrap_or(true) && (top_on || user.is_none());
+                                    if let Some(m) = media.filter(|_| active) {
                                         map.media.insert(m as u32);
                                         if let Some(r) = s["rtx_ssrc"].as_u64().filter(|&v| v != 0) {
                                             map.rtx.insert(r as u32, m as u32);
+                                        }
+                                        if let Some(u) = user {
+                                            shared.video_users.lock().insert(m as u32, u);
                                         }
                                     }
                                 }
@@ -449,6 +522,8 @@ async fn session(
                                         map.remove(&s);
                                         shared.mixer.remove(s);
                                     }
+                                    drop(map);
+                                    forget_video(shared, id);
                                 }
                             }
                             op::DAVE_PREPARE_TRANSITION => {
@@ -535,6 +610,21 @@ async fn session(
                 Some(Cmd::Speaking(on)) => {
                     send!(json_msg(op::SPEAKING, json!({ "speaking": if on { 1 } else { 0 }, "delay": 0, "ssrc": ssrc })));
                 }
+                Some(Cmd::Camera(camera)) => {
+                    if is_stream(info) {
+                        continue;
+                    }
+                    *shared.camera.lock() = camera.clone();
+                    let Some(m) = media.as_ref() else { continue };
+                    match camera {
+                        Some(device) => running.start_camera(m, device, info.user_id, shared, cmd_tx, events),
+                        None => running.stop_camera(shared),
+                    }
+                    if running.cipher.is_some() {
+                        let on = shared.camera.lock().is_some();
+                        send!(camera_announcement(m, on));
+                    }
+                }
                 Some(Cmd::Disconnect) | None => {
                     let _ = ws.close(None).await;
                     return Outcome::Closed("Left the call.".into());
@@ -545,6 +635,18 @@ async fn session(
                 }
             }
         }
+    }
+}
+
+/// Forgets the video a user was sending (their camera went off, or they left).
+fn forget_video(shared: &Shared, user: u64) {
+    let mut users = shared.video_users.lock();
+    let gone: Vec<u32> = users.iter().filter(|(_, u)| **u == user).map(|(s, _)| *s).collect();
+    let mut map = shared.video_ssrcs.lock();
+    for s in gone {
+        users.remove(&s);
+        map.media.remove(&s);
+        map.rtx.retain(|_, m| *m != s);
     }
 }
 
@@ -681,14 +783,14 @@ fn spawn_sender(
             let Some(mut tx) = Transmitter::new(64_000) else { return };
             let mut pending: Vec<f32> = Vec::with_capacity(FRAME * 4);
             // The RTP timestamp advances with every captured frame, sent or not, so receivers see real time.
-            let (mut seq, mut ts, mut counter) = (rand::random::<u16>(), rand::random::<u32>(), 0u32);
+            let (mut seq, mut ts) = (rand::random::<u16>(), rand::random::<u32>());
             let mut last_keepalive = Instant::now();
+            let nonce = &shared.nonce;
             let mut send = |payload: &[u8], ts: u32| {
-                if let Some(p) = rtp::seal(&cipher, rtp::OPUS_PAYLOAD_TYPE, seq, ts, ssrc, counter, payload) {
+                if let Some(p) = rtp::seal(&cipher, rtp::OPUS_PAYLOAD_TYPE, seq, ts, ssrc, nonce.fetch_add(1, Ordering::Relaxed), payload) {
                     let _ = socket.send(&p);
                 }
                 seq = seq.wrapping_add(1);
-                counter = counter.wrapping_add(1);
             };
             while !shared.stop.load(Ordering::Relaxed) {
                 let chunk = match mic.recv_timeout(Duration::from_millis(100)) {
@@ -757,18 +859,33 @@ fn is_stream(info: &ConnectInfo) -> bool {
     info.stream_owner.is_some() || info.share.is_some()
 }
 
-/// The codecs we offer: Opus always, and H.264 on stream connections. Watching, it makes the streamer's
-/// client encode in a format Windows can decode natively; sharing, it's what we send.
-fn codecs(video: bool, encode: bool) -> Value {
-    let mut list = vec![json!({ "name": "opus", "type": "audio", "priority": 1000, "payload_type": rtp::OPUS_PAYLOAD_TYPE })];
-    if video {
-        list.push(json!({
+/// The codecs we offer: Opus, and H.264 for video (cameras in calls, screens on stream connections). Offering
+/// only H.264 makes others' clients send video Windows can decode natively; it's also what we send.
+fn codecs(encode: bool) -> Value {
+    json!([
+        { "name": "opus", "type": "audio", "priority": 1000, "payload_type": rtp::OPUS_PAYLOAD_TYPE },
+        {
             "name": "H264", "type": "video", "priority": 1000,
             "payload_type": video::H264_PAYLOAD_TYPE, "rtx_payload_type": video::H264_RTX_PAYLOAD_TYPE,
             "encode": encode, "decode": true,
-        }));
-    }
-    Value::Array(list)
+        },
+    ])
+}
+
+/// Op 12 for our camera: announces its SSRCs while on, and withdraws them when off.
+fn camera_announcement(m: &Media, on: bool) -> Ws {
+    let (video, rtx) = if on { (m.video_ssrc, m.rtx_ssrc) } else { (0, 0) };
+    json_msg(op::VIDEO, json!({
+        "audio_ssrc": m.ssrc,
+        "video_ssrc": video,
+        "rtx_ssrc": rtx,
+        "streams": [{
+            "type": "video", "rid": "100", "ssrc": m.video_ssrc, "rtx_ssrc": m.rtx_ssrc,
+            "active": on, "quality": 100,
+            "max_bitrate": crate::camera::BITRATE, "max_framerate": crate::camera::FPS,
+            "max_resolution": { "type": "fixed", "width": crate::camera::MAX_WIDTH, "height": crate::camera::MAX_HEIGHT },
+        }],
+    }))
 }
 
 /// Decodes stream video on its own thread (Media Foundation wants a COM thread of its own) and publishes the
@@ -896,6 +1013,112 @@ fn spawn_capture(
         .expect("capture thread")
 }
 
+/// Reads and encodes our camera until `stop`, keeping a small preview of it under our own user ID. If the
+/// camera fails, the user is told and the camera is turned off.
+fn spawn_camera(
+    device: Option<String>,
+    out: std::sync::mpsc::SyncSender<video::EncodedFrame>,
+    user: u64,
+    stop: Arc<AtomicBool>,
+    shared: Arc<Shared>,
+    cmd: mpsc::UnboundedSender<Cmd>,
+    events: Arc<dyn Fn(Event) + Send + Sync>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("swiftcord-camera".into())
+        .spawn(move || {
+            let fail = |msg: String| {
+                tracing::warn!("camera: {msg}");
+                events(Event::Error(msg));
+                events(Event::CameraStopped);
+                let _ = cmd.send(Cmd::Camera(None));
+            };
+            #[cfg(not(windows))]
+            {
+                let _ = (device, out, user, stop, shared);
+                fail("Cameras need Windows.".into());
+            }
+            #[cfg(windows)]
+            {
+                let mut camera = match crate::camera::Camera::open(device.as_deref()) {
+                    Ok(c) => c,
+                    Err(e) => return fail(e),
+                };
+                let (w, h) = camera.size();
+                let mut encoder = match video::Encoder::new(w, h, crate::camera::FPS, crate::camera::BITRATE) {
+                    Ok(e) => e,
+                    Err(e) => return fail(format!("Can't encode video: {e}. Windows' H.264 encoder is missing (N editions need the Media Feature Pack).")),
+                };
+                let (w, h) = (w as usize, h as usize);
+                let (start, ts_base) = (Instant::now(), rand::random::<u32>());
+                let mut last_preview = Instant::now() - Duration::from_secs(1);
+                while !stop.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) {
+                    let Some(nv12) = camera.read() else { return fail("The camera stopped working.".into()) };
+                    if last_preview.elapsed() > Duration::from_millis(66) {
+                        last_preview = Instant::now();
+                        let crop = video::Crop { x: 0, y: 0, width: w, height: h };
+                        let (pw, ph, rgba) = video::nv12_to_rgba_scaled(&nv12[..w * h], &nv12[w * h..], w, crop, 640, h >= 720);
+                        shared.cameras.lock().insert(user, video::Picture { width: pw, height: ph, rgba });
+                        events(Event::VideoFrame);
+                    }
+                    if shared.keyframe.swap(false, Ordering::Relaxed) {
+                        encoder.force_keyframe();
+                    }
+                    let timestamp = ts_base.wrapping_add((start.elapsed().as_secs_f64() * 90_000.0) as u32);
+                    match encoder.encode(&nv12) {
+                        Ok(units) => {
+                            for data in units {
+                                let keyframe = video::nal_units(&data).iter().any(|n| n[0] & 0x1f == 5);
+                                if out.try_send(video::EncodedFrame { data, timestamp, keyframe }).is_err() {
+                                    shared.keyframe.store(true, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                        Err(e) => tracing::warn!("camera encode failed: {e}"),
+                    }
+                }
+            }
+        })
+        .expect("camera thread")
+}
+
+/// Decodes one person's camera on its own thread, publishing the newest picture under their user ID.
+fn spawn_camera_decoder(user: u64, shared: Arc<Shared>, events: Arc<dyn Fn(Event) + Send + Sync>) -> std::sync::mpsc::SyncSender<video::EncodedFrame> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<video::EncodedFrame>(32);
+    let spawned = std::thread::Builder::new().name("swiftcord-camera-decode".into()).spawn(move || {
+        let mut decoder = match video::Decoder::new() {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!("camera decoder unavailable: {e}");
+                return;
+            }
+        };
+        while let Ok(first) = rx.recv() {
+            let mut batch = vec![first];
+            batch.extend(rx.try_iter());
+            let last = batch.len() - 1;
+            for (i, frame) in batch.iter().enumerate() {
+                match decoder.decode(&frame.data, i == last) {
+                    Ok(pictures) => {
+                        if let Some(p) = pictures.into_iter().last() {
+                            shared.cameras.lock().insert(user, p);
+                            events(Event::VideoFrame);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("camera decode error: {e}");
+                        shared.video_resync.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+    });
+    if let Err(e) = spawned {
+        tracing::warn!("couldn't start a camera decoder: {e}");
+    }
+    tx
+}
+
 /// A small RGBA copy of a captured frame for the "you're live" preview.
 fn preview(frame: &crate::capture::Frame) -> video::Picture {
     let step = (frame.width / 480).max(1);
@@ -917,14 +1140,21 @@ const MAX_PAYLOAD: usize = 1100;
 
 /// End-to-end encrypts, packetizes and sends our video, and answers viewers' feedback: keyframe requests go
 /// to the encoder and NACKed packets are resent over RTX.
-fn spawn_video_sender(media: &Media, cipher: Arc<Cipher>, frames: std::sync::mpsc::Receiver<video::EncodedFrame>, shared: Arc<Shared>) -> std::thread::JoinHandle<()> {
+///
+/// With `read_socket` it reads that feedback itself (a stream connection, where nothing else reads); in a
+/// call the receiver reads the socket and passes keyframe requests and NACKs on through `shared`.
+fn spawn_video_sender(media: &Media, cipher: Arc<Cipher>, frames: std::sync::mpsc::Receiver<video::EncodedFrame>, shared: Arc<Shared>, read_socket: bool) -> std::thread::JoinHandle<()> {
     let socket = media.socket.clone();
     let (ssrc, rtx_ssrc) = (media.video_ssrc, media.rtx_ssrc);
     std::thread::Builder::new()
         .name("swiftcord-video-send".into())
         .spawn(move || {
-            let _ = socket.set_nonblocking(true);
-            let (mut seq, mut rtx_seq, mut counter) = (rand::random::<u16>(), rand::random::<u16>(), 0u32);
+            // Only when we own the socket's reads: in a call the receiver's reads must keep blocking.
+            if read_socket {
+                let _ = socket.set_nonblocking(true);
+            }
+            let (mut seq, mut rtx_seq) = (rand::random::<u16>(), rand::random::<u16>());
+            let next_nonce = || shared.nonce.fetch_add(1, Ordering::Relaxed);
             let mut history: std::collections::VecDeque<(u16, u32, bool, Vec<u8>)> = std::collections::VecDeque::with_capacity(RTX_HISTORY);
             let mut buf = [0u8; 2048];
             let mut last_keyframe_request = Instant::now() - Duration::from_secs(10);
@@ -953,10 +1183,9 @@ fn spawn_video_sender(media: &Media, cipher: Arc<Cipher>, frames: std::sync::mps
                         let payloads = video::packetize(&protected, MAX_PAYLOAD);
                         let last = payloads.len().saturating_sub(1);
                         for (i, payload) in payloads.into_iter().enumerate() {
-                            if let Some(p) = rtp::seal_marked(&cipher, video::H264_PAYLOAD_TYPE, i == last, seq, frame.timestamp, ssrc, counter, &payload) {
+                            if let Some(p) = rtp::seal_marked(&cipher, video::H264_PAYLOAD_TYPE, i == last, seq, frame.timestamp, ssrc, next_nonce(), &payload) {
                                 send_all(&socket, &p);
                             }
-                            counter = counter.wrapping_add(1);
                             if history.len() == RTX_HISTORY {
                                 history.pop_front();
                             }
@@ -969,8 +1198,19 @@ fn spawn_video_sender(media: &Media, cipher: Arc<Cipher>, frames: std::sync::mps
                     Err(_) => break,
                 }
                 // Feedback from the server about what viewers lost.
-                while let Ok(n) = socket.recv(&mut buf) {
-                    for f in rtp::open_feedback(&cipher, &buf[..n]) {
+                let mut feedback = Vec::new();
+                if read_socket {
+                    while let Ok(n) = socket.recv(&mut buf) {
+                        feedback.extend(rtp::open_feedback(&cipher, &buf[..n]));
+                    }
+                } else {
+                    let lost = std::mem::take(&mut *shared.rtx_requests.lock());
+                    if !lost.is_empty() {
+                        feedback.push(rtp::Feedback::Nack(lost));
+                    }
+                }
+                {
+                    for f in feedback {
                         match f {
                             rtp::Feedback::Keyframe => {
                                 if last_keyframe_request.elapsed() > Duration::from_millis(500) {
@@ -984,10 +1224,9 @@ fn spawn_video_sender(media: &Media, cipher: Arc<Cipher>, frames: std::sync::mps
                                     // RTX: the original sequence number, then the original payload.
                                     let mut rtx = s.to_be_bytes().to_vec();
                                     rtx.extend_from_slice(payload);
-                                    if let Some(p) = rtp::seal_marked(&cipher, video::H264_RTX_PAYLOAD_TYPE, *marker, rtx_seq, *ts, rtx_ssrc, counter, &rtx) {
+                                    if let Some(p) = rtp::seal_marked(&cipher, video::H264_RTX_PAYLOAD_TYPE, *marker, rtx_seq, *ts, rtx_ssrc, next_nonce(), &rtx) {
                                         send_all(&socket, &p);
                                     }
-                                    counter = counter.wrapping_add(1);
                                     rtx_seq = rtx_seq.wrapping_add(1);
                                     resent += 1;
                                 }
@@ -1023,7 +1262,10 @@ enum Kind {
     Unknown,
 }
 
-/// Receives and decrypts everyone else's audio into the mixer, and (for streams) video into the decoder.
+/// Receives and decrypts everyone else's audio into the mixer, and video into the decoder: a stream's into
+/// `video_out`, and in a call each person's camera into a decoder of its own. In a call it also passes on
+/// what viewers report about our camera video (keyframe requests and lost packets).
+#[allow(clippy::too_many_arguments)]
 fn spawn_receiver(
     socket: &Arc<UdpSocket>,
     cipher: Arc<Cipher>,
@@ -1031,6 +1273,7 @@ fn spawn_receiver(
     stream_owner: Option<u64>,
     video_out: Option<std::sync::mpsc::SyncSender<video::EncodedFrame>>,
     shared: Arc<Shared>,
+    events: Arc<dyn Fn(Event) + Send + Sync>,
 ) -> std::thread::JoinHandle<()> {
     let socket = socket.clone();
     std::thread::Builder::new()
@@ -1039,6 +1282,8 @@ fn spawn_receiver(
             let _ = socket.set_read_timeout(Some(Duration::from_millis(50)));
             let mut buf = [0u8; 4096];
             let mut receivers: HashMap<u32, video::VideoReceiver> = HashMap::new();
+            // Calls: a decoder per camera, by SSRC.
+            let mut cameras: HashMap<u32, std::sync::mpsc::SyncSender<video::EncodedFrame>> = HashMap::new();
             let mut last_video_ssrc = 0u32;
             let mut last_pli = Instant::now() - Duration::from_secs(10);
             let mut last_stats = Instant::now();
@@ -1048,15 +1293,28 @@ fn spawn_receiver(
             // RTCP shares the key; start its nonce counter far from the (unused) RTP one.
             let mut rtcp_counter = 0x8000_0000u32 | (rand::random::<u32>() >> 1);
             while !shared.stop.load(Ordering::Relaxed) {
-                let received = socket.recv(&mut buf).ok().and_then(|n| rtp::open(&cipher, &buf[..n]));
+                let n = socket.recv(&mut buf).unwrap_or(0);
+                if n > 0 && stream_owner.is_none() {
+                    // Feedback about our camera video (RTCP types 205 and 206; anything else yields nothing).
+                    for f in rtp::open_feedback(&cipher, &buf[..n]) {
+                        match f {
+                            rtp::Feedback::Keyframe => shared.keyframe.store(true, Ordering::Relaxed),
+                            rtp::Feedback::Nack(lost) => {
+                                let mut q = shared.rtx_requests.lock();
+                                if q.len() < 1024 {
+                                    q.extend(lost);
+                                }
+                            }
+                        }
+                    }
+                }
+                let received = (n > 0).then(|| rtp::open(&cipher, &buf[..n])).flatten();
                 let mut touched = None;
                 if let Some(p) = received {
                     // Everything in a stream connection comes from the streamer.
                     let user = stream_owner.or_else(|| shared.ssrc_users.lock().get(&p.ssrc).copied());
                     let kind = if p.payload_type == rtp::OPUS_PAYLOAD_TYPE {
                         Kind::Audio
-                    } else if video_out.is_none() {
-                        Kind::Unknown
                     } else {
                         let map = shared.video_ssrcs.lock();
                         if let Some(&media) = map.rtx.get(&p.ssrc) {
@@ -1116,12 +1374,19 @@ fn spawn_receiver(
                     if resync {
                         rx.resync();
                     }
+                    // Whose video this is: the streamer's, or in a call the person whose camera this SSRC carries.
+                    let sender = stream_owner.or_else(|| shared.video_users.lock().get(&ssrc).copied());
                     for mut frame in rx.poll() {
                         // DAVE encrypts whole frames, so decryption happens after reassembly.
-                        match e2ee_decrypt(&shared, stream_owner, MediaType::VIDEO, std::mem::take(&mut frame.data)) {
+                        match e2ee_decrypt(&shared, sender, MediaType::VIDEO, std::mem::take(&mut frame.data)) {
                             Some(data) => {
                                 frame.data = data;
-                                if let Some(out) = &video_out {
+                                let out = match (&video_out, sender) {
+                                    (Some(out), _) => Some(out),
+                                    (None, Some(user)) => Some(&*cameras.entry(ssrc).or_insert_with(|| spawn_camera_decoder(user, shared.clone(), events.clone()))),
+                                    (None, None) => None,
+                                };
+                                if let Some(out) = out {
                                     if out.try_send(frame).is_err() {
                                         dropped_frames += 1;
                                         rx.resync();
@@ -1153,6 +1418,12 @@ fn spawn_receiver(
 
                 if !receivers.is_empty() && last_stats.elapsed() > Duration::from_secs(10) {
                     last_stats = Instant::now();
+                    // Cameras that were turned off: drop their decoders and reassembly state.
+                    if stream_owner.is_none() {
+                        let live = shared.video_users.lock();
+                        cameras.retain(|s, _| live.contains_key(s));
+                        receivers.retain(|s, _| live.contains_key(s));
+                    }
                     for (ssrc, rx) in &receivers {
                         let s = rx.stats;
                         tracing::info!(
@@ -1211,7 +1482,7 @@ mod tests {
         let media = Media { socket: Arc::new(client), ssrc: 1, mode: Mode::Aes256Gcm, video_ssrc: 2, rtx_ssrc: 3 };
         let shared = Arc::new(Shared::new(&Settings::default()));
         let (tx, rx) = std::sync::mpsc::sync_channel(4);
-        let sender = spawn_video_sender(&media, Arc::new(Cipher::new(Mode::Aes256Gcm, &key).unwrap()), rx, shared.clone());
+        let sender = spawn_video_sender(&media, Arc::new(Cipher::new(Mode::Aes256Gcm, &key).unwrap()), rx, shared.clone(), true);
 
         let (w, h) = (640usize, 360usize);
         let mut enc = video::Encoder::new(w as u32, h as u32, 30, 2_000_000).unwrap();
@@ -1265,5 +1536,83 @@ mod tests {
         shared.stop.store(true, Ordering::Relaxed);
         drop(tx);
         sender.join().unwrap();
+    }
+
+    /// A call with cameras: one person's camera video, sent the way ours is in a call, arrives at another
+    /// participant's receiver and is decoded as *that person's* camera. Feedback reaching a receiver (keyframe
+    /// requests, lost packets) is passed on to our camera sender.
+    #[test]
+    fn call_cameras_arrive_per_person() {
+        const ALICE: u64 = 42;
+        let alice_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let bob_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        alice_socket.connect(bob_socket.local_addr().unwrap()).unwrap();
+        bob_socket.connect(alice_socket.local_addr().unwrap()).unwrap();
+        let key = [5u8; 32];
+        let cipher = || Arc::new(Cipher::new(Mode::Aes256Gcm, &key).unwrap());
+        let alice = Arc::new(Shared::new(&Settings::default()));
+        let bob = Arc::new(Shared::new(&Settings::default()));
+        // What Alice's op 12 tells Bob: her camera is SSRC 2, retransmitted on 3.
+        bob.video_users.lock().insert(2, ALICE);
+        bob.video_ssrcs.lock().media.insert(2);
+        bob.video_ssrcs.lock().rtx.insert(3, 2);
+
+        let alice_media = Media { socket: Arc::new(alice_socket), ssrc: 1, mode: Mode::Aes256Gcm, video_ssrc: 2, rtx_ssrc: 3 };
+        let (tx, rx) = std::sync::mpsc::sync_channel(8);
+        let sender = spawn_video_sender(&alice_media, cipher(), rx, alice.clone(), false);
+        let bob_socket = Arc::new(bob_socket);
+        let receiver = spawn_receiver(&bob_socket, cipher(), 10, None, None, bob.clone(), Arc::new(|_| {}));
+
+        let (w, h) = (320usize, 240usize);
+        let mut enc = video::Encoder::new(w as u32, h as u32, 30, 1_000_000).unwrap();
+        let mut nv12 = vec![128u8; w * h * 3 / 2];
+        for (i, y) in nv12[..w * h].iter_mut().enumerate() {
+            *y = (i % w) as u8;
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut n = 0u32;
+        let picture = loop {
+            for data in enc.encode(&nv12).unwrap() {
+                let _ = tx.try_send(video::EncodedFrame { data, timestamp: 3000 * n, keyframe: n == 0 });
+            }
+            n += 1;
+            std::thread::sleep(Duration::from_millis(33));
+            if let Some(p) = bob.cameras.lock().remove(&ALICE) {
+                break p;
+            }
+            assert!(Instant::now() < deadline, "Alice's camera never showed up for Bob");
+        };
+        assert_eq!((picture.width, picture.height), (w, h));
+        assert!(bob.cameras.lock().keys().all(|&u| u == ALICE), "nobody else's camera");
+
+        // Feedback for our camera comes in through the receiver (which owns the socket's reads in a call).
+        // (Sent from the one peer Bob's socket accepts, as the voice server would.)
+        let feedback_cipher = cipher();
+        let to_bob = &alice_media.socket;
+        to_bob.send(&rtp::seal_nack(&feedback_cipher, 7, 2, &[123, 124], 0x8000_0000).unwrap()).unwrap();
+        to_bob.send(&rtp::seal_pli(&feedback_cipher, 7, 2, 0x8000_0001).unwrap()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !(bob.keyframe.load(Ordering::Relaxed) && !bob.rtx_requests.lock().is_empty()) {
+            assert!(Instant::now() < deadline, "feedback wasn't passed on");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(*bob.rtx_requests.lock(), vec![123, 124]);
+
+        alice.stop.store(true, Ordering::Relaxed);
+        bob.stop.store(true, Ordering::Relaxed);
+        drop(tx);
+        sender.join().unwrap();
+        receiver.join().unwrap();
+    }
+
+    #[test]
+    fn camera_announcement_withdraws_when_off() {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let m = Media { socket: Arc::new(socket), ssrc: 1, mode: Mode::Aes256Gcm, video_ssrc: 2, rtx_ssrc: 3 };
+        let text = |w: Ws| serde_json::from_str::<Value>(&w.into_text().unwrap()).unwrap();
+        let on = text(camera_announcement(&m, true));
+        assert_eq!((on["op"].as_u64(), on["d"]["video_ssrc"].as_u64(), on["d"]["streams"][0]["active"].as_bool()), (Some(12), Some(2), Some(true)));
+        let off = text(camera_announcement(&m, false));
+        assert_eq!((off["d"]["video_ssrc"].as_u64(), off["d"]["streams"][0]["active"].as_bool()), (Some(0), Some(false)));
     }
 }

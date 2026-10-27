@@ -229,6 +229,9 @@ fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel, actions
                 } else if vs.self_mute || vs.mute {
                     ui.label(RichText::new(icon::MIC_OFF).font(theme::icon_font(12.0)).color(theme::RED));
                 }
+                if vs.self_video {
+                    ui.label(RichText::new(icon::CAMERA).font(theme::icon_font(12.0)).color(theme::MUTED)).on_hover_text("Camera on");
+                }
                 if vs.self_stream {
                     let mine = state.me.as_ref().is_some_and(|m| m.id == vs.user_id);
                     let key = crate::stream_glue::stream_key(c.guild_id, c.id, vs.user_id);

@@ -11,6 +11,7 @@ pub struct Draft {
     pub settings: Settings,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    pub cameras: Vec<String>,
     /// Running while the user checks their mic; stops when the window closes.
     pub mic_test: Option<swiftcord_voice::MicTest>,
 }
@@ -33,8 +34,13 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
     egui::Window::new("Settings").open(&mut open).collapsible(false).resizable(false).default_width(420.0).show(ui.ctx(), |ui| {
         ui.label(RichText::new("VOICE & AUDIO").font(theme::font_semibold(12.0)).color(theme::MUTED));
         ui.add_space(4.0);
-        device_combo(ui, "Input device", &mut draft.settings.input_device, &draft.inputs);
-        device_combo(ui, "Output device", &mut draft.settings.output_device, &draft.outputs);
+        device_combo(ui, "Input device", &mut draft.settings.input_device, &draft.inputs, "System default");
+        device_combo(ui, "Output device", &mut draft.settings.output_device, &draft.outputs, "System default");
+        if draft.cameras.is_empty() {
+            ui.label(RichText::new("No camera found.").small().color(theme::FAINT));
+        } else {
+            device_combo(ui, "Camera", &mut draft.settings.camera_device, &draft.cameras, "First camera");
+        }
         ui.add_space(6.0);
         ui.label("Input sensitivity");
         ui.add(egui::Slider::new(&mut draft.settings.vad_threshold_db, -80.0..=-10.0).suffix(" dB").text("transmit above"));
@@ -98,12 +104,12 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
     }
 }
 
-fn device_combo(ui: &mut Ui, label: &str, value: &mut Option<String>, devices: &[String]) {
+fn device_combo(ui: &mut Ui, label: &str, value: &mut Option<String>, devices: &[String], default: &str) {
     ui.horizontal(|ui| {
         ui.label(label);
-        let text = value.clone().unwrap_or_else(|| "System default".into());
+        let text = value.clone().unwrap_or_else(|| default.into());
         egui::ComboBox::from_id_salt(label).width(240.0).selected_text(text).show_ui(ui, |ui| {
-            ui.selectable_value(value, None, "System default");
+            ui.selectable_value(value, None, default);
             for d in devices {
                 ui.selectable_value(value, Some(d.clone()), d);
             }
