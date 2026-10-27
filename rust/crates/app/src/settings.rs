@@ -24,6 +24,10 @@ pub struct Settings {
     pub message_sounds: bool,
     /// Sounds for calls: ringing, and people joining or leaving yours.
     pub call_sounds: bool,
+    /// How dark the app is.
+    pub palette: crate::theme::Palette,
+    /// The accent colour (RGB).
+    pub accent: u32,
 }
 
 impl Default for Settings {
@@ -40,6 +44,8 @@ impl Default for Settings {
             noise_suppression: true,
             message_sounds: true,
             call_sounds: true,
+            palette: crate::theme::Palette::Dark,
+            accent: crate::theme::ACCENTS[0].1,
         }
     }
 }

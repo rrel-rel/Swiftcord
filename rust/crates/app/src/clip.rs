@@ -77,7 +77,7 @@ impl Clips {
                     egui::Image::from_uri(s.to_owned()).corner_radius(6).show_loading_spinner(false).paint_at(ui, rect);
                 }
                 None => {
-                    ui.painter().rect_filled(rect, 6, crate::theme::RAIL);
+                    ui.painter().rect_filled(rect, 6, crate::theme::RAIL());
                 }
             }
         }

@@ -46,7 +46,7 @@ fn block(ui: &mut Ui, b: &Block, cx: &mut Cx) {
             spans_ui(ui, &spans, cx, size);
         }
         Block::Subtext(spans) => {
-            let color = std::mem::replace(&mut cx.color, theme::MUTED);
+            let color = std::mem::replace(&mut cx.color, theme::MUTED());
             spans_ui(ui, spans, cx, 12.5);
             cx.color = color;
         }
@@ -62,13 +62,13 @@ fn block(ui: &mut Ui, b: &Block, cx: &mut Cx) {
                 blocks(ui, inner, cx);
             });
             let rect = r.response.rect;
-            ui.painter().rect_filled(egui::Rect::from_min_size(rect.min, Vec2::new(4.0, rect.height())), 2, theme::FAINT);
+            ui.painter().rect_filled(egui::Rect::from_min_size(rect.min, Vec2::new(4.0, rect.height())), 2, theme::FAINT());
         }
         Block::Code { code, .. } => {
-            egui::Frame::new().fill(theme::CODE_BG).corner_radius(4).inner_margin(8).stroke(egui::Stroke::new(1.0, theme::RAIL)).show(ui, |ui| {
+            egui::Frame::new().fill(theme::CODE_BG()).corner_radius(4).inner_margin(8).stroke(egui::Stroke::new(1.0, theme::RAIL())).show(ui, |ui| {
                 ui.set_max_width(ui.available_width());
                 egui::ScrollArea::horizontal().id_salt(("code", cx.message, code.len())).show(ui, |ui| {
-                    ui.add(egui::Label::new(RichText::new(code).monospace().color(theme::TEXT)).extend());
+                    ui.add(egui::Label::new(RichText::new(code).monospace().color(theme::TEXT())).extend());
                 });
             });
         }
@@ -108,7 +108,7 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
         Span::Text(t, st) => {
             if let Some(i) = hidden(cx, st) {
                 // Unrevealed spoilers are blocks of the background colour until clicked.
-                let r = ui.add(egui::Label::new(styled(t, st, size, theme::RAIL).background_color(theme::RAIL)).sense(Sense::click()));
+                let r = ui.add(egui::Label::new(styled(t, st, size, theme::RAIL()).background_color(theme::RAIL())).sense(Sense::click()));
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     cx.revealed.insert((cx.message, i));
                 }
@@ -121,11 +121,11 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
             }
         }
         Span::Code(code) => {
-            ui.label(RichText::new(code).monospace().size(size - 1.5).background_color(theme::CODE_BG).color(theme::TEXT));
+            ui.label(RichText::new(code).monospace().size(size - 1.5).background_color(theme::CODE_BG()).color(theme::TEXT()));
         }
         Span::Link { text, url, style } => {
             if let Some(i) = hidden(cx, style) {
-                if ui.add(egui::Label::new(styled(text, style, size, theme::RAIL).background_color(theme::RAIL)).sense(Sense::click())).clicked() {
+                if ui.add(egui::Label::new(styled(text, style, size, theme::RAIL()).background_color(theme::RAIL())).sense(Sense::click())).clicked() {
                     cx.revealed.insert((cx.message, i));
                 }
                 return;
@@ -139,11 +139,11 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
                     mention(ui, &label, size).on_hover_text(url)
                 }
                 None => {
-                    let r = ui.add(egui::Label::new(styled(text, style, size, theme::LINK)).sense(Sense::click()));
+                    let r = ui.add(egui::Label::new(styled(text, style, size, theme::LINK())).sense(Sense::click()));
                     let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
                     let r = if text != url { r.on_hover_text(url) } else { r };
                     if r.hovered() {
-                        ui.painter().hline(r.rect.x_range(), r.rect.bottom() - 2.0, egui::Stroke::new(1.0, theme::LINK));
+                        ui.painter().hline(r.rect.x_range(), r.rect.bottom() - 2.0, egui::Stroke::new(1.0, theme::LINK()));
                     }
                     r
                 }
@@ -208,7 +208,7 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
 
 fn mention(ui: &mut Ui, text: &str, size: f32) -> egui::Response {
     ui.add(
-        egui::Label::new(RichText::new(text).font(theme::font_semibold(size)).color(theme::MENTION_TEXT).background_color(theme::MENTION_BG))
+        egui::Label::new(RichText::new(text).font(theme::font_semibold(size)).color(theme::MENTION_TEXT()).background_color(theme::MENTION_BG()))
             .sense(Sense::click()),
     )
     .on_hover_cursor(egui::CursorIcon::PointingHand)

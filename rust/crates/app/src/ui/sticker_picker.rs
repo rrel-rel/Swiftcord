@@ -78,7 +78,7 @@ pub fn show(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) 
     let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     let mut picked = None;
     let area = egui::Area::new(egui::Id::unique("sticker-picker")).order(egui::Order::Foreground).fixed_pos(pos).show(&ctx, |ui| {
-        egui::Frame::popup(ui.style()).fill(theme::SIDEBAR).inner_margin(10).show(ui, |ui| {
+        egui::Frame::popup(ui.style()).fill(theme::SIDEBAR()).inner_margin(10).show(ui, |ui| {
             ui.set_width(SIZE.x - 20.0);
             ui.set_height(SIZE.y - 20.0);
             let r = ui.add(egui::TextEdit::singleline(&mut p.query).hint_text("Find stickers").desired_width(f32::INFINITY));
@@ -89,7 +89,7 @@ pub fn show(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) 
             egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 let columns = ((ui.available_width() / CELL).floor() as usize).max(1);
                 for (title, list) in &sections {
-                    ui.label(RichText::new(title.to_uppercase()).font(theme::font_semibold(12.0)).color(theme::MUTED));
+                    ui.label(RichText::new(title.to_uppercase()).font(theme::font_semibold(12.0)).color(theme::MUTED()));
                     for row in list.chunks(columns) {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
@@ -99,7 +99,7 @@ pub fn show(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) 
                                     continue;
                                 }
                                 if r.hovered() {
-                                    ui.painter().rect_filled(rect, 6, theme::SELECTED);
+                                    ui.painter().rect_filled(rect, 6, theme::SELECTED());
                                 }
                                 stickers.paint(ui, rect.shrink(8.0), &st.item(), r.hovered());
                                 let r = r.on_hover_text(&st.name).on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -116,7 +116,7 @@ pub fn show(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) 
                     ui.vertical_centered(|ui| ui.spinner());
                 } else if sections.is_empty() {
                     ui.add_space(40.0);
-                    ui.vertical_centered(|ui| ui.label(RichText::new("No stickers found.").color(theme::MUTED)));
+                    ui.vertical_centered(|ui| ui.label(RichText::new("No stickers found.").color(theme::MUTED())));
                 }
             });
         });

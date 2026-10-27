@@ -110,32 +110,32 @@ pub fn popup(ui: &Ui, anchor: egui::Rect, items: &[Suggestion], selected: usize,
     let pos = anchor.left_top() - Vec2::new(0.0, height + 6.0);
     let mut clicked = None;
     egui::Area::new(egui::Id::unique("composer-suggestions")).order(egui::Order::Foreground).fixed_pos(pos).show(ui.ctx(), |ui| {
-        egui::Frame::popup(ui.style()).fill(theme::SIDEBAR).corner_radius(8).inner_margin(6).show(ui, |ui| {
+        egui::Frame::popup(ui.style()).fill(theme::SIDEBAR()).corner_radius(8).inner_margin(6).show(ui, |ui| {
             ui.set_width(anchor.width() - 12.0);
-            ui.label(RichText::new(title).font(theme::font_semibold(11.5)).color(theme::MUTED));
+            ui.label(RichText::new(title).font(theme::font_semibold(11.5)).color(theme::MUTED()));
             for (i, item) in items.iter().enumerate() {
                 let (rect, r) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
                 if i == selected || r.hovered() {
-                    ui.painter().rect_filled(rect, 4, theme::SELECTED);
+                    ui.painter().rect_filled(rect, 4, theme::SELECTED());
                 }
                 let mut row = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(8.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
                 match item {
                     Suggestion::User { display, username, avatar, .. } => {
                         widgets::avatar(&mut row, avatar, 24.0);
-                        row.label(RichText::new(display).color(theme::HEADER));
-                        row.label(RichText::new(username).color(theme::MUTED));
+                        row.label(RichText::new(display).color(theme::HEADER()));
+                        row.label(RichText::new(username).color(theme::MUTED()));
                     }
                     Suggestion::Role { name, color, .. } => {
                         row.label(RichText::new(format!("@{name}")).color(theme::role_color(Some(*color).filter(|&c| c != 0))));
                     }
                     Suggestion::Everyone(word) => {
-                        row.label(RichText::new(*word).color(theme::HEADER));
+                        row.label(RichText::new(*word).color(theme::HEADER()));
                         let note = if *word == "@everyone" { "Notify everyone who can see this channel" } else { "Notify everyone online" };
-                        row.label(RichText::new(note).small().color(theme::MUTED));
+                        row.label(RichText::new(note).small().color(theme::MUTED()));
                     }
                     Suggestion::Channel { name, .. } => {
-                        row.label(RichText::new("#").size(18.0).color(theme::FAINT));
-                        row.label(RichText::new(name).color(theme::HEADER));
+                        row.label(RichText::new("#").size(18.0).color(theme::FAINT()));
+                        row.label(RichText::new(name).color(theme::HEADER()));
                     }
                     Suggestion::Emoji { image, name, text, custom } => {
                         let size = Vec2::splat(22.0);
@@ -144,7 +144,7 @@ pub fn popup(ui: &Ui, anchor: egui::Rect, items: &[Suggestion], selected: usize,
                             None => crate::emoji_sheet::image(row.ctx(), text, size),
                         };
                         row.add(img);
-                        row.label(RichText::new(format!(":{name}:")).color(theme::HEADER));
+                        row.label(RichText::new(format!(":{name}:")).color(theme::HEADER()));
                     }
                 }
                 if r.clicked() {

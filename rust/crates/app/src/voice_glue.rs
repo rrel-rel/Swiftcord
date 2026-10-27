@@ -336,9 +336,9 @@ pub fn tick(app: &mut App) {
 pub fn status_panel(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) {
     let Some(call) = &uis.voice else { return };
     let (label, color) = match call.status {
-        Status::Connected { .. } => ("Voice Connected", theme::GREEN),
-        Status::Connecting => ("Connecting…", theme::YELLOW),
-        Status::Joining => ("Joining…", theme::YELLOW),
+        Status::Connected { .. } => ("Voice Connected", theme::GREEN()),
+        Status::Connecting => ("Connecting…", theme::YELLOW()),
+        Status::Joining => ("Joining…", theme::YELLOW()),
     };
     let where_ = {
         let ch = s.state.channel(call.channel).map(|c| c.label()).unwrap_or_default();
@@ -359,16 +359,16 @@ pub fn status_panel(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<A
                         ui.label(RichText::new("🔒").size(12.0)).on_hover_text(format!("End-to-end encrypted\nPrivacy code: {code}"));
                     }
                     if call.ping_ms > 0 {
-                        ui.label(RichText::new(format!("{} ms", call.ping_ms)).size(11.0).color(theme::FAINT));
+                        ui.label(RichText::new(format!("{} ms", call.ping_ms)).size(11.0).color(theme::FAINT()));
                     }
                 });
-                let r = ui.add(egui::Label::new(RichText::new(where_).size(12.5).color(theme::MUTED)).truncate().sense(egui::Sense::click()));
+                let r = ui.add(egui::Label::new(RichText::new(where_).size(12.5).color(theme::MUTED())).truncate().sense(egui::Sense::click()));
                 if r.clicked() && call.guild.is_some() {
                     actions.push(Action::SelectChannel(call.channel));
                 }
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let hang = ui.add(egui::Button::new(RichText::new(icon::HANG_UP).font(theme::icon_font(16.0)).color(Color32::WHITE)).fill(theme::RED).min_size(egui::vec2(32.0, 32.0)));
+                let hang = ui.add(egui::Button::new(RichText::new(icon::HANG_UP).font(theme::icon_font(16.0)).color(Color32::WHITE)).fill(theme::RED()).min_size(egui::vec2(32.0, 32.0)));
                 if hang.on_hover_text("Disconnect").clicked() {
                     actions.push(Action::LeaveVoice);
                 }
@@ -378,7 +378,7 @@ pub fn status_panel(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<A
                 if matches!(call.status, Status::Connected { .. }) {
                     let tip = if uis.self_video { "Turn Off Camera" } else { "Turn On Camera" };
                     let r = ui.add(
-                        egui::Button::new(RichText::new(icon::CAMERA).font(theme::icon_font(16.0)).color(if uis.self_video { theme::GREEN } else { theme::MUTED }))
+                        egui::Button::new(RichText::new(icon::CAMERA).font(theme::icon_font(16.0)).color(if uis.self_video { theme::GREEN() } else { theme::MUTED() }))
                             .frame(false)
                             .min_size(egui::vec2(28.0, 28.0)),
                     );

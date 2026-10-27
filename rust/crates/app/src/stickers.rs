@@ -115,7 +115,7 @@ impl Stickers {
                     Some(url) => image(ui, rect, url),
                     None => {
                         // Still loading: a faint tile.
-                        ui.painter().rect_filled(rect.shrink(rect.width() * 0.15), 12, theme::EMBED_BG);
+                        ui.painter().rect_filled(rect.shrink(rect.width() * 0.15), 12, theme::EMBED_BG());
                     }
                 }
                 return;
@@ -141,9 +141,9 @@ fn image(ui: &Ui, rect: Rect, url: String) {
 }
 
 fn placeholder(ui: &Ui, rect: Rect, name: &str) {
-    ui.painter().rect_filled(rect, 8, theme::EMBED_BG);
-    let galley = ui.painter().layout(name.to_owned(), theme::font(13.0), theme::MUTED, rect.width() - 16.0);
-    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, theme::MUTED);
+    ui.painter().rect_filled(rect, 8, theme::EMBED_BG());
+    let galley = ui.painter().layout(name.to_owned(), theme::font(13.0), theme::MUTED(), rect.width() - 16.0);
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, theme::MUTED());
 }
 
 fn set(ctx: &egui::Context, texture: &mut Option<TextureHandle>, id: Snowflake, img: ColorImage) {

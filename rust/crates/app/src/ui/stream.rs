@@ -10,7 +10,7 @@ use crate::ui::widgets;
 /// A LIVE badge for someone's stream: hovering it shows the stream's latest preview picture (fetched when
 /// hovered, at most once a minute). Returns the badge's response, for clicking to watch.
 pub fn live_badge(ui: &mut Ui, uis: &UiState, key: String, text: &str, size: f32, hint: &str, actions: &mut Vec<Action>) -> egui::Response {
-    let badge = ui.add(egui::Label::new(RichText::new(text).font(theme::font_bold(size)).color(Color32::WHITE).background_color(theme::RED)).sense(Sense::click()));
+    let badge = ui.add(egui::Label::new(RichText::new(text).font(theme::font_bold(size)).color(Color32::WHITE).background_color(theme::RED())).sense(Sense::click()));
     if !badge.hovered() {
         return badge;
     }
@@ -27,17 +27,17 @@ pub fn live_badge(ui: &mut Ui, uis: &UiState, key: String, text: &str, size: f32
             }
             Some(None) => {
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-                ui.painter().rect_filled(rect, 4, theme::RAIL);
-                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "No preview yet", theme::font(13.0), theme::MUTED);
+                ui.painter().rect_filled(rect, 4, theme::RAIL());
+                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "No preview yet", theme::font(13.0), theme::MUTED());
             }
             None => {
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-                ui.painter().rect_filled(rect, 4, theme::RAIL);
+                ui.painter().rect_filled(rect, 4, theme::RAIL());
                 ui.put(egui::Rect::from_center_size(rect.center(), Vec2::splat(24.0)), egui::Spinner::new());
             }
         }
         if !hint.is_empty() {
-            ui.label(RichText::new(hint).color(theme::MUTED));
+            ui.label(RichText::new(hint).color(theme::MUTED()));
         }
     })
 }
@@ -47,10 +47,10 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) 
     let name = s.state.display_name(view.owner, view.guild);
 
     if !view.fullscreen {
-        egui::Panel::top("stream-bar").frame(egui::Frame::new().fill(theme::RAIL).inner_margin(egui::Margin::symmetric(12, 6))).show(ui, |ui| {
+        egui::Panel::top("stream-bar").frame(egui::Frame::new().fill(theme::RAIL()).inner_margin(egui::Margin::symmetric(12, 6))).show(ui, |ui| {
             // Buttons first, from the right, so a long name is cut short rather than pushing them out of view.
             ui.horizontal(|ui| ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(egui::Button::new(RichText::new("Stop Watching").color(Color32::WHITE)).fill(theme::RED)).clicked() {
+                if ui.add(egui::Button::new(RichText::new("Stop Watching").color(Color32::WHITE)).fill(theme::RED())).clicked() {
                     actions.push(Action::StopWatching);
                 }
                 if ui.button("Fullscreen").clicked() {
@@ -61,8 +61,8 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) 
                     actions.push(Action::ShowStream(false));
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.label(RichText::new(" LIVE ").font(theme::font_bold(11.0)).color(Color32::WHITE).background_color(theme::RED));
-                    ui.add(egui::Label::new(RichText::new(format!("{name}'s screen")).font(theme::font_semibold(15.0)).color(theme::HEADER)).truncate());
+                    ui.label(RichText::new(" LIVE ").font(theme::font_bold(11.0)).color(Color32::WHITE).background_color(theme::RED()));
+                    ui.add(egui::Label::new(RichText::new(format!("{name}'s screen")).font(theme::font_semibold(15.0)).color(theme::HEADER())).truncate());
                 });
             }));
         });
@@ -86,7 +86,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) 
                     WatchStatus::Live => "Waiting for video…",
                 };
                 ui.put(egui::Rect::from_center_size(area.center() - Vec2::new(0.0, 20.0), Vec2::splat(32.0)), egui::Spinner::new().size(32.0));
-                ui.painter().text(area.center() + Vec2::new(0.0, 20.0), egui::Align2::CENTER_CENTER, text, theme::font(15.0), theme::MUTED);
+                ui.painter().text(area.center() + Vec2::new(0.0, 20.0), egui::Align2::CENTER_CENTER, text, theme::font(15.0), theme::MUTED());
             }
         }
         // Double-click toggles fullscreen; Escape leaves it.
@@ -107,7 +107,7 @@ fn sound_menu(ui: &mut Ui, uis: &UiState, actions: &mut Vec<Action>) {
     let label = RichText::new(format!("{glyph}  {}%", (volume * 100.0).round() as i32));
     ui.menu_button(label.font(theme::icon_font(13.0)), |ui| {
         ui.set_min_width(240.0);
-        ui.label(RichText::new("Stream Volume").font(theme::font_semibold(13.0)).color(theme::HEADER));
+        ui.label(RichText::new("Stream Volume").font(theme::font_semibold(13.0)).color(theme::HEADER()));
         let mut v = volume * 100.0;
         let r = ui.add(egui::Slider::new(&mut v, 0.0..=200.0).suffix("%").step_by(5.0));
         if r.changed() {
@@ -118,7 +118,7 @@ fn sound_menu(ui: &mut Ui, uis: &UiState, actions: &mut Vec<Action>) {
         if ui.checkbox(&mut keep, "Keep stream sound when deafened").changed() {
             actions.push(Action::SetStreamAudio { volume, when_deafened: keep });
         }
-        ui.label(RichText::new("Deafening still silences the call itself.").size(12.0).color(theme::MUTED));
+        ui.label(RichText::new("Deafening still silences the call itself.").size(12.0).color(theme::MUTED()));
     })
     .response
     .on_hover_text("Stream sound");
@@ -128,7 +128,7 @@ fn sound_menu(ui: &mut Ui, uis: &UiState, actions: &mut Vec<Action>) {
 pub fn return_bar(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) {
     let Some(view) = uis.stream.as_ref().filter(|v| !v.visible) else { return };
     let name = s.state.display_name(view.owner, view.guild);
-    egui::Panel::top("stream-return").frame(egui::Frame::new().fill(theme::BLURPLE.gamma_multiply(0.5)).inner_margin(egui::Margin::symmetric(12, 4))).show(ui, |ui| {
+    egui::Panel::top("stream-return").frame(egui::Frame::new().fill(theme::BLURPLE().gamma_multiply(0.5)).inner_margin(egui::Margin::symmetric(12, 4))).show(ui, |ui| {
         // Buttons first, from the right, so a long name is cut short rather than pushing them out of view.
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

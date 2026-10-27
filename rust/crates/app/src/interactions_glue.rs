@@ -183,19 +183,19 @@ pub fn modal_window(ui: &egui::Ui, uis: &mut UiState, actions: &mut Vec<Action>)
         .show(ui.ctx(), |ui| {
             ui.set_width(440.0);
             if !m.modal.application.name.is_empty() {
-                ui.label(RichText::new(&m.modal.application.name).size(12.5).color(theme::MUTED));
+                ui.label(RichText::new(&m.modal.application.name).size(12.5).color(theme::MUTED()));
             }
             ui.add_enabled_ui(!m.busy, |ui| {
                 for f in &mut m.fields {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(f.label.to_uppercase()).font(theme::font_semibold(12.0)).color(theme::HEADER));
+                        ui.label(RichText::new(f.label.to_uppercase()).font(theme::font_semibold(12.0)).color(theme::HEADER()));
                         if f.required {
-                            ui.label(RichText::new("*").color(theme::RED));
+                            ui.label(RichText::new("*").color(theme::RED()));
                         }
                     });
                     if let Some(d) = &f.description {
-                        ui.label(RichText::new(d).size(12.0).color(theme::MUTED));
+                        ui.label(RichText::new(d).size(12.0).color(theme::MUTED()));
                     }
                     if f.kind == kind::STRING_SELECT {
                         modal_select(ui, f);
@@ -206,18 +206,18 @@ pub fn modal_window(ui: &egui::Ui, uis: &mut UiState, actions: &mut Vec<Action>)
                     ui.add(edit.hint_text(f.placeholder.clone().unwrap_or_default()).char_limit(limit).desired_width(f32::INFINITY));
                     if f.max_length.is_some() {
                         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                            ui.label(RichText::new(format!("{}/{limit}", f.value.chars().count())).size(11.0).color(theme::FAINT));
+                            ui.label(RichText::new(format!("{}/{limit}", f.value.chars().count())).size(11.0).color(theme::FAINT()));
                         });
                     }
                 }
             });
             if let Some(e) = &m.error {
                 ui.add_space(6.0);
-                ui.label(RichText::new(e).color(theme::RED));
+                ui.label(RichText::new(e).color(theme::RED()));
             }
             ui.add_space(10.0);
             ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 30.0), Layout::right_to_left(Align::Center), |ui| {
-                let submit = egui::Button::new(RichText::new(if m.busy { "Sending…" } else { "Submit" }).color(Color32::WHITE)).fill(theme::BLURPLE);
+                let submit = egui::Button::new(RichText::new(if m.busy { "Sending…" } else { "Submit" }).color(Color32::WHITE)).fill(theme::BLURPLE());
                 if ui.add_enabled(!m.busy, submit).clicked() {
                     actions.push(Action::SubmitModal);
                 }
@@ -247,7 +247,7 @@ fn modal_select(ui: &mut egui::Ui, f: &mut Field) {
             }
         }
         if let Some(d) = &o.description {
-            ui.label(RichText::new(d).size(11.5).color(theme::MUTED));
+            ui.label(RichText::new(d).size(11.5).color(theme::MUTED()));
         }
     }
 }

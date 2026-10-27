@@ -29,19 +29,19 @@ pub fn picker(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                     if heading != Some(section) {
                         heading = Some(section);
                         ui.add_space(if i == 0 { 0.0 } else { 8.0 });
-                        ui.label(RichText::new(section).font(theme::font_semibold(12.0)).color(theme::MUTED));
+                        ui.label(RichText::new(section).font(theme::font_semibold(12.0)).color(theme::MUTED()));
                     }
                     let selected = p.selected == Some(i);
                     let (rect, r) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
                     if selected || r.hovered() {
-                        ui.painter().rect_filled(rect, 4, if selected { theme::SELECTED } else { theme::HOVER });
+                        ui.painter().rect_filled(rect, 4, if selected { theme::SELECTED() } else { theme::HOVER() });
                     }
                     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(8.0, 0.0))).layout(Layout::left_to_right(Align::Center)));
                     let glyph = if screen { icon::SCREEN } else { icon::WINDOW };
-                    child.label(RichText::new(glyph).font(theme::icon_font(14.0)).color(if selected { theme::HEADER } else { theme::MUTED }));
+                    child.label(RichText::new(glyph).font(theme::icon_font(14.0)).color(if selected { theme::HEADER() } else { theme::MUTED() }));
                     child.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{}×{}", s.width, s.height)).small().color(theme::FAINT));
-                        ui.add(egui::Label::new(RichText::new(&s.label).color(if selected { theme::HEADER } else { theme::TEXT })).truncate().selectable(false));
+                        ui.label(RichText::new(format!("{}×{}", s.width, s.height)).small().color(theme::FAINT()));
+                        ui.add(egui::Label::new(RichText::new(&s.label).color(if selected { theme::HEADER() } else { theme::TEXT() })).truncate().selectable(false));
                     });
                     if r.clicked() {
                         p.selected = Some(i);
@@ -51,7 +51,7 @@ pub fn picker(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                     }
                 }
                 if p.sources.is_empty() {
-                    ui.label(RichText::new("Nothing to share was found.").color(theme::MUTED));
+                    ui.label(RichText::new("Nothing to share was found.").color(theme::MUTED()));
                 }
             });
 
@@ -59,13 +59,13 @@ pub fn picker(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
             ui.separator();
             quality(ui, &mut p.quality);
             if p.quality.height > 720 || p.quality.height == 0 || p.quality.fps > 30 {
-                ui.label(RichText::new("Discord limits streams above 720p / 30 fps to Nitro subscribers.").small().color(theme::FAINT));
+                ui.label(RichText::new("Discord limits streams above 720p / 30 fps to Nitro subscribers.").small().color(theme::FAINT()));
             }
-            ui.label(RichText::new("Only video is shared; your microphone carries on as normal.").small().color(theme::FAINT));
+            ui.label(RichText::new("Only video is shared; your microphone carries on as normal.").small().color(theme::FAINT()));
 
             ui.add_space(6.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let go = ui.add_enabled(p.selected.is_some(), egui::Button::new(RichText::new("Go Live").color(Color32::WHITE)).fill(theme::BLURPLE));
+                let go = ui.add_enabled(p.selected.is_some(), egui::Button::new(RichText::new("Go Live").color(Color32::WHITE)).fill(theme::BLURPLE()));
                 if go.clicked() {
                     actions.push(Action::StartShare);
                 }
@@ -81,14 +81,14 @@ pub fn picker(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
 
 fn quality(ui: &mut Ui, q: &mut Quality) {
     egui::Grid::new("share-quality").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-        ui.label(RichText::new("Resolution").color(theme::MUTED));
+        ui.label(RichText::new("Resolution").color(theme::MUTED()));
         ui.horizontal(|ui| {
             for (h, label) in RESOLUTIONS {
                 ui.selectable_value(&mut q.height, h, label);
             }
         });
         ui.end_row();
-        ui.label(RichText::new("Frame rate").color(theme::MUTED));
+        ui.label(RichText::new("Frame rate").color(theme::MUTED()));
         ui.horizontal(|ui| {
             for f in FRAME_RATES {
                 ui.selectable_value(&mut q.fps, f, format!("{f} fps"));
@@ -104,8 +104,8 @@ pub fn live_panel(ui: &mut Ui, uis: &UiState, actions: &mut Vec<Action>) {
     egui::Frame::new().inner_margin(egui::Margin { left: 8, right: 8, top: 0, bottom: 6 }).show(ui, |ui| {
         ui.horizontal(|ui| {
             let (badge, color) = match view.status {
-                ShareStatus::Live => (" LIVE ", theme::RED),
-                ShareStatus::Starting => (" STARTING ", theme::FAINT),
+                ShareStatus::Live => (" LIVE ", theme::RED()),
+                ShareStatus::Starting => (" STARTING ", theme::FAINT()),
             };
             ui.label(RichText::new(badge).font(theme::font_bold(10.0)).color(Color32::WHITE).background_color(color));
             let detail = match view.stats {
@@ -116,7 +116,7 @@ pub fn live_panel(ui: &mut Ui, uis: &UiState, actions: &mut Vec<Action>) {
                 if widgets::icon_button(ui, icon::CLOSE, "Stop Streaming").clicked() {
                     actions.push(Action::StopShare);
                 }
-                ui.add(egui::Label::new(RichText::new(detail).size(12.0).color(theme::MUTED)).truncate());
+                ui.add(egui::Label::new(RichText::new(detail).size(12.0).color(theme::MUTED())).truncate());
             });
         });
         if let Some(t) = &view.preview {

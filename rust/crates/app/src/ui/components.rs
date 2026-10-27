@@ -62,7 +62,7 @@ fn component(ui: &mut Ui, c: &Component, msg: &Message, n: &mut u16, cx: &mut Ct
             ui.add_space(gap / 2.0);
             if c.divider != Some(false) {
                 let y = ui.cursor().top();
-                ui.painter().hline(ui.max_rect().x_range(), y, egui::Stroke::new(1.0, theme::SELECTED));
+                ui.painter().hline(ui.max_rect().x_range(), y, egui::Stroke::new(1.0, theme::SELECTED()));
             }
             ui.add_space(gap / 2.0);
         }
@@ -87,9 +87,9 @@ fn component(ui: &mut Ui, c: &Component, msg: &Message, n: &mut u16, cx: &mut Ct
 /// A box like an embed's, with the accent colour down its left edge.
 fn container(ui: &mut Ui, c: &Component, msg: &Message, n: &mut u16, cx: &mut Ctx) {
     let r = egui::Frame::new()
-        .fill(theme::EMBED_BG)
+        .fill(theme::EMBED_BG())
         .corner_radius(8)
-        .stroke(egui::Stroke::new(1.0, theme::RAIL))
+        .stroke(egui::Stroke::new(1.0, theme::RAIL()))
         .inner_margin(egui::Margin { left: 16, right: 16, top: 14, bottom: 14 })
         .show(ui, |ui| {
             ui.set_max_width(MAX_WIDTH.min(ui.available_width() - 8.0));
@@ -163,7 +163,7 @@ fn text(ui: &mut Ui, content: &str, msg: &Message, cx: &mut Ctx) {
         revealed: &mut cx.uis.revealed,
         actions: cx.actions,
         size: 15.0,
-        color: theme::TEXT,
+        color: theme::TEXT(),
         jumbo: false,
     };
     md::blocks(ui, &blocks, &mut mcx);
@@ -173,7 +173,7 @@ fn button(ui: &mut Ui, c: &Component, msg: &Message, cx: &mut Ctx) {
     let style = c.style.unwrap_or(2);
     let waiting = c.custom_id.as_deref().is_some_and(|id| cx.uis.interactions.is_pending(msg.id, id));
     let fill = match style {
-        1 | 6 => theme::BLURPLE,
+        1 | 6 => theme::BLURPLE(),
         3 => Color32::from_rgb(0x24, 0x80, 0x46),
         4 => Color32::from_rgb(0xda, 0x37, 0x3c),
         _ => Color32::from_rgb(0x4e, 0x50, 0x58),
@@ -267,15 +267,15 @@ fn select(ui: &mut Ui, c: &Component, msg: &Message, cx: &mut Ctx) {
     let enabled = !c.disabled && !waiting && !cx.read_only;
     let (rect, r) = ui.allocate_exact_size(Vec2::new(260.0, 36.0), if enabled { egui::Sense::click() } else { egui::Sense::hover() });
     let p = ui.painter();
-    p.rect_filled(rect, 4, if r.hovered() && enabled { theme::SELECTED } else { theme::INPUT });
+    p.rect_filled(rect, 4, if r.hovered() && enabled { theme::SELECTED() } else { theme::INPUT() });
     let defaults: Vec<&str> = c.options.iter().filter(|o| o.default).map(|o| o.label.as_str()).collect();
-    let (text, color) = if defaults.is_empty() { (c.placeholder.clone().unwrap_or_else(|| "Make a selection".into()), theme::MUTED) } else { (defaults.join(", "), theme::TEXT) };
+    let (text, color) = if defaults.is_empty() { (c.placeholder.clone().unwrap_or_else(|| "Make a selection".into()), theme::MUTED()) } else { (defaults.join(", "), theme::TEXT()) };
     let galley = p.layout(text, theme::font(14.0), if enabled { color } else { color.gamma_multiply(0.5) }, rect.width() - 44.0);
     p.galley(rect.left_center() + Vec2::new(10.0, -galley.size().y / 2.0), galley, color);
     if waiting {
         egui::Spinner::new().size(14.0).paint_at(ui, Rect::from_center_size(rect.right_center() - Vec2::new(16.0, 0.0), Vec2::splat(14.0)));
     } else {
-        p.text(rect.right_center() - Vec2::new(12.0, 0.0), egui::Align2::RIGHT_CENTER, icon::CHEVRON_DOWN, theme::icon_font(12.0), theme::MUTED);
+        p.text(rect.right_center() - Vec2::new(12.0, 0.0), egui::Align2::RIGHT_CENTER, icon::CHEVRON_DOWN, theme::icon_font(12.0), theme::MUTED());
     }
     if !enabled {
         return;
@@ -295,7 +295,7 @@ fn select(ui: &mut Ui, c: &Component, msg: &Message, cx: &mut Ctx) {
         }
         let list = choices(c, &query, cx);
         if list.is_empty() {
-            ui.label(RichText::new("Nothing to choose from.").color(theme::MUTED));
+            ui.label(RichText::new("Nothing to choose from.").color(theme::MUTED()));
         }
         egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
             for ch in &list {
@@ -313,7 +313,7 @@ fn select(ui: &mut Ui, c: &Component, msg: &Message, cx: &mut Ctx) {
                     ui.close();
                 }
                 if let Some(d) = &ch.description {
-                    ui.label(RichText::new(d).size(11.5).color(theme::MUTED));
+                    ui.label(RichText::new(d).size(11.5).color(theme::MUTED()));
                 }
             }
         });
@@ -321,7 +321,7 @@ fn select(ui: &mut Ui, c: &Component, msg: &Message, cx: &mut Ctx) {
             ui.separator();
             let chosen = cx.uis.interactions.choosing.get(&key).cloned().unwrap_or_default();
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("{} chosen (pick {min}–{max})", chosen.len())).size(12.0).color(theme::MUTED));
+                ui.label(RichText::new(format!("{} chosen (pick {min}–{max})", chosen.len())).size(12.0).color(theme::MUTED()));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let ok = (min..=max).contains(&chosen.len());
                     if ui.add_enabled(ok, egui::Button::new("Apply")).clicked() {

@@ -55,14 +55,14 @@ fn group_header(ui: &Ui, state: &State, guild: Snowflake, id: &str, count: u32, 
             .unwrap_or_else(|| "Members".to_owned()),
     };
     let text = format!("{} — {count}", name.to_uppercase());
-    let galley = line(ui, &text, theme::font_semibold(12.0), theme::MUTED, rect.width() - 8.0);
-    ui.painter().galley(rect.left_bottom() + Vec2::new(8.0, -6.0 - galley.size().y), galley, theme::MUTED);
+    let galley = line(ui, &text, theme::font_semibold(12.0), theme::MUTED(), rect.width() - 8.0);
+    ui.painter().galley(rect.left_bottom() + Vec2::new(8.0, -6.0 - galley.size().y), galley, theme::MUTED());
 }
 
 fn member_row(ui: &Ui, state: &State, guild: Snowflake, user_id: Snowflake, rect: Rect, r: &egui::Response, actions: &mut Vec<Action>) {
     let Some(user) = state.user(user_id) else { return placeholder(ui, rect) };
     let hovered = r.hovered();
-    let bg = if hovered { theme::HOVER } else { theme::SIDEBAR };
+    let bg = if hovered { theme::HOVER() } else { theme::SIDEBAR() };
     if hovered {
         ui.painter().rect_filled(rect, 4, bg);
     }
@@ -78,7 +78,7 @@ fn member_row(ui: &Ui, state: &State, guild: Snowflake, user_id: Snowflake, rect
     let color = dim(theme::role_color(state.role_color(guild, user_id)));
     let name = line(ui, &state.display_name(user_id, Some(guild)), theme::font_semibold(15.0), color, width - tag);
     let activity = state.activity(user_id).filter(|_| status != PresenceStatus::Offline);
-    let activity = activity.map(|a| line(ui, a, FontId::proportional(12.0), dim(theme::MUTED), width));
+    let activity = activity.map(|a| line(ui, a, FontId::proportional(12.0), dim(theme::MUTED()), width));
 
     let name_top = match &activity {
         Some(a) => rect.center().y - (name.size().y + a.size().y) / 2.0,
@@ -87,12 +87,12 @@ fn member_row(ui: &Ui, state: &State, guild: Snowflake, user_id: Snowflake, rect
     let name_rect = Rect::from_min_size(egui::pos2(x, name_top), name.size());
     if user.bot {
         let pill = Rect::from_min_size(egui::pos2(name_rect.right() + 4.0, name_rect.center().y - 7.5), Vec2::new(26.0, 15.0));
-        ui.painter().rect_filled(pill, 3, dim(theme::BLURPLE));
+        ui.painter().rect_filled(pill, 3, dim(theme::BLURPLE()));
         ui.painter().text(pill.center(), Align2::CENTER_CENTER, "APP", theme::font_semibold(10.0), Color32::WHITE);
     }
     ui.painter().galley(name_rect.min, name, color);
     if let Some(a) = activity {
-        ui.painter().galley(egui::pos2(x, name_rect.bottom()), a, theme::MUTED);
+        ui.painter().galley(egui::pos2(x, name_rect.bottom()), a, theme::MUTED());
     }
 
     let me = state.me.as_ref().is_some_and(|m| m.id == user_id);
@@ -118,7 +118,7 @@ fn member_row(ui: &Ui, state: &State, guild: Snowflake, user_id: Snowflake, rect
 
 /// A row that hasn't been synced yet.
 fn placeholder(ui: &Ui, rect: Rect) {
-    let shade = theme::HOVER;
+    let shade = theme::HOVER();
     let c = egui::pos2(rect.left() + 8.0 + AVATAR / 2.0, rect.center().y);
     ui.painter().circle_filled(c, AVATAR / 2.0, shade);
     let bar = Rect::from_min_size(egui::pos2(c.x + AVATAR / 2.0 + 12.0, c.y - 5.0), Vec2::new(rect.width() * 0.45, 10.0));

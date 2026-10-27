@@ -13,8 +13,8 @@ pub fn jump_button(ui: &Ui, rect: egui::Rect, id: impl std::hash::Hash + std::fm
     }
     let b = egui::Rect::from_min_size(rect.right_top() + Vec2::new(-56.0, 6.0), Vec2::new(48.0, 22.0));
     let r = ui.interact(b, egui::Id::unique(id), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-    ui.painter().rect_filled(b, 4, if r.hovered() { theme::SELECTED } else { theme::SIDEBAR });
-    ui.painter().text(b.center(), egui::Align2::CENTER_CENTER, "Jump", theme::font(12.0), theme::HEADER);
+    ui.painter().rect_filled(b, 4, if r.hovered() { theme::SELECTED() } else { theme::SIDEBAR() });
+    ui.painter().text(b.center(), egui::Align2::CENTER_CENTER, "Jump", theme::font(12.0), theme::HEADER());
     r.clicked()
 }
 
@@ -44,10 +44,10 @@ pub fn avatar_px(size: f32) -> u32 {
 
 pub fn status_color(s: PresenceStatus) -> Color32 {
     match s {
-        PresenceStatus::Online => theme::GREEN,
-        PresenceStatus::Idle => theme::YELLOW,
-        PresenceStatus::Dnd => theme::RED,
-        PresenceStatus::Offline => theme::OFFLINE,
+        PresenceStatus::Online => theme::GREEN(),
+        PresenceStatus::Idle => theme::YELLOW(),
+        PresenceStatus::Dnd => theme::RED(),
+        PresenceStatus::Offline => theme::OFFLINE(),
     }
 }
 
@@ -112,26 +112,26 @@ pub fn badge(ui: &Ui, center: egui::Pos2, count: u32, outline: Color32) {
     let w = (galley.size().x + 9.0).max(16.0);
     let rect = egui::Rect::from_center_size(center, egui::vec2(w, 16.0));
     ui.painter().rect_filled(rect.expand(3.0), 11, outline);
-    ui.painter().rect_filled(rect, 8, theme::RED);
+    ui.painter().rect_filled(rect, 8, theme::RED());
     ui.painter().galley(rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
 }
 
 /// A flat icon button that highlights on hover.
 pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str) -> Response {
     let r = ui.add(
-        egui::Button::new(egui::RichText::new(icon).font(theme::icon_font(16.0)).color(theme::MUTED))
+        egui::Button::new(egui::RichText::new(icon).font(theme::icon_font(16.0)).color(theme::MUTED()))
             .frame(false)
             .min_size(Vec2::splat(28.0)),
     );
     if r.hovered() {
-        ui.painter().rect_filled(r.rect, 4, theme::HOVER.gamma_multiply(0.6));
+        ui.painter().rect_filled(r.rect, 4, theme::HOVER().gamma_multiply(0.6));
     }
     r.on_hover_text(tooltip)
 }
 
 /// A toggle-style icon button (e.g. mute) that turns red when active.
 pub fn toggle_icon(ui: &mut Ui, icon: &str, active: bool, tooltip: &str) -> Response {
-    let color = if active { theme::RED } else { theme::MUTED };
+    let color = if active { theme::RED() } else { theme::MUTED() };
     let r = ui.add(egui::Button::new(egui::RichText::new(icon).font(theme::icon_font(16.0)).color(color)).frame(false).min_size(Vec2::splat(30.0)));
     r.on_hover_text(tooltip)
 }

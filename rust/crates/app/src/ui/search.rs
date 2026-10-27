@@ -23,27 +23,27 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Acti
                 n => format!("{n} Results"),
             }
         };
-        ui.label(RichText::new(title).font(theme::font_semibold(16.0)).color(theme::HEADER));
+        ui.label(RichText::new(title).font(theme::font_semibold(16.0)).color(theme::HEADER()));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if widgets::icon_button(ui, icon::CLOSE, "Close").clicked() {
                 actions.push(Action::CloseSearch);
             }
         });
     });
-    ui.label(RichText::new(query).size(12.5).color(theme::FAINT));
+    ui.label(RichText::new(query).size(12.5).color(theme::FAINT()));
     ui.separator();
     if !unknown.is_empty() {
-        ui.label(RichText::new(format!("Couldn't find {} (left out of the search).", unknown.join(", "))).size(12.5).color(theme::YELLOW));
+        ui.label(RichText::new(format!("Couldn't find {} (left out of the search).", unknown.join(", "))).size(12.5).color(theme::YELLOW()));
     }
     if let Some(e) = &error {
-        ui.label(RichText::new(e).color(theme::RED));
+        ui.label(RichText::new(e).color(theme::RED()));
     }
     if results.is_empty() {
         if loading {
             ui.centered_and_justified(|ui| ui.spinner());
         } else if error.is_none() {
             ui.add_space(24.0);
-            ui.vertical_centered(|ui| ui.label(RichText::new("No results found.").color(theme::MUTED)));
+            ui.vertical_centered(|ui| ui.label(RichText::new("No results found.").color(theme::MUTED())));
         }
         return;
     }
@@ -56,11 +56,11 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Acti
             if guild.is_some() {
                 let name = channel.map_or_else(|| "unknown-channel".to_owned(), |c| c.label());
                 let glyph = if channel.is_some_and(|c| c.is_thread()) { "💬 " } else { "# " };
-                ui.label(RichText::new(format!("{glyph}{name}")).font(theme::font_semibold(12.5)).color(theme::MUTED));
+                ui.label(RichText::new(format!("{glyph}{name}")).font(theme::font_semibold(12.5)).color(theme::MUTED()));
             }
             let perms = s.state.permissions(m.channel_id);
             let mut cx = Ctx { state: &s.state, uis, actions, channel: m.channel_id, guild, perms, highlight: None, read_only: true };
-            let r = egui::Frame::new().fill(theme::CHAT).corner_radius(6).inner_margin(egui::Margin { left: 0, right: 8, top: 0, bottom: 8 }).show(ui, |ui| {
+            let r = egui::Frame::new().fill(theme::CHAT()).corner_radius(6).inner_margin(egui::Margin { left: 0, right: 8, top: 0, bottom: 8 }).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 message::show(ui, m, false, &mut cx);
             });

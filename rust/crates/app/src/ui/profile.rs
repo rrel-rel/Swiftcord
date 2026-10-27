@@ -62,7 +62,7 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
     let (bg, theme_colors) = match view.theme_colors {
         // Darkened so the usual light text stays readable on any colour.
         Some([a, b]) => (rgb(a).lerp_to_gamma(Color32::BLACK, 0.45), Some((rgb(a).lerp_to_gamma(Color32::BLACK, 0.45), rgb(b).lerp_to_gamma(Color32::BLACK, 0.55)))),
-        None => (theme::SIDEBAR, None),
+        None => (theme::SIDEBAR(), None),
     };
 
     let area = egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(card.at).constrain(true).show(&ctx, |ui| {
@@ -84,7 +84,7 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
                     .paint_at(ui, banner);
             }
             None => {
-                let band = view.accent_color.map(rgb).or(theme_colors.map(|(a, _)| a.lerp_to_gamma(Color32::WHITE, 0.15))).unwrap_or(theme::SELECTED);
+                let band = view.accent_color.map(rgb).or(theme_colors.map(|(a, _)| a.lerp_to_gamma(Color32::WHITE, 0.15))).unwrap_or(theme::SELECTED());
                 ui.painter().rect_filled(banner, round_top, band);
             }
         }
@@ -114,15 +114,15 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
 
         egui::Frame::new().inner_margin(Margin { left: 16, right: 16, top: 0, bottom: 16 }).show(ui, |ui| {
             ui.set_width(WIDTH - 32.0);
-            ui.label(RichText::new(user.display_name()).font(theme::font_bold(20.0)).color(theme::HEADER));
+            ui.label(RichText::new(user.display_name()).font(theme::font_bold(20.0)).color(theme::HEADER()));
             let nick = guild.map(|g| state.display_name(user_id, Some(g))).filter(|n| n != user.display_name());
             let mut line = user.tag();
             if !view.pronouns.is_empty() {
                 line.push_str(&format!(" • {}", view.pronouns));
             }
-            ui.label(RichText::new(line).size(13.5).color(theme::TEXT));
+            ui.label(RichText::new(line).size(13.5).color(theme::TEXT()));
             if let Some(n) = nick {
-                ui.label(RichText::new(format!("Known here as {n}")).size(12.0).color(theme::MUTED));
+                ui.label(RichText::new(format!("Known here as {n}")).size(12.0).color(theme::MUTED()));
             }
             ui.add_space(8.0);
 
@@ -137,16 +137,16 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
                         revealed: &mut uis.revealed,
                         actions: &mut *actions,
                         size: 13.5,
-                        color: theme::TEXT,
+                        color: theme::TEXT(),
                         jumbo: false,
                     };
                     md::blocks(ui, &blocks, &mut mcx);
                     ui.add_space(8.0);
                 }
                 heading(ui, "Member Since");
-                ui.label(RichText::new(format!("Discord: {}", date(user_id.created_at()))).size(12.5).color(theme::TEXT));
+                ui.label(RichText::new(format!("Discord: {}", date(user_id.created_at()))).size(12.5).color(theme::TEXT()));
                 if let Some(j) = joined {
-                    ui.label(RichText::new(format!("This server: {}", date(j))).size(12.5).color(theme::TEXT));
+                    ui.label(RichText::new(format!("This server: {}", date(j))).size(12.5).color(theme::TEXT()));
                 }
                 if let Some(g) = guild.and_then(|g| state.guild(g)) {
                     let mut roles: Vec<_> = state
@@ -170,13 +170,13 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
                     ui.add(egui::Spinner::new().size(14.0));
                 } else if let Some(e) = &error {
                     ui.add_space(4.0);
-                    ui.label(RichText::new(format!("Couldn't load the full profile: {e}")).size(12.0).color(theme::MUTED));
+                    ui.label(RichText::new(format!("Couldn't load the full profile: {e}")).size(12.0).color(theme::MUTED()));
                 }
             });
 
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if !me && ui.add(egui::Button::new(RichText::new("Message").color(Color32::WHITE)).fill(theme::BLURPLE)).clicked() {
+                if !me && ui.add(egui::Button::new(RichText::new("Message").color(Color32::WHITE)).fill(theme::BLURPLE())).clicked() {
                     actions.push(Action::OpenDm(user_id));
                     actions.push(Action::CloseProfile);
                 }
@@ -231,16 +231,16 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
 }
 
 fn heading(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text.to_uppercase()).font(theme::font_bold(11.5)).color(theme::HEADER));
+    ui.label(RichText::new(text.to_uppercase()).font(theme::font_bold(11.5)).color(theme::HEADER()));
 }
 
 /// One widget (not nested layouts), so the row wraps.
 fn role_chip(ui: &mut egui::Ui, name: &str, color: Color32) {
-    let galley = ui.painter().layout_no_wrap(name.to_owned(), theme::font(12.0), theme::TEXT);
+    let galley = ui.painter().layout_no_wrap(name.to_owned(), theme::font(12.0), theme::TEXT());
     let (rect, _) = ui.allocate_exact_size(Vec2::new(galley.size().x + 26.0, 20.0), Sense::hover());
     ui.painter().rect_filled(rect, 4, Color32::from_black_alpha(90));
     ui.painter().circle_filled(egui::pos2(rect.left() + 10.0, rect.center().y), 5.0, color);
-    ui.painter().galley(egui::pos2(rect.left() + 20.0, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT);
+    ui.painter().galley(egui::pos2(rect.left() + 20.0, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT());
 }
 
 /// Where a card opened from `r` goes: just right of it, top-aligned.

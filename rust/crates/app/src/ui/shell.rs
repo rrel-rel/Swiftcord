@@ -10,12 +10,12 @@ use crate::ui::{chat, emoji, rail, sidebar};
 
 pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Catalog, actions: &mut Vec<Action>) {
     if !s.ready {
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::RAIL)).show(ui, |ui| {
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::RAIL())).show(ui, |ui| {
             ui.centered_and_justified(|ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(ui.available_height() / 2.0 - 40.0);
                     ui.spinner();
-                    ui.label(RichText::new("Connecting to Discord…").color(theme::MUTED));
+                    ui.label(RichText::new("Connecting to Discord…").color(theme::MUTED()));
                 });
             });
         });
@@ -23,7 +23,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Ca
     }
 
     if !matches!(s.conn, ConnectionState::Connected) {
-        egui::Panel::top("connection").frame(egui::Frame::new().fill(theme::YELLOW.gamma_multiply(0.85)).inner_margin(4)).show(ui, |ui| {
+        egui::Panel::top("connection").frame(egui::Frame::new().fill(theme::YELLOW().gamma_multiply(0.85)).inner_margin(4)).show(ui, |ui| {
             ui.vertical_centered(|ui| ui.label(RichText::new("Reconnecting…").color(Color32::BLACK)));
         });
     }
@@ -34,13 +34,13 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Ca
         return;
     }
 
-    egui::Panel::left("rail").exact_size(72.0).resizable(false).show_separator_line(false).frame(egui::Frame::new().fill(theme::RAIL)).show(ui, |ui| {
+    egui::Panel::left("rail").exact_size(72.0).resizable(false).show_separator_line(false).frame(egui::Frame::new().fill(theme::RAIL())).show(ui, |ui| {
         rail::show(ui, &s.state, uis, actions);
     });
-    egui::Panel::left("sidebar").exact_size(240.0).resizable(false).show_separator_line(false).frame(egui::Frame::new().fill(theme::SIDEBAR)).show(ui, |ui| {
+    egui::Panel::left("sidebar").exact_size(240.0).resizable(false).show_separator_line(false).frame(egui::Frame::new().fill(theme::SIDEBAR())).show(ui, |ui| {
         sidebar::show(ui, s, uis, actions);
     });
-    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT)).show(ui, |ui| {
+    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT())).show(ui, |ui| {
         if uis.stream.as_ref().is_some_and(|v| v.visible) {
             crate::ui::stream::show(ui, s, uis, actions);
         } else {
@@ -95,7 +95,7 @@ fn banner(ui: &Ui, uis: &UiState) {
     let Some((text, _)) = &uis.banner else { return };
     let ctx = ui.ctx();
     egui::Area::new(egui::Id::unique("banner")).order(egui::Order::Tooltip).anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 12.0)).show(ctx, |ui| {
-        egui::Frame::new().fill(theme::RED.gamma_multiply(0.9)).corner_radius(6).inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
+        egui::Frame::new().fill(theme::RED().gamma_multiply(0.9)).corner_radius(6).inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
             ui.label(RichText::new(text).color(Color32::WHITE));
         });
     });

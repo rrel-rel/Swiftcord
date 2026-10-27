@@ -51,30 +51,30 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, actions
                 None if ringing_me => format!("{} is calling you…", channel.label()),
                 None => "Call in progress".to_owned(),
             };
-            ui.label(RichText::new(status).color(theme::MUTED));
+            ui.label(RichText::new(status).color(theme::MUTED()));
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 let buttons = if mine.is_some() { 4.0 } else if ringing_me { 2.0 } else { 1.0 };
                 ui.add_space(((ui.available_width() - buttons * 56.0) / 2.0).max(0.0));
                 if mine.is_some() {
-                    if round(ui, if uis.self_mute { icon::MIC_OFF } else { icon::MIC }, if uis.self_mute { Color32::WHITE } else { theme::TEXT }, if uis.self_mute { theme::RED } else { theme::SELECTED }, "Mute").clicked() {
+                    if round(ui, if uis.self_mute { icon::MIC_OFF } else { icon::MIC }, if uis.self_mute { Color32::WHITE } else { theme::TEXT() }, if uis.self_mute { theme::RED() } else { theme::SELECTED() }, "Mute").clicked() {
                         actions.push(Action::ToggleMute);
                     }
-                    if round(ui, if uis.self_deaf { icon::DEAFENED } else { icon::HEADPHONES }, if uis.self_deaf { Color32::WHITE } else { theme::TEXT }, if uis.self_deaf { theme::RED } else { theme::SELECTED }, "Deafen").clicked() {
+                    if round(ui, if uis.self_deaf { icon::DEAFENED } else { icon::HEADPHONES }, if uis.self_deaf { Color32::WHITE } else { theme::TEXT() }, if uis.self_deaf { theme::RED() } else { theme::SELECTED() }, "Deafen").clicked() {
                         actions.push(Action::ToggleDeafen);
                     }
-                    let (fg, bg, tip) = if uis.self_video { (Color32::WHITE, theme::GREEN, "Turn Off Camera") } else { (theme::TEXT, theme::SELECTED, "Turn On Camera") };
+                    let (fg, bg, tip) = if uis.self_video { (Color32::WHITE, theme::GREEN(), "Turn Off Camera") } else { (theme::TEXT(), theme::SELECTED(), "Turn On Camera") };
                     if round(ui, icon::CAMERA, fg, bg, tip).clicked() {
                         actions.push(Action::ToggleCamera);
                     }
-                    if round(ui, icon::HANG_UP, Color32::WHITE, theme::RED, "Leave call").clicked() {
+                    if round(ui, icon::HANG_UP, Color32::WHITE, theme::RED(), "Leave call").clicked() {
                         actions.push(Action::LeaveVoice);
                     }
                 } else {
-                    if round(ui, icon::PHONE, Color32::WHITE, theme::GREEN, if ringing_me { "Accept" } else { "Join call" }).clicked() {
+                    if round(ui, icon::PHONE, Color32::WHITE, theme::GREEN(), if ringing_me { "Accept" } else { "Join call" }).clicked() {
                         actions.push(Action::AcceptCall(channel.id));
                     }
-                    if ringing_me && round(ui, icon::HANG_UP, Color32::WHITE, theme::RED, "Decline").clicked() {
+                    if ringing_me && round(ui, icon::HANG_UP, Color32::WHITE, theme::RED(), "Decline").clicked() {
                         actions.push(Action::DeclineCall(channel.id));
                     }
                 }
@@ -104,7 +104,7 @@ pub fn camera_tile(ui: &Ui, s: &Session, uis: &UiState, guild: Option<Snowflake>
     }
     egui::Image::new(tex).uv(egui::Rect::from_min_max(egui::pos2(u0, v0), egui::pos2(u1, v1))).corner_radius(8).paint_at(ui, rect);
     if uis.speaking.contains(&user) {
-        ui.painter().rect_stroke(rect, 8, egui::Stroke::new(3.0, theme::GREEN), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(rect, 8, egui::Stroke::new(3.0, theme::GREEN()), egui::StrokeKind::Inside);
     }
     let name = s.state.display_name(user, guild);
     let galley = ui.painter().layout_no_wrap(name, theme::font_semibold(12.5), Color32::WHITE);
@@ -162,7 +162,7 @@ fn participant(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, u: &U
                     ui.painter().circle_filled(r.rect.center(), 40.0, BG.gamma_multiply(0.6));
                 }
                 if uis.speaking.contains(&u.id) && joined {
-                    ui.painter().circle_stroke(r.rect.center(), 42.0, egui::Stroke::new(3.0, theme::GREEN));
+                    ui.painter().circle_stroke(r.rect.center(), 42.0, egui::Stroke::new(3.0, theme::GREEN()));
                 }
                 r
             };
@@ -170,15 +170,15 @@ fn participant(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, u: &U
                 let badge = if v.self_deaf || v.deaf { Some(icon::DEAFENED) } else if v.self_mute || v.mute { Some(icon::MIC_OFF) } else { None };
                 if let Some(b) = badge {
                     let c = r.rect.right_bottom() - Vec2::splat(10.0);
-                    ui.painter().circle_filled(c, 12.0, theme::RED);
+                    ui.painter().circle_filled(c, 12.0, theme::RED());
                     ui.painter().text(c, Align2::CENTER_CENTER, b, theme::icon_font(11.0), Color32::WHITE);
                 }
             }
             if !camera {
-                ui.add(egui::Label::new(RichText::new(u.display_name()).color(theme::HEADER)).truncate());
+                ui.add(egui::Label::new(RichText::new(u.display_name()).color(theme::HEADER())).truncate());
             }
             if ringing && !joined {
-                ui.label(RichText::new("Ringing…").small().color(theme::MUTED));
+                ui.label(RichText::new("Ringing…").small().color(theme::MUTED()));
             }
             if vs.is_some_and(|v| v.self_stream) && s.state.me.as_ref().is_some_and(|m| m.id != u.id) {
                 let key = crate::stream_glue::stream_key(None, channel.id, u.id);
@@ -223,19 +223,19 @@ pub fn incoming(ui: &Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) 
                             }
                             None => {
                                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), Sense::hover());
-                                ui.painter().circle_filled(rect.center(), 24.0, theme::BLURPLE);
+                                ui.painter().circle_filled(rect.center(), 24.0, theme::BLURPLE());
                                 ui.painter().text(rect.center(), Align2::CENTER_CENTER, icon::PEOPLE, theme::icon_font(20.0), Color32::WHITE);
                             }
                         }
                         ui.vertical(|ui| {
-                            ui.label(RichText::new(c.label()).font(theme::font_semibold(16.0)).color(theme::HEADER));
-                            ui.label(RichText::new("Incoming call…").color(theme::MUTED));
+                            ui.label(RichText::new(c.label()).font(theme::font_semibold(16.0)).color(theme::HEADER()));
+                            ui.label(RichText::new("Incoming call…").color(theme::MUTED()));
                         });
                         ui.add_space(16.0);
-                        if round(ui, icon::PHONE, Color32::WHITE, theme::GREEN, "Accept").clicked() {
+                        if round(ui, icon::PHONE, Color32::WHITE, theme::GREEN(), "Accept").clicked() {
                             actions.push(Action::AcceptCall(channel));
                         }
-                        if round(ui, icon::HANG_UP, Color32::WHITE, theme::RED, "Decline").clicked() {
+                        if round(ui, icon::HANG_UP, Color32::WHITE, theme::RED(), "Decline").clicked() {
                             actions.push(Action::DeclineCall(channel));
                         }
                     });

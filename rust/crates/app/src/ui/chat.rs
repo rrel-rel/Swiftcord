@@ -1,4 +1,4 @@
-﻿//! The chat area: header, a virtualized message list that stays pinned to the bottom and keeps its place
+//! The chat area: header, a virtualized message list that stays pinned to the bottom and keeps its place
 //! when older history loads above, typing indicator and composer.
 
 use std::collections::HashMap;
@@ -61,7 +61,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
     let state = &s.state;
     let Some(channel) = uis.channel().and_then(|c| state.channel(c)) else {
         ui.centered_and_justified(|ui| {
-            ui.label(RichText::new(if s.ready { "No channel selected" } else { "Connecting…" }).color(theme::MUTED));
+            ui.label(RichText::new(if s.ready { "No channel selected" } else { "Connecting…" }).color(theme::MUTED()));
         });
         return;
     };
@@ -78,17 +78,17 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
     // Forums list posts (threads) instead of messages.
     if channel.is_forum() {
         if !uis.hide_members {
-            egui::Panel::right(("members", channel.id)).exact_size(crate::ui::members::WIDTH).frame(egui::Frame::new().fill(theme::SIDEBAR)).show(ui, |ui| {
+            egui::Panel::right(("members", channel.id)).exact_size(crate::ui::members::WIDTH).frame(egui::Frame::new().fill(theme::SIDEBAR())).show(ui, |ui| {
                 crate::ui::members::panel(ui, s, channel, actions);
             });
         }
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT)).show(ui, |ui| {
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT())).show(ui, |ui| {
             crate::ui::threads::forum(ui, s, uis, channel, actions);
         });
         return;
     }
 
-    egui::Panel::bottom(("composer", channel.id)).frame(egui::Frame::new().fill(theme::CHAT).inner_margin(egui::Margin { left: 16, right: 16, top: 0, bottom: 20 })).show(ui, |ui| {
+    egui::Panel::bottom(("composer", channel.id)).frame(egui::Frame::new().fill(theme::CHAT()).inner_margin(egui::Margin { left: 16, right: 16, top: 0, bottom: 20 })).show(ui, |ui| {
         typing_line(ui, s, channel);
         composer(ui, s, uis, catalog, channel, perms, actions);
     });
@@ -96,41 +96,41 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
     let searching = uis.search.as_ref().is_some_and(|q| q.applies_to(channel.id, channel.guild_id));
     let pins = uis.pins.as_ref().filter(|(c, _)| *c == channel.id).map(|(_, p)| p.clone());
     if searching {
-        egui::Panel::right("search").exact_size(400.0).frame(egui::Frame::new().fill(theme::SIDEBAR).inner_margin(8)).show(ui, |ui| {
+        egui::Panel::right("search").exact_size(400.0).frame(egui::Frame::new().fill(theme::SIDEBAR()).inner_margin(8)).show(ui, |ui| {
             crate::ui::search::panel(ui, s, uis, actions);
         });
     } else if let Some(pins) = pins {
-        egui::Panel::right(("pins", channel.id)).exact_size(380.0).frame(egui::Frame::new().fill(theme::SIDEBAR).inner_margin(8)).show(ui, |ui| {
+        egui::Panel::right(("pins", channel.id)).exact_size(380.0).frame(egui::Frame::new().fill(theme::SIDEBAR()).inner_margin(8)).show(ui, |ui| {
             pins_panel(ui, s, uis, channel, pins.as_deref(), actions);
         });
     } else if uis.threads_panel == Some(channel.id) {
-        egui::Panel::right(("threads", channel.id)).exact_size(340.0).frame(egui::Frame::new().fill(theme::SIDEBAR).inner_margin(8)).show(ui, |ui| {
+        egui::Panel::right(("threads", channel.id)).exact_size(340.0).frame(egui::Frame::new().fill(theme::SIDEBAR()).inner_margin(8)).show(ui, |ui| {
             crate::ui::threads::panel(ui, s, uis, channel, actions);
         });
     } else if channel.guild_id.is_some() && !channel.is_voice() && !uis.hide_members {
-        egui::Panel::right(("members", channel.id)).exact_size(crate::ui::members::WIDTH).frame(egui::Frame::new().fill(theme::SIDEBAR)).show(ui, |ui| {
+        egui::Panel::right(("members", channel.id)).exact_size(crate::ui::members::WIDTH).frame(egui::Frame::new().fill(theme::SIDEBAR())).show(ui, |ui| {
             crate::ui::members::panel(ui, s, channel, actions);
         });
     }
 
-    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT)).show(ui, |ui| {
+    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT())).show(ui, |ui| {
         message_list(ui, s, uis, channel, perms, actions);
     });
 }
 
 fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut String, actions: &mut Vec<Action>) {
-    egui::Panel::top(("chat-header", c.id)).frame(egui::Frame::new().fill(theme::CHAT).inner_margin(egui::Margin::symmetric(16, 0))).show(ui, |ui| {
+    egui::Panel::top(("chat-header", c.id)).frame(egui::Frame::new().fill(theme::CHAT()).inner_margin(egui::Margin::symmetric(16, 0))).show(ui, |ui| {
         ui.set_height(48.0);
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             // In a thread: "# parent › thread", the parent leading back to its channel.
             let parent = c.parent_id.filter(|_| c.is_thread()).and_then(|p| s.state.channel(p));
             if let Some(p) = parent {
-                ui.label(RichText::new(if p.is_forum() { "💬" } else { "#" }).font(theme::font(20.0)).color(theme::FAINT));
-                let r = ui.add(egui::Label::new(RichText::new(p.label()).font(theme::font_semibold(15.0)).color(theme::MUTED)).sense(Sense::click()));
+                ui.label(RichText::new(if p.is_forum() { "💬" } else { "#" }).font(theme::font(20.0)).color(theme::FAINT()));
+                let r = ui.add(egui::Label::new(RichText::new(p.label()).font(theme::font_semibold(15.0)).color(theme::MUTED())).sense(Sense::click()));
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     actions.push(Action::SelectChannel(p.id));
                 }
-                ui.label(RichText::new(icon::CHEVRON_RIGHT).font(theme::icon_font(10.0)).color(theme::FAINT));
+                ui.label(RichText::new(icon::CHEVRON_RIGHT).font(theme::icon_font(10.0)).color(theme::FAINT()));
             }
             let glyph = match c.kind {
                 ChannelType::Dm => "@",
@@ -141,15 +141,15 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut
                 _ => "#",
             };
             let font = if glyph == "#" || glyph == "@" { theme::font(22.0) } else if glyph == "💬" { theme::font(18.0) } else { theme::icon_font(18.0) };
-            ui.label(RichText::new(glyph).font(font).color(theme::FAINT));
-            ui.label(RichText::new(c.label()).font(theme::font_semibold(16.0)).color(theme::HEADER));
+            ui.label(RichText::new(glyph).font(font).color(theme::FAINT()));
+            ui.label(RichText::new(c.label()).font(theme::font_semibold(16.0)).color(theme::HEADER()));
             if c.is_archived() {
-                ui.label(RichText::new("Archived").size(12.0).color(theme::FAINT));
+                ui.label(RichText::new("Archived").size(12.0).color(theme::FAINT()));
             }
             if c.kind == ChannelType::Dm {
                 if let Some(u) = c.recipients.first() {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
-                    widgets::status_dot(ui.painter(), rect.center(), 5.0, s.state.presence(u.id), s.state.on_mobile(u.id), theme::CHAT);
+                    widgets::status_dot(ui.painter(), rect.center(), 5.0, s.state.presence(u.id), s.state.on_mobile(u.id), theme::CHAT());
                 }
             }
             if let Some(topic) = c.topic.as_deref().filter(|t| !t.is_empty()) {
@@ -161,7 +161,7 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut
                 let room = (ui.available_width() - right).max(40.0);
                 ui.scope(|ui| {
                     ui.set_max_width(room);
-                    ui.add(egui::Label::new(RichText::new(first_line).size(13.5).color(theme::MUTED)).truncate()).on_hover_text(topic);
+                    ui.add(egui::Label::new(RichText::new(first_line).size(13.5).color(theme::MUTED())).truncate()).on_hover_text(topic);
                 });
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -189,7 +189,7 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut
     });
     // Discord's subtle header shadow.
     let y = ui.cursor().top();
-    ui.painter().hline(ui.max_rect().x_range(), y, egui::Stroke::new(1.0, theme::RAIL));
+    ui.painter().hline(ui.max_rect().x_range(), y, egui::Stroke::new(1.0, theme::RAIL()));
 }
 
 fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, perms: u64, actions: &mut Vec<Action>) {
@@ -199,7 +199,7 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
         return;
     };
     if perms & perm::READ_MESSAGE_HISTORY == 0 && channel.guild_id.is_some() {
-        ui.centered_and_justified(|ui| ui.label(RichText::new("You don't have permission to read this channel's history.").color(theme::MUTED)));
+        ui.centered_and_justified(|ui| ui.label(RichText::new("You don't have permission to read this channel's history.").color(theme::MUTED())));
         return;
     }
 
@@ -353,7 +353,7 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
     // A "jump to present" pill when scrolled far up or viewing older history.
     if history.has_newer || (!view.at_bottom && max_scroll - out.state.clamped_offset().y > 1500.0) {
         let rect = Rect::from_center_size(out.inner_rect.center_bottom() - Vec2::new(0.0, 24.0), Vec2::new(150.0, 30.0));
-        let r = ui.put(rect, egui::Button::new(RichText::new("Jump to present").color(Color32::WHITE)).fill(theme::BLURPLE).corner_radius(15));
+        let r = ui.put(rect, egui::Button::new(RichText::new("Jump to present").color(Color32::WHITE)).fill(theme::BLURPLE()).corner_radius(15));
         if r.clicked() {
             actions.push(Action::JumpToPresent(channel.id));
             ui.ctx().request_repaint();
@@ -381,12 +381,12 @@ fn top_row(ui: &mut Ui, s: &Session, c: &Channel, reached_start: bool) {
                 }
                 _ => {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(68.0), Sense::hover());
-                    ui.painter().circle_filled(rect.center(), 34.0, theme::SELECTED);
-                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "#", theme::font(42.0), theme::HEADER);
+                    ui.painter().circle_filled(rect.center(), 34.0, theme::SELECTED());
+                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "#", theme::font(42.0), theme::HEADER());
                 }
             }
             let title = if c.is_private() || c.is_thread() { c.label() } else { format!("Welcome to #{}!", c.label()) };
-            ui.label(RichText::new(title).font(theme::font_bold(28.0)).color(theme::HEADER));
+            ui.label(RichText::new(title).font(theme::font_bold(28.0)).color(theme::HEADER()));
             let sub = if c.is_private() {
                 format!("This is the beginning of your direct message history with {}.", c.label())
             } else if c.is_thread() {
@@ -397,7 +397,7 @@ fn top_row(ui: &mut Ui, s: &Session, c: &Channel, reached_start: bool) {
             } else {
                 format!("This is the start of the #{} channel.", c.label())
             };
-            ui.label(RichText::new(sub).color(theme::MUTED));
+            ui.label(RichText::new(sub).color(theme::MUTED()));
             let _ = s;
         });
     });
@@ -408,13 +408,13 @@ fn day_divider(ui: &mut Ui, m: &Message) {
     ui.add_space(14.0);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 16.0), Sense::hover());
     let text = m.timestamp().with_timezone(&chrono::Local).format("%B %-d, %Y").to_string();
-    let galley = ui.painter().layout_no_wrap(text, theme::font_semibold(12.0), theme::FAINT);
+    let galley = ui.painter().layout_no_wrap(text, theme::font_semibold(12.0), theme::FAINT());
     let c = rect.center();
     let half = galley.size().x / 2.0 + 8.0;
-    let stroke = egui::Stroke::new(1.0, theme::SELECTED);
+    let stroke = egui::Stroke::new(1.0, theme::SELECTED());
     ui.painter().hline((rect.left() + 16.0)..=(c.x - half), c.y, stroke);
     ui.painter().hline((c.x + half)..=(rect.right() - 16.0), c.y, stroke);
-    ui.painter().galley(c - galley.size() / 2.0, galley, theme::FAINT);
+    ui.painter().galley(c - galley.size() / 2.0, galley, theme::FAINT());
     ui.add_space(4.0);
 }
 
@@ -434,7 +434,7 @@ fn typing_line(ui: &mut Ui, s: &Session, c: &Channel) {
     };
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
     if !text.is_empty() {
-        ui.painter().text(rect.left_center(), egui::Align2::LEFT_CENTER, text, theme::font_semibold(12.5), theme::TEXT);
+        ui.painter().text(rect.left_center(), egui::Align2::LEFT_CENTER, text, theme::font_semibold(12.5), theme::TEXT());
         // Typing indicators expire on a timer, so keep repainting while one is shown.
         ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
     }
@@ -467,9 +467,9 @@ fn accept(ctx: &egui::Context, edit_id: egui::Id, draft: &mut crate::app::Draft,
 fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &Channel, perms: u64, actions: &mut Vec<Action>) {
     let state = &s.state;
     if perms & perm::SEND_MESSAGES == 0 {
-        egui::Frame::new().fill(theme::INPUT).corner_radius(8).inner_margin(14).show(ui, |ui| {
+        egui::Frame::new().fill(theme::INPUT()).corner_radius(8).inner_margin(14).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new("You do not have permission to send messages in this channel.").color(theme::FAINT));
+            ui.label(RichText::new("You do not have permission to send messages in this channel.").color(theme::FAINT()));
         });
         return;
     }
@@ -538,20 +538,20 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
     let reply = draft.reply;
     let files: Vec<(String, usize)> = draft.files.iter().map(|f| (f.name.clone(), f.bytes.len())).collect();
 
-    let frame = egui::Frame::new().fill(theme::INPUT).corner_radius(8).show(ui, |ui| {
+    let frame = egui::Frame::new().fill(theme::INPUT()).corner_radius(8).show(ui, |ui| {
         ui.set_width(ui.available_width());
         if let Some((rid, ping)) = reply {
-            egui::Frame::new().fill(theme::SIDEBAR).corner_radius(egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }).inner_margin(egui::Margin::symmetric(14, 6)).show(ui, |ui| {
+            egui::Frame::new().fill(theme::SIDEBAR()).corner_radius(egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }).inner_margin(egui::Margin::symmetric(14, 6)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     let name = state.message(c.id, rid).map(|m| state.display_name(m.author.id, c.guild_id)).unwrap_or_default();
-                    ui.label(RichText::new("Replying to ").color(theme::MUTED));
-                    ui.label(RichText::new(name).font(theme::font_semibold(14.0)).color(theme::HEADER));
+                    ui.label(RichText::new("Replying to ").color(theme::MUTED()));
+                    ui.label(RichText::new(name).font(theme::font_semibold(14.0)).color(theme::HEADER()));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if widgets::icon_button(ui, icon::CLOSE, "Cancel reply").clicked() {
                             uis.drafts.entry(c.id).or_default().reply = None;
                         }
-                        let label = RichText::new(if ping { "@ ON" } else { "@ OFF" }).font(theme::font_bold(12.0)).color(if ping { theme::BLURPLE } else { theme::MUTED });
+                        let label = RichText::new(if ping { "@ ON" } else { "@ OFF" }).font(theme::font_bold(12.0)).color(if ping { theme::BLURPLE() } else { theme::MUTED() });
                         if ui.add(egui::Button::new(label).frame(false)).on_hover_text("Mention the author").clicked() {
                             if let Some(r) = &mut uis.drafts.entry(c.id).or_default().reply {
                                 r.1 = !r.1;
@@ -565,12 +565,12 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
             ui.horizontal_wrapped(|ui| {
                 ui.add_space(12.0);
                 for (i, (name, size)) in files.iter().enumerate() {
-                    egui::Frame::new().fill(theme::SIDEBAR).corner_radius(6).inner_margin(8).show(ui, |ui| {
+                    egui::Frame::new().fill(theme::SIDEBAR()).corner_radius(6).inner_margin(8).show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(icon::FILE).font(theme::icon_font(18.0)).color(theme::BLURPLE));
+                            ui.label(RichText::new(icon::FILE).font(theme::icon_font(18.0)).color(theme::BLURPLE()));
                             ui.vertical(|ui| {
                                 ui.add(egui::Label::new(RichText::new(name).size(13.0)).truncate());
-                                ui.label(RichText::new(widgets::human_size(*size as u64)).size(11.0).color(theme::MUTED));
+                                ui.label(RichText::new(widgets::human_size(*size as u64)).size(11.0).color(theme::MUTED()));
                             });
                             if widgets::icon_button(ui, icon::DELETE, "Remove").clicked() {
                                 let d = uis.drafts.entry(c.id).or_default();
@@ -598,7 +598,7 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
             let before = draft.text.len();
             let out = egui::TextEdit::multiline(&mut draft.text)
                 .id(edit_id)
-                .hint_text(RichText::new(hint).color(theme::FAINT))
+                .hint_text(RichText::new(hint).color(theme::FAINT()))
                 .font(theme::font(15.5))
                 .frame(egui::Frame::NONE)
                 .desired_rows(1)
@@ -625,7 +625,7 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
                 r.request_focus();
                 uis.focus_composer = false;
             }
-            let gr = ui.add(egui::Button::new(RichText::new("GIF").font(theme::font_bold(11.5)).color(theme::MUTED)).frame_when_inactive(false).min_size(Vec2::new(34.0, 28.0)));
+            let gr = ui.add(egui::Button::new(RichText::new("GIF").font(theme::font_bold(11.5)).color(theme::MUTED())).frame_when_inactive(false).min_size(Vec2::new(34.0, 28.0)));
             let gif_at = gr.rect.right_top();
             if gr.on_hover_text("GIFs").clicked() {
                 actions.push(Action::OpenGifPicker { channel: c.id, at: gif_at });
@@ -669,9 +669,9 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
 /// The header's search box: Enter searches the whole server (or this DM); filters like `from:` and `in:`
 /// narrow it.
 fn search_field(ui: &mut Ui, c: &Channel, text: &mut String, actions: &mut Vec<Action>) {
-    egui::Frame::new().fill(theme::RAIL).corner_radius(4).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
+    egui::Frame::new().fill(theme::RAIL()).corner_radius(4).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(icon::SEARCH).font(theme::icon_font(12.0)).color(theme::MUTED));
+            ui.label(RichText::new(icon::SEARCH).font(theme::icon_font(12.0)).color(theme::MUTED()));
             let hint = if c.guild_id.is_some() { "Search" } else { "Search this chat" };
             let r = ui.add(egui::TextEdit::singleline(text).hint_text(hint).frame(egui::Frame::NONE).desired_width(170.0));
             let r = r.on_hover_text("Search messages. Filters: from:name, in:channel, has:image, mentions:name, before:2024-01-31, after:, during:");
@@ -689,9 +689,9 @@ fn search_field(ui: &mut Ui, c: &Channel, text: &mut String, actions: &mut Vec<A
 /// The composer's sticker button: a rounded square with a peeled corner (there's no sticker icon in the font).
 fn sticker_button(ui: &mut Ui) -> egui::Response {
     let (rect, r) = ui.allocate_exact_size(Vec2::new(32.0, 28.0), Sense::click());
-    let color = if r.hovered() { theme::HEADER } else { theme::MUTED };
+    let color = if r.hovered() { theme::HEADER() } else { theme::MUTED() };
     if r.hovered() {
-        ui.painter().rect_filled(rect, 4, theme::SELECTED);
+        ui.painter().rect_filled(rect, 4, theme::SELECTED());
     }
     let b = Rect::from_center_size(rect.center(), Vec2::splat(17.0));
     let fold = 6.0;
@@ -715,7 +715,7 @@ fn sticker_button(ui: &mut Ui) -> egui::Response {
 
 fn pins_panel(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, pins: Option<&[Message]>, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Pinned Messages").font(theme::font_semibold(16.0)).color(theme::HEADER));
+        ui.label(RichText::new("Pinned Messages").font(theme::font_semibold(16.0)).color(theme::HEADER()));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if widgets::icon_button(ui, icon::CLOSE, "Close").clicked() {
                 actions.push(Action::ShowPins(c.id));
@@ -728,7 +728,7 @@ fn pins_panel(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, pins: Op
         return;
     };
     if pins.is_empty() {
-        ui.label(RichText::new("This channel doesn't have any pinned messages… yet.").color(theme::MUTED));
+        ui.label(RichText::new("This channel doesn't have any pinned messages… yet.").color(theme::MUTED()));
         return;
     }
     let perms = s.state.permissions(c.id);
@@ -738,7 +738,7 @@ fn pins_panel(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, pins: Op
         ui.set_max_width(ui.available_width());
         let mut cx = Ctx { state: &s.state, uis, actions, channel: c.id, guild: c.guild_id, perms, highlight: None, read_only: true };
         for m in pins {
-            let r = egui::Frame::new().fill(theme::CHAT).corner_radius(6).inner_margin(egui::Margin { left: 0, right: 8, top: 0, bottom: 8 }).show(ui, |ui| {
+            let r = egui::Frame::new().fill(theme::CHAT()).corner_radius(6).inner_margin(egui::Margin { left: 0, right: 8, top: 0, bottom: 8 }).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 message::show(ui, m, false, &mut cx);
             });

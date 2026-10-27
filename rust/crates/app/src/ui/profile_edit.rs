@@ -270,12 +270,12 @@ fn color_field(ui: &mut Ui, label: &str, value: &mut Option<u32>, default: u32, 
 
 fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(8.0);
-    ui.label(RichText::new(text.to_uppercase()).font(theme::font_semibold(12.0)).color(theme::MUTED));
+    ui.label(RichText::new(text.to_uppercase()).font(theme::font_semibold(12.0)).color(theme::MUTED()));
 }
 
 fn nitro_note(ui: &mut Ui, nitro: bool) {
     if !nitro {
-        ui.label(RichText::new("Needs Nitro.").size(12.0).color(theme::FAINT));
+        ui.label(RichText::new("Needs Nitro.").size(12.0).color(theme::FAINT()));
     }
 }
 
@@ -305,7 +305,7 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
             ui.label(
                 RichText::new(if ed.server_tab { "How you appear in this server only. Empty fields use your main profile." } else { "How you appear everywhere." })
                     .size(12.5)
-                    .color(theme::MUTED),
+                    .color(theme::MUTED()),
             );
             ui.separator();
             let server = ed.server_tab;
@@ -315,7 +315,7 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
             if !side.loaded {
                 ui.horizontal(|ui| {
                     ui.add(egui::Spinner::new().size(14.0));
-                    ui.label(RichText::new("Loading your profile…").color(theme::MUTED));
+                    ui.label(RichText::new("Loading your profile…").color(theme::MUTED()));
                 });
             }
             ui.add_enabled_ui(!busy, |ui| {
@@ -324,7 +324,7 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
                 let hint = if server { me.display_name().to_owned() } else { me.username.clone() };
                 ui.add_enabled(!server || can_nick, egui::TextEdit::singleline(&mut side.fields.name).hint_text(hint).char_limit(32).desired_width(f32::INFINITY));
                 if server && !can_nick {
-                    ui.label(RichText::new("This server doesn't let you change your nickname.").size(12.0).color(theme::FAINT));
+                    ui.label(RichText::new("This server doesn't let you change your nickname.").size(12.0).color(theme::FAINT()));
                 }
 
                 // Avatar and banner.
@@ -372,7 +372,7 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
                             }
                             _ => {
                                 let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-                                let fill = side.fields.accent.map(rgb).unwrap_or(theme::SELECTED);
+                                let fill = side.fields.accent.map(rgb).unwrap_or(theme::SELECTED());
                                 ui.painter().rect_filled(rect, 6, fill);
                             }
                         }
@@ -409,7 +409,7 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
                                     *c = to_u32(col);
                                 }
                             }
-                            ui.label(RichText::new("primary, accent").size(12.0).color(theme::FAINT));
+                            ui.label(RichText::new("primary, accent").size(12.0).color(theme::FAINT()));
                         }
                     });
                 });
@@ -426,19 +426,19 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
                         nitro_note(ui, nitro);
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{}/{BIO_LIMIT}", side.fields.bio.chars().count())).size(11.5).color(theme::FAINT));
+                        ui.label(RichText::new(format!("{}/{BIO_LIMIT}", side.fields.bio.chars().count())).size(11.5).color(theme::FAINT()));
                     });
                 });
             });
 
             if let Some(e) = &ed.error {
                 ui.add_space(6.0);
-                ui.label(RichText::new(e).color(theme::RED));
+                ui.label(RichText::new(e).color(theme::RED()));
             }
             ui.add_space(10.0);
             ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 30.0), Layout::right_to_left(Align::Center), |ui| {
                 let changed = ed.main.changed() || ed.server.changed();
-                let save = egui::Button::new(RichText::new(if ed.busy { "Saving…" } else { "Save" }).color(Color32::WHITE)).fill(theme::BLURPLE);
+                let save = egui::Button::new(RichText::new(if ed.busy { "Saving…" } else { "Save" }).color(Color32::WHITE)).fill(theme::BLURPLE());
                 if ui.add_enabled(changed && !ed.busy, save).clicked() {
                     actions.push(Action::SaveProfile);
                 }

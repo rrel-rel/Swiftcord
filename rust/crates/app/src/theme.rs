@@ -1,34 +1,181 @@
-//! Colours, fonts and egui styling.
+//! Colours, fonts and egui styling. The colours come from the chosen palette (Dark, Darker or Midnight) and
+//! accent; they're functions so the theme can change while the app runs.
+#![allow(non_snake_case)]
 
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
+use serde::{Deserialize, Serialize};
 
-pub const RAIL: Color32 = Color32::from_rgb(0x1e, 0x1f, 0x22);
-pub const SIDEBAR: Color32 = Color32::from_rgb(0x2b, 0x2d, 0x31);
-pub const CHAT: Color32 = Color32::from_rgb(0x31, 0x33, 0x38);
-pub const INPUT: Color32 = Color32::from_rgb(0x38, 0x3a, 0x40);
-pub const HOVER: Color32 = Color32::from_rgb(0x35, 0x37, 0x3c);
-pub const SELECTED: Color32 = Color32::from_rgb(0x40, 0x42, 0x49);
-pub const MESSAGE_HOVER: Color32 = Color32::from_rgb(0x2e, 0x30, 0x35);
-pub const TEXT: Color32 = Color32::from_rgb(0xdb, 0xde, 0xe1);
-pub const MUTED: Color32 = Color32::from_rgb(0x94, 0x9b, 0xa4);
-pub const FAINT: Color32 = Color32::from_rgb(0x6d, 0x6f, 0x78);
-pub const HEADER: Color32 = Color32::from_rgb(0xf2, 0xf3, 0xf5);
-pub const BLURPLE: Color32 = Color32::from_rgb(0x58, 0x65, 0xf2);
-pub const GREEN: Color32 = Color32::from_rgb(0x23, 0xa5, 0x59);
-pub const YELLOW: Color32 = Color32::from_rgb(0xf0, 0xb2, 0x32);
-pub const RED: Color32 = Color32::from_rgb(0xf2, 0x3f, 0x43);
+/// The background shades: how dark the app is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Palette {
+    /// Discord's dark theme.
+    #[default]
+    Dark,
+    /// Deeper greys.
+    Darker,
+    /// Near-black, for OLED screens and dark rooms.
+    Midnight,
+}
+
+impl Palette {
+    pub const ALL: [Palette; 3] = [Palette::Dark, Palette::Darker, Palette::Midnight];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Palette::Dark => "Dark",
+            Palette::Darker => "Darker",
+            Palette::Midnight => "Midnight",
+        }
+    }
+}
+
+/// The accent colours offered (buttons, selection, links to act on), Discord's blurple first.
+pub const ACCENTS: [(&str, u32); 6] =
+    [("Blurple", 0x5865F2), ("Green", 0x23A55A), ("Pink", 0xEB459E), ("Orange", 0xE67E22), ("Teal", 0x1ABC9C), ("Red", 0xED4245)];
+
+/// The shades of one palette.
+struct Shades {
+    rail: Color32,
+    sidebar: Color32,
+    chat: Color32,
+    input: Color32,
+    hover: Color32,
+    selected: Color32,
+    message_hover: Color32,
+    /// Embeds and code blocks.
+    card: Color32,
+}
+
+const fn rgb(c: u32) -> Color32 {
+    Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
+}
+
+const DARK: Shades = Shades {
+    rail: rgb(0x1e1f22),
+    sidebar: rgb(0x2b2d31),
+    chat: rgb(0x313338),
+    input: rgb(0x383a40),
+    hover: rgb(0x35373c),
+    selected: rgb(0x404249),
+    message_hover: rgb(0x2e3035),
+    card: rgb(0x2b2d31),
+};
+
+const DARKER: Shades = Shades {
+    rail: rgb(0x111214),
+    sidebar: rgb(0x1a1b1e),
+    chat: rgb(0x1f2023),
+    input: rgb(0x292a2e),
+    hover: rgb(0x26272b),
+    selected: rgb(0x303136),
+    message_hover: rgb(0x1b1c1f),
+    card: rgb(0x18191c),
+};
+
+const MIDNIGHT: Shades = Shades {
+    rail: rgb(0x000000),
+    sidebar: rgb(0x08080a),
+    chat: rgb(0x000000),
+    input: rgb(0x16171a),
+    hover: rgb(0x121315),
+    selected: rgb(0x1d1e22),
+    message_hover: rgb(0x0b0b0d),
+    card: rgb(0x0d0e10),
+};
+
+static PALETTE: AtomicU8 = AtomicU8::new(0);
+static ACCENT: AtomicU32 = AtomicU32::new(0x5865F2);
+
+/// Switches the colours; [`apply_visuals`] then restyles egui's own widgets.
+pub fn set(palette: Palette, accent: u32) {
+    PALETTE.store(palette as u8, Ordering::Relaxed);
+    ACCENT.store(accent & 0xFF_FFFF, Ordering::Relaxed);
+}
+
+fn shades() -> &'static Shades {
+    match PALETTE.load(Ordering::Relaxed) {
+        1 => &DARKER,
+        2 => &MIDNIGHT,
+        _ => &DARK,
+    }
+}
+
+pub fn RAIL() -> Color32 {
+    shades().rail
+}
+pub fn SIDEBAR() -> Color32 {
+    shades().sidebar
+}
+pub fn CHAT() -> Color32 {
+    shades().chat
+}
+pub fn INPUT() -> Color32 {
+    shades().input
+}
+pub fn HOVER() -> Color32 {
+    shades().hover
+}
+pub fn SELECTED() -> Color32 {
+    shades().selected
+}
+pub fn MESSAGE_HOVER() -> Color32 {
+    shades().message_hover
+}
+pub fn CODE_BG() -> Color32 {
+    shades().card
+}
+pub fn EMBED_BG() -> Color32 {
+    shades().card
+}
+pub fn TEXT() -> Color32 {
+    rgb(0xdbdee1)
+}
+pub fn MUTED() -> Color32 {
+    rgb(0x949ba4)
+}
+pub fn FAINT() -> Color32 {
+    rgb(0x6d6f78)
+}
+pub fn HEADER() -> Color32 {
+    rgb(0xf2f3f5)
+}
+/// The accent colour (Discord's blurple unless another was chosen).
+pub fn BLURPLE() -> Color32 {
+    rgb(ACCENT.load(Ordering::Relaxed))
+}
+pub fn GREEN() -> Color32 {
+    rgb(0x23a559)
+}
+pub fn YELLOW() -> Color32 {
+    rgb(0xf0b232)
+}
+pub fn RED() -> Color32 {
+    rgb(0xf23f43)
+}
 /// The offline / invisible status.
-pub const OFFLINE: Color32 = Color32::from_rgb(0x80, 0x84, 0x8e);
-pub const LINK: Color32 = Color32::from_rgb(0x00, 0xa8, 0xfc);
-pub const MENTION_BG: Color32 = Color32::from_rgba_premultiplied(0x3c, 0x42, 0x70, 0xff);
-pub const MENTION_TEXT: Color32 = Color32::from_rgb(0xc9, 0xcd, 0xfb);
+pub fn OFFLINE() -> Color32 {
+    rgb(0x80848e)
+}
+pub fn LINK() -> Color32 {
+    rgb(0x00a8fc)
+}
+/// Mentions: a dim wash of the accent behind, a pale tint of it for the text.
+pub fn MENTION_BG() -> Color32 {
+    BLURPLE().lerp_to_gamma(SIDEBAR(), 0.62)
+}
+pub fn MENTION_TEXT() -> Color32 {
+    BLURPLE().lerp_to_gamma(Color32::WHITE, 0.7)
+}
 /// Discord's gold tint for messages that mention you.
-pub const MENTIONED_ROW: Color32 = Color32::from_rgb(0x44, 0x3d, 0x2d);
-pub const MENTIONED_ROW_HOVER: Color32 = Color32::from_rgb(0x4a, 0x42, 0x2f);
-pub const CODE_BG: Color32 = Color32::from_rgb(0x2b, 0x2d, 0x31);
-pub const EMBED_BG: Color32 = Color32::from_rgb(0x2b, 0x2d, 0x31);
+pub fn MENTIONED_ROW() -> Color32 {
+    rgb(0xf0b232).lerp_to_gamma(CHAT(), 0.9)
+}
+pub fn MENTIONED_ROW_HOVER() -> Color32 {
+    rgb(0xf0b232).lerp_to_gamma(CHAT(), 0.87)
+}
 
 /// Segoe Fluent Icons code points.
 pub mod icon {
@@ -149,7 +296,11 @@ pub fn install(ctx: &egui::Context) {
     fonts.families.insert(self::semibold(), family(semibold.or(regular), &builtin_prop));
     fonts.families.insert(self::icons(), icons.into_iter().chain(builtin_prop.iter().cloned()).collect());
     ctx.set_fonts(fonts);
+    apply_visuals(ctx);
+}
 
+/// Styles egui's own widgets in the current palette and accent (again after either changes).
+pub fn apply_visuals(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);
     ctx.style_mut_of(egui::Theme::Dark, |style| {
         style.text_styles = [
@@ -168,14 +319,14 @@ pub fn install(ctx: &egui::Context) {
 
         let v = &mut style.visuals;
         *v = egui::Visuals::dark();
-        v.override_text_color = Some(TEXT);
-        v.panel_fill = CHAT;
-        v.window_fill = SIDEBAR;
-        v.extreme_bg_color = INPUT;
-        v.faint_bg_color = SIDEBAR;
-        v.code_bg_color = CODE_BG;
-        v.hyperlink_color = LINK;
-        v.selection.bg_fill = BLURPLE.gamma_multiply(0.6);
+        v.override_text_color = Some(TEXT());
+        v.panel_fill = CHAT();
+        v.window_fill = SIDEBAR();
+        v.extreme_bg_color = INPUT();
+        v.faint_bg_color = SIDEBAR();
+        v.code_bg_color = CODE_BG();
+        v.hyperlink_color = LINK();
+        v.selection.bg_fill = BLURPLE().gamma_multiply(0.6);
         v.window_corner_radius = 8.into();
         v.menu_corner_radius = 6.into();
         v.window_stroke = egui::Stroke::new(1.0, Color32::from_gray(30));
@@ -193,6 +344,6 @@ pub fn install(ctx: &egui::Context) {
 pub fn role_color(c: Option<u32>) -> Color32 {
     match c {
         Some(c) if c != 0 => Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8),
-        _ => HEADER,
+        _ => HEADER(),
     }
 }

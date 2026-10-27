@@ -64,28 +64,28 @@ fn render_qr(data: &str) -> Option<ColorImage> {
 }
 
 pub fn show(ui: &mut egui::Ui, login: &mut LoginUi, actions: &mut Vec<Action>) {
-    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::RAIL)).show(ui, |ui| {
+    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::RAIL())).show(ui, |ui| {
         ui.with_layout(Layout::top_down(Align::Center), |ui| {
             let card_w = 720.0_f32.min(ui.available_width() - 32.0);
             ui.add_space(((ui.available_height() - 420.0) / 2.0).max(16.0));
-            egui::Frame::new().fill(theme::SIDEBAR).corner_radius(8).inner_margin(32).show(ui, |ui| {
+            egui::Frame::new().fill(theme::SIDEBAR()).corner_radius(8).inner_margin(32).show(ui, |ui| {
                 ui.set_width(card_w - 64.0);
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width((card_w - 64.0) * 0.58);
-                        ui.label(RichText::new("Welcome back!").font(theme::font_bold(24.0)).color(theme::HEADER));
-                        ui.label(RichText::new("Sign in to Discord to continue.").color(theme::MUTED));
+                        ui.label(RichText::new("Welcome back!").font(theme::font_bold(24.0)).color(theme::HEADER()));
+                        ui.label(RichText::new("Sign in to Discord to continue.").color(theme::MUTED()));
                         ui.add_space(20.0);
 
                         let enabled = !login.busy;
                         let b = egui::Button::new(RichText::new("Sign in with your browser").color(Color32::WHITE))
-                            .fill(theme::BLURPLE)
+                            .fill(theme::BLURPLE())
                             .min_size(Vec2::new(ui.available_width(), 40.0));
                         if ui.add_enabled(enabled, b).clicked() {
                             login.error = None;
                             actions.push(Action::BrowserLogin);
                         }
-                        ui.label(RichText::new("Opens discord.com so captcha, 2FA and passkeys work.").small().color(theme::FAINT));
+                        ui.label(RichText::new("Opens discord.com so captcha, 2FA and passkeys work.").small().color(theme::FAINT()));
                         ui.add_space(16.0);
 
                         if ui.link(if login.show_token { "Hide token sign-in" } else { "Sign in with a token instead" }).clicked() {
@@ -113,7 +113,7 @@ pub fn show(ui: &mut egui::Ui, login: &mut LoginUi, actions: &mut Vec<Action>) {
                         }
                         if let Some(e) = &login.error {
                             ui.add_space(8.0);
-                            ui.colored_label(theme::RED, e);
+                            ui.colored_label(theme::RED(), e);
                         }
                     });
 
@@ -123,7 +123,7 @@ pub fn show(ui: &mut egui::Ui, login: &mut LoginUi, actions: &mut Vec<Action>) {
                         match (&login.qr, &login.scanned, &login.qr_failed) {
                             (_, Some(user), _) => {
                                 ui.add_space(40.0);
-                                ui.label(RichText::new("Check your phone!").font(theme::font_bold(18.0)).color(theme::HEADER));
+                                ui.label(RichText::new("Check your phone!").font(theme::font_bold(18.0)).color(theme::HEADER()));
                                 ui.label(format!("Approve the sign-in as {user}."));
                             }
                             (Some(tex), None, _) => {
@@ -131,12 +131,12 @@ pub fn show(ui: &mut egui::Ui, login: &mut LoginUi, actions: &mut Vec<Action>) {
                                     ui.add(egui::Image::new(tex).fit_to_exact_size(Vec2::splat(size)));
                                 });
                                 ui.add_space(8.0);
-                                ui.label(RichText::new("Sign in with QR code").font(theme::font_semibold(16.0)).color(theme::HEADER));
-                                ui.label(RichText::new("Scan this with the Discord mobile app.").color(theme::MUTED));
+                                ui.label(RichText::new("Sign in with QR code").font(theme::font_semibold(16.0)).color(theme::HEADER()));
+                                ui.label(RichText::new("Scan this with the Discord mobile app.").color(theme::MUTED()));
                             }
                             (None, None, Some(_)) => {
                                 ui.add_space(50.0);
-                                ui.label(RichText::new("The QR code couldn't load.").color(theme::MUTED));
+                                ui.label(RichText::new("The QR code couldn't load.").color(theme::MUTED()));
                                 if ui.button("Try again").clicked() {
                                     actions.push(Action::StartQrLogin);
                                 }
@@ -153,7 +153,7 @@ pub fn show(ui: &mut egui::Ui, login: &mut LoginUi, actions: &mut Vec<Action>) {
             ui.label(
                 RichText::new("Swiftcord is an unofficial client. Using it may break Discord's Terms of Service.")
                     .small()
-                    .color(theme::FAINT),
+                    .color(theme::FAINT()),
             );
         });
     });

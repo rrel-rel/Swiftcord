@@ -349,7 +349,7 @@ fn skin_tone_button(ui: &mut Ui, catalog: &mut Catalog) -> bool {
     }
     if open {
         let area = egui::Area::new(id.with("area")).order(egui::Order::Tooltip).fixed_pos(b.rect.left_bottom() + Vec2::new(0.0, 4.0)).show(ui.ctx(), |ui| {
-            egui::Frame::popup(ui.style()).fill(theme::SIDEBAR).inner_margin(4).show(ui, |ui| {
+            egui::Frame::popup(ui.style()).fill(theme::SIDEBAR()).inner_margin(4).show(ui, |ui| {
                 for tone in 0..=5 {
                     let r = ui.add(egui::Button::image(image(&hands[tone])).frame_when_inactive(tone == catalog.skin_tone).min_size(Vec2::splat(32.0)));
                     if r.clicked() {
@@ -382,7 +382,7 @@ pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog
     // The skin tone menu is its own layer, so clicks in it aren't clicks outside the picker.
     let mut tone_open = false;
     let area = egui::Area::new(egui::Id::unique("emoji-picker")).order(egui::Order::Foreground).fixed_pos(pos).show(&ctx, |ui| {
-        egui::Frame::popup(ui.style()).fill(theme::SIDEBAR).inner_margin(10).show(ui, |ui| {
+        egui::Frame::popup(ui.style()).fill(theme::SIDEBAR()).inner_margin(10).show(ui, |ui| {
             ui.set_width(size.x - 20.0);
             ui.set_height(size.y - 20.0);
             ui.horizontal(|ui| {
@@ -403,7 +403,7 @@ pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog
                         for item in row {
                             match item {
                                 Item::Header(t) => {
-                                    ui.label(RichText::new(t.to_uppercase()).font(theme::font_semibold(12.0)).color(theme::MUTED));
+                                    ui.label(RichText::new(t.to_uppercase()).font(theme::font_semibold(12.0)).color(theme::MUTED()));
                                 }
                                 Item::Emoji(e) => {
                                     let b = egui::Button::image(crate::emoji_sheet::any(ui.ctx(), e, Vec2::splat(28.0)))
@@ -443,7 +443,7 @@ pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog
             ui.separator();
             // Unicode emoji are named by their character; show their :shortcode: instead.
             let footer = hovered.map(|n| format!(":{}:", catalog.name_of(&n).unwrap_or(&n))).unwrap_or_default();
-            ui.label(RichText::new(footer).color(theme::MUTED));
+            ui.label(RichText::new(footer).color(theme::MUTED()));
         });
     });
     // Clicking anywhere else closes it.

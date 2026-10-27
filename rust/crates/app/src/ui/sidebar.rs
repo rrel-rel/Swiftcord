@@ -20,10 +20,10 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Actio
     egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 0)).show(ui, |ui| {
         ui.set_height(48.0);
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-            ui.add(egui::Label::new(RichText::new(title).font(theme::font_semibold(15.0)).color(theme::HEADER)).truncate());
+            ui.add(egui::Label::new(RichText::new(title).font(theme::font_semibold(15.0)).color(theme::HEADER())).truncate());
         });
     });
-    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), egui::Stroke::new(1.0, theme::RAIL));
+    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), egui::Stroke::new(1.0, theme::RAIL()));
 
     // Bottom panels first so the list takes the remaining space.
     egui::Panel::bottom("user-panel").frame(egui::Frame::new().fill(Color32::from_rgb(0x23, 0x24, 0x28))).show(ui, |ui| {
@@ -48,7 +48,7 @@ fn row(ui: &mut Ui, selected: bool, height: f32, add: impl FnOnce(&mut Ui, bool)
     // contains_pointer, not hovered: buttons inside the row would otherwise un-hover it and hide themselves.
     let hovered = r.contains_pointer();
     if selected || hovered {
-        ui.painter().rect_filled(rect, 4, if selected { theme::SELECTED } else { theme::HOVER });
+        ui.painter().rect_filled(rect, 4, if selected { theme::SELECTED() } else { theme::HOVER() });
     }
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(8.0, 0.0))).layout(Layout::left_to_right(Align::Center)));
     add(&mut child, hovered);
@@ -64,7 +64,7 @@ fn guild_channels(ui: &mut Ui, state: &State, uis: &mut UiState, guild: Snowflak
         if let Some(cat) = category {
             ui.add_space(12.0);
             let r = row(ui, false, 22.0, |ui, hovered| {
-                let color = if hovered { theme::TEXT } else { theme::MUTED };
+                let color = if hovered { theme::TEXT() } else { theme::MUTED() };
                 ui.label(RichText::new(if collapsed { icon::CHEVRON_RIGHT } else { icon::CHEVRON_DOWN }).font(theme::icon_font(9.0)).color(color));
                 ui.add(egui::Label::new(RichText::new(cat.label().to_uppercase()).font(theme::font_semibold(12.0)).color(color)).truncate().selectable(false));
             });
@@ -111,7 +111,7 @@ fn thread_rows(ui: &mut Ui, state: &State, parent: &Channel, selected: Option<Sn
         }
         let r = row(ui, is_selected, 30.0, |ui, hovered| {
             ui.add_space(22.0);
-            let color = if is_selected || unread { theme::HEADER } else if hovered { theme::TEXT } else { theme::MUTED };
+            let color = if is_selected || unread { theme::HEADER() } else if hovered { theme::TEXT() } else { theme::MUTED() };
             let font = if unread || is_selected { theme::font_semibold(14.5) } else { theme::font(14.5) };
             ui.add(egui::Label::new(RichText::new(t.label()).font(font).color(color)).truncate().selectable(false));
             let mentions = state.mention_count(t.id);
@@ -154,14 +154,14 @@ fn channel_row(ui: &mut Ui, state: &State, c: &Channel, selected: bool, unread: 
     let muted = state.is_channel_muted(c);
     let mut open_chat = false;
     let r = row(ui, selected, 32.0, |ui, hovered| {
-        let color = if selected || unread { theme::HEADER } else if hovered { theme::TEXT } else if muted { theme::FAINT } else { theme::MUTED };
+        let color = if selected || unread { theme::HEADER() } else if hovered { theme::TEXT() } else if muted { theme::FAINT() } else { theme::MUTED() };
         let glyph = match c.kind {
             ChannelType::Voice | ChannelType::Stage => RichText::new(icon::SPEAKER).font(theme::icon_font(15.0)),
             ChannelType::Announcement => RichText::new("📣").size(14.0),
             ChannelType::Forum | ChannelType::Media => RichText::new("💬").size(14.0),
             _ => RichText::new("#").font(theme::font(20.0)),
         };
-        ui.add_sized(Vec2::new(20.0, 24.0), egui::Label::new(glyph.color(theme::FAINT)).selectable(false));
+        ui.add_sized(Vec2::new(20.0, 24.0), egui::Label::new(glyph.color(theme::FAINT())).selectable(false));
         let font = if unread || selected { theme::font_semibold(15.0) } else { theme::font(15.0) };
         ui.add(egui::Label::new(RichText::new(c.label()).font(font).color(color)).truncate().selectable(false));
         if mentions > 0 || (c.is_voice() && (hovered || selected)) {
@@ -180,7 +180,7 @@ fn channel_row(ui: &mut Ui, state: &State, c: &Channel, selected: bool, unread: 
     if unread && !selected {
         let x = ui.max_rect().left();
         let y = r.rect.center().y;
-        ui.painter().rect_filled(egui::Rect::from_min_size(egui::pos2(x - 4.0, y - 4.0), Vec2::new(8.0, 8.0)), 4, theme::HEADER);
+        ui.painter().rect_filled(egui::Rect::from_min_size(egui::pos2(x - 4.0, y - 4.0), Vec2::new(8.0, 8.0)), 4, theme::HEADER());
     }
     let r = r.on_hover_text(c.topic.clone().unwrap_or_default());
     if open_chat {
@@ -218,19 +218,19 @@ fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel, actions
                 None => ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover()).1,
             };
             if speaking {
-                ui.painter().circle_stroke(r.rect.center(), 12.0, egui::Stroke::new(2.0, theme::GREEN));
+                ui.painter().circle_stroke(r.rect.center(), 12.0, egui::Stroke::new(2.0, theme::GREEN()));
             }
             // The badges are laid out from the right first, so a long name is cut short instead of pushing
             // the LIVE button out of view.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(4.0);
                 if vs.self_deaf || vs.deaf {
-                    ui.label(RichText::new(icon::DEAFENED).font(theme::icon_font(12.0)).color(theme::RED));
+                    ui.label(RichText::new(icon::DEAFENED).font(theme::icon_font(12.0)).color(theme::RED()));
                 } else if vs.self_mute || vs.mute {
-                    ui.label(RichText::new(icon::MIC_OFF).font(theme::icon_font(12.0)).color(theme::RED));
+                    ui.label(RichText::new(icon::MIC_OFF).font(theme::icon_font(12.0)).color(theme::RED()));
                 }
                 if vs.self_video {
-                    ui.label(RichText::new(icon::CAMERA).font(theme::icon_font(12.0)).color(theme::MUTED)).on_hover_text("Camera on");
+                    ui.label(RichText::new(icon::CAMERA).font(theme::icon_font(12.0)).color(theme::MUTED())).on_hover_text("Camera on");
                 }
                 if vs.self_stream {
                     let mine = state.me.as_ref().is_some_and(|m| m.id == vs.user_id);
@@ -241,7 +241,7 @@ fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel, actions
                     }
                 }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.add(egui::Label::new(RichText::new(name).size(14.0).color(theme::MUTED)).truncate().selectable(false));
+                    ui.add(egui::Label::new(RichText::new(name).size(14.0).color(theme::MUTED())).truncate().selectable(false));
                 });
             });
         });
@@ -251,7 +251,7 @@ fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel, actions
 fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
         ui.add_space(16.0);
-        ui.label(RichText::new("DIRECT MESSAGES").font(theme::font_semibold(12.0)).color(theme::MUTED));
+        ui.label(RichText::new("DIRECT MESSAGES").font(theme::font_semibold(12.0)).color(theme::MUTED()));
     });
     ui.add_space(4.0);
     let selected = uis.channel();
@@ -262,7 +262,7 @@ fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Acti
         let r = row(ui, is_selected, 42.0, |ui, hovered| {
             if c.kind == ChannelType::Dm {
                 if let Some(u) = c.recipients.first() {
-                    widgets::avatar_with_status(ui, u, 32.0, state.presence(u.id), state.on_mobile(u.id), if is_selected { theme::SELECTED } else if hovered { theme::HOVER } else { theme::SIDEBAR });
+                    widgets::avatar_with_status(ui, u, 32.0, state.presence(u.id), state.on_mobile(u.id), if is_selected { theme::SELECTED() } else if hovered { theme::HOVER() } else { theme::SIDEBAR() });
                 }
             } else {
                 match swiftcord_core::cdn::group_dm_icon(c, 64) {
@@ -271,16 +271,16 @@ fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Acti
                     }
                     None => {
                         let (rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
-                        ui.painter().circle_filled(rect.center(), 16.0, theme::BLURPLE);
+                        ui.painter().circle_filled(rect.center(), 16.0, theme::BLURPLE());
                         ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::PEOPLE, theme::icon_font(15.0), Color32::WHITE);
                     }
                 }
             }
-            let color = if is_selected || unread { theme::HEADER } else if hovered { theme::TEXT } else { theme::MUTED };
+            let color = if is_selected || unread { theme::HEADER() } else if hovered { theme::TEXT() } else { theme::MUTED() };
             ui.vertical(|ui| {
                 ui.add(egui::Label::new(RichText::new(c.label()).size(15.0).color(color)).truncate().selectable(false));
                 if c.kind == ChannelType::GroupDm {
-                    ui.label(RichText::new(format!("{} Members", c.recipients.len() + 1)).small().color(theme::FAINT));
+                    ui.label(RichText::new(format!("{} Members", c.recipients.len() + 1)).small().color(theme::FAINT()));
                 }
             });
             if mentions > 0 {
@@ -315,16 +315,16 @@ fn status_menu(ui: &mut Ui, actions: &mut Vec<Action>) {
     for (status, label, detail) in STATUSES {
         let height = if detail.is_some() { 40.0 } else { 30.0 };
         let (rect, r) = ui.allocate_exact_size(Vec2::new(290.0, height), Sense::click());
-        let fill = if r.hovered() { theme::BLURPLE } else { bg };
+        let fill = if r.hovered() { theme::BLURPLE() } else { bg };
         if r.hovered() {
             ui.painter().rect_filled(rect, 3, fill);
         }
         let top = rect.top() + 15.0;
         widgets::status_dot(ui.painter(), egui::pos2(rect.left() + 14.0, top), 5.0, status, false, fill);
-        let text = if r.hovered() { Color32::WHITE } else { theme::TEXT };
+        let text = if r.hovered() { Color32::WHITE } else { theme::TEXT() };
         ui.painter().text(egui::pos2(rect.left() + 30.0, top), egui::Align2::LEFT_CENTER, label, theme::font_semibold(14.0), text);
         if let Some(d) = detail {
-            let muted = if r.hovered() { Color32::WHITE } else { theme::MUTED };
+            let muted = if r.hovered() { Color32::WHITE } else { theme::MUTED() };
             ui.painter().text(egui::pos2(rect.left() + 30.0, top + 16.0), egui::Align2::LEFT_CENTER, d, theme::font(12.0), muted);
         }
         if r.clicked() {
@@ -344,9 +344,9 @@ fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Actio
         avatar.on_hover_text("Set Status");
         ui.vertical(|ui| {
             ui.set_max_width(ui.available_width() - 100.0);
-            ui.add(egui::Label::new(RichText::new(me.display_name()).font(theme::font_semibold(14.0)).color(theme::HEADER)).truncate());
+            ui.add(egui::Label::new(RichText::new(me.display_name()).font(theme::font_semibold(14.0)).color(theme::HEADER())).truncate());
             let subtitle = state.activity(me.id).map_or_else(|| me.tag(), str::to_owned);
-            ui.add(egui::Label::new(RichText::new(subtitle).size(12.0).color(theme::MUTED)).truncate());
+            ui.add(egui::Label::new(RichText::new(subtitle).size(12.0).color(theme::MUTED())).truncate());
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.add_space(4.0);
@@ -364,7 +364,7 @@ fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Actio
                     actions.push(Action::Copy(me.id.to_string()));
                 }
                 ui.separator();
-                if ui.button(RichText::new("Log out").color(theme::RED)).clicked() {
+                if ui.button(RichText::new("Log out").color(theme::RED())).clicked() {
                     actions.push(Action::LogOut);
                 }
             });

@@ -160,6 +160,8 @@ pub enum Action {
     LogOut,
     StartQrLogin,
     SaveSettings(crate::settings::Settings),
+    /// Show the app in this palette and accent (while choosing in Settings; Cancel restores the saved one).
+    PreviewTheme(crate::theme::Palette, u32),
     OpenSettings,
     BrowserLogin,
     TokenLogin(String),
@@ -303,6 +305,8 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, rt: tokio::runtime::Handle) -> App {
+        let settings = crate::settings::Settings::load();
+        crate::theme::set(settings.palette, settings.accent);
         crate::theme::install(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let cache = platform::data_dir().join("cache").join("media");
@@ -321,7 +325,7 @@ impl App {
             voice: None,
             watch: None,
             sharing: None,
-            settings: crate::settings::Settings::load(),
+            settings,
             history_failed: HashMap::new(),
             members_requested: HashSet::new(),
             frecency: None,
@@ -1462,13 +1466,20 @@ impl App {
                 self.start_qr_login();
             }
             Action::StartQrLogin => self.start_qr_login(),
+            Action::PreviewTheme(palette, accent) => {
+                crate::theme::set(palette, accent);
+                crate::theme::apply_visuals(&self.ctx);
+            }
             Action::OpenSettings => {
                 let (inputs, outputs) = swiftcord_voice::list_devices();
                 let cameras = swiftcord_voice::camera::list();
-                self.ui.settings_draft = Some(ui::settings::Draft { settings: self.settings.clone(), inputs, outputs, cameras, mic_test: None });
+                let saved_theme = (self.settings.palette, self.settings.accent);
+                self.ui.settings_draft = Some(ui::settings::Draft { settings: self.settings.clone(), inputs, outputs, cameras, mic_test: None, saved_theme });
             }
             Action::SaveSettings(s) => {
                 let (vad, noise_suppression) = (s.vad_threshold_db, s.noise_suppression);
+                crate::theme::set(s.palette, s.accent);
+                crate::theme::apply_visuals(&self.ctx);
                 self.settings = s;
                 self.settings.save();
                 if let Some(v) = self.voice.as_ref().and_then(|c| c.voice()) {

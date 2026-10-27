@@ -129,7 +129,7 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(40.0, 20.0), Sense::hover());
                 if hovered {
                     let t = msg.timestamp().with_timezone(&Local).format("%-I:%M %p").to_string();
-                    ui.painter().text(rect.right_center() + Vec2::new(4.0, 1.0), egui::Align2::RIGHT_CENTER, t, theme::font(10.5), theme::FAINT);
+                    ui.painter().text(rect.right_center() + Vec2::new(4.0, 1.0), egui::Align2::RIGHT_CENTER, t, theme::font(10.5), theme::FAINT());
                 }
             } else {
                 let r = widgets::member_avatar(ui, cx.state, &msg.author, cx.guild, 40.0);
@@ -152,7 +152,7 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
     if msg.pending == Some(PendingState::Failed) {
         ui.horizontal(|ui| {
             ui.add_space(GUTTER);
-            ui.colored_label(theme::RED, "Message failed to send.");
+            ui.colored_label(theme::RED(), "Message failed to send.");
             if ui.link("Retry").clicked() {
                 cx.actions.push(Action::Retry { channel: msg.channel_id, nonce: msg.id });
             }
@@ -166,11 +166,11 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
     let rect = Rect::from_min_max(egui::pos2(ui.max_rect().left(), top), egui::pos2(ui.max_rect().left() + width, ui.cursor().top()));
     ui.ctx().memory_mut(|m| m.data.insert_temp(row_id, rect));
     let fill = if cx.highlight == Some(msg.id) {
-        Some(theme::BLURPLE.gamma_multiply(0.18))
+        Some(theme::BLURPLE().gamma_multiply(0.18))
     } else if mentioned {
-        Some(if hovered { theme::MENTIONED_ROW_HOVER } else { theme::MENTIONED_ROW })
+        Some(if hovered { theme::MENTIONED_ROW_HOVER() } else { theme::MENTIONED_ROW() })
     } else if hovered {
-        Some(theme::MESSAGE_HOVER)
+        Some(theme::MESSAGE_HOVER())
     } else {
         None
     };
@@ -178,7 +178,7 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
         ui.painter().set(bg, egui::Shape::rect_filled(rect, 0, f));
     }
     if mentioned {
-        ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())), 0, theme::YELLOW);
+        ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())), 0, theme::YELLOW());
     }
 
     if !cx.read_only && msg.pending.is_none() {
@@ -207,9 +207,9 @@ fn header(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         r.on_hover_text(msg.author.tag());
         if msg.author.bot || msg.webhook_id.is_some() {
             let text = if msg.webhook_id.is_some() { " APP " } else { " BOT " };
-            ui.label(RichText::new(text).font(theme::font_semibold(10.0)).color(Color32::WHITE).background_color(theme::BLURPLE));
+            ui.label(RichText::new(text).font(theme::font_semibold(10.0)).color(Color32::WHITE).background_color(theme::BLURPLE()));
         }
-        ui.label(RichText::new(time_label(msg.timestamp())).size(12.0).color(theme::FAINT))
+        ui.label(RichText::new(time_label(msg.timestamp())).size(12.0).color(theme::FAINT()))
             .on_hover_text(msg.timestamp().with_timezone(&Local).format("%A, %B %-d, %Y %-I:%M %p").to_string());
     });
 }
@@ -220,12 +220,12 @@ fn body(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     if msg.flags & LOADING != 0 && msg.content.is_empty() && msg.embeds.is_empty() && msg.components.is_empty() {
         ui.horizontal(|ui| {
             ui.add(egui::Spinner::new().size(12.0));
-            ui.label(RichText::new(format!("{} is thinking…", msg.author.display_name())).italics().color(theme::MUTED));
+            ui.label(RichText::new(format!("{} is thinking…", msg.author.display_name())).italics().color(theme::MUTED()));
         });
     }
     if msg.flags & EPHEMERAL != 0 {
         // Above an app's private reply.
-        ui.label(RichText::new("Only you can see this").size(12.0).italics().color(theme::MUTED));
+        ui.label(RichText::new("Only you can see this").size(12.0).italics().color(theme::MUTED()));
     }
     body_content(ui, msg, cx);
 }
@@ -244,22 +244,22 @@ fn body_content(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
             revealed: &mut cx.uis.revealed,
             actions: cx.actions,
             size: 15.5,
-            color: theme::TEXT,
+            color: theme::TEXT(),
             jumbo,
         };
         md::blocks(ui, &blocks, &mut mcx);
         if msg.edited_timestamp.is_some() {
-            ui.label(RichText::new("(edited)").size(10.5).color(theme::FAINT));
+            ui.label(RichText::new("(edited)").size(10.5).color(theme::FAINT()));
         }
     }
 
     if msg.is_forward() {
         for snap in &msg.message_snapshots {
             let r = egui::Frame::new().inner_margin(egui::Margin { left: 12, ..Default::default() }).show(ui, |ui| {
-                ui.label(RichText::new("↪ Forwarded").italics().size(12.5).color(theme::MUTED));
+                ui.label(RichText::new("↪ Forwarded").italics().size(12.5).color(theme::MUTED()));
                 if !snap.message.content.is_empty() {
                     let blocks = parsed(Snowflake(msg.id.0 ^ 1), &snap.message.content);
-                    let mut mcx = Cx { state: cx.state, guild: cx.guild, message: msg.id, revealed: &mut cx.uis.revealed, actions: cx.actions, size: 15.5, color: theme::TEXT, jumbo: false };
+                    let mut mcx = Cx { state: cx.state, guild: cx.guild, message: msg.id, revealed: &mut cx.uis.revealed, actions: cx.actions, size: 15.5, color: theme::TEXT(), jumbo: false };
                     md::blocks(ui, &blocks, &mut mcx);
                 }
                 for a in &snap.message.attachments {
@@ -270,7 +270,7 @@ fn body_content(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
                 }
             });
             let rect = r.response.rect;
-            ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(4.0, rect.height())), 2, theme::FAINT);
+            ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(4.0, rect.height())), 2, theme::FAINT());
         }
     }
 
@@ -315,13 +315,13 @@ fn edit_box(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         let enter = focused && !i.modifiers.shift && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
         (enter, focused && i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
     });
-    egui::Frame::new().fill(theme::INPUT).corner_radius(6).inner_margin(8).show(ui, |ui| {
+    egui::Frame::new().fill(theme::INPUT()).corner_radius(6).inner_margin(8).show(ui, |ui| {
         let r = ui.add(egui::TextEdit::multiline(text).id(id).desired_rows(1).frame(egui::Frame::NONE).desired_width(f32::INFINITY));
         if !focused && !r.lost_focus() {
             r.request_focus();
         }
     });
-    ui.label(RichText::new("escape to cancel • enter to save").size(11.5).color(theme::MUTED));
+    ui.label(RichText::new("escape to cancel • enter to save").size(11.5).color(theme::MUTED()));
     if esc {
         cx.uis.editing = None;
     } else if enter {
@@ -376,7 +376,7 @@ fn reply_preview(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         ui.add_space(GUTTER - 36.0);
         // The elbow connecting the reply to its parent.
         let (rect, _) = ui.allocate_exact_size(Vec2::new(32.0, 14.0), Sense::hover());
-        let stroke = egui::Stroke::new(2.0, theme::FAINT);
+        let stroke = egui::Stroke::new(2.0, theme::FAINT());
         let p = ui.painter();
         p.line_segment([rect.left_bottom() + Vec2::new(4.0, 2.0), rect.left_top() + Vec2::new(4.0, 7.0)], stroke);
         p.line_segment([rect.left_top() + Vec2::new(4.0, 7.0), rect.right_top() + Vec2::new(-4.0, 7.0)], stroke);
@@ -386,13 +386,13 @@ fn reply_preview(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
                 let color = cx.guild.and_then(|g| cx.state.role_color(g, r.author.id));
                 ui.label(RichText::new(cx.state.display_name(r.author.id, cx.guild)).font(theme::font_semibold(13.0)).color(theme::role_color(color)));
                 let preview: String = if r.content.is_empty() { "Click to see attachment".into() } else { plain_preview(&r.content, cx) };
-                let resp = ui.add(egui::Label::new(RichText::new(preview).size(13.0).color(theme::MUTED)).truncate().sense(Sense::click()));
+                let resp = ui.add(egui::Label::new(RichText::new(preview).size(13.0).color(theme::MUTED())).truncate().sense(Sense::click()));
                 if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     cx.actions.push(Action::JumpTo { channel: cx.channel, message: Some(r.id) });
                 }
             }
             None => {
-                ui.label(RichText::new("Original message was deleted").italics().size(13.0).color(theme::MUTED));
+                ui.label(RichText::new("Original message was deleted").italics().size(13.0).color(theme::MUTED()));
             }
         }
     });
@@ -415,15 +415,15 @@ fn system_line(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     let thread = (msg.kind == message_type::THREAD_CREATED).then(|| msg.message_reference.as_ref().and_then(|r| r.channel_id)).flatten();
     ui.horizontal(|ui| {
         ui.add_space(GUTTER - 40.0);
-        ui.add_sized(Vec2::new(24.0, 18.0), egui::Label::new(RichText::new(glyph).color(theme::GREEN)));
+        ui.add_sized(Vec2::new(24.0, 18.0), egui::Label::new(RichText::new(glyph).color(theme::GREEN())));
         ui.add_space(12.0);
-        ui.label(RichText::new(text).color(theme::MUTED));
+        ui.label(RichText::new(text).color(theme::MUTED()));
         if let Some(t) = thread {
             if ui.link(RichText::new("See Thread ›").size(13.0)).clicked() {
                 cx.actions.push(Action::OpenThread(t));
             }
         }
-        ui.label(RichText::new(time_label(msg.timestamp())).size(11.5).color(theme::FAINT));
+        ui.label(RichText::new(time_label(msg.timestamp())).size(11.5).color(theme::FAINT()));
     });
 }
 
@@ -463,7 +463,7 @@ fn favorite_star(ui: &Ui, r: &egui::Response, gif: FavoriteGif, cx: &mut Ctx) ->
     if r.hovered() || starred {
         let p = ui.painter_at(r.rect);
         p.circle_filled(star.center(), 13.0, Color32::from_black_alpha(if over { 200 } else { 140 }));
-        let (glyph, color) = if starred { (icon::STAR_FILLED, theme::YELLOW) } else { (icon::STAR, Color32::WHITE) };
+        let (glyph, color) = if starred { (icon::STAR_FILLED, theme::YELLOW()) } else { (icon::STAR, Color32::WHITE) };
         p.text(star.center(), egui::Align2::CENTER_CENTER, glyph, theme::icon_font(14.0), color);
     }
     if over {
@@ -500,7 +500,7 @@ fn media_response(ui: &mut Ui, proxy_url: &str, size: Vec2, gif: bool, video: bo
 pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
     if a.url.is_empty() {
         // Still uploading.
-        ui.label(RichText::new(format!("{} ({})", a.filename, widgets::human_size(a.size))).color(theme::MUTED));
+        ui.label(RichText::new(format!("{} ({})", a.filename, widgets::human_size(a.size))).color(theme::MUTED()));
         return;
     }
     if a.is_voice_message() {
@@ -533,15 +533,15 @@ pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
         }
         return;
     }
-    egui::Frame::new().fill(theme::EMBED_BG).corner_radius(6).inner_margin(10).stroke(egui::Stroke::new(1.0, theme::RAIL)).show(ui, |ui| {
+    egui::Frame::new().fill(theme::EMBED_BG()).corner_radius(6).inner_margin(10).stroke(egui::Stroke::new(1.0, theme::RAIL())).show(ui, |ui| {
         ui.set_width(380.0_f32.min(ui.available_width()));
         ui.horizontal(|ui| {
-            ui.label(RichText::new(icon::FILE).font(theme::icon_font(28.0)).color(theme::BLURPLE));
+            ui.label(RichText::new(icon::FILE).font(theme::icon_font(28.0)).color(theme::BLURPLE()));
             ui.vertical(|ui| {
                 if ui.link(&a.filename).clicked() {
                     crate::platform::open_url(&a.url);
                 }
-                ui.label(RichText::new(widgets::human_size(a.size)).size(12.0).color(theme::MUTED));
+                ui.label(RichText::new(widgets::human_size(a.size)).size(12.0).color(theme::MUTED()));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if widgets::icon_button(ui, icon::DOWNLOAD, "Download").clicked() {
@@ -554,14 +554,14 @@ pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
 
 fn embed_text(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
     if let Some(p) = e.provider.as_ref().filter(|p| !p.name.is_empty()) {
-        ui.label(RichText::new(&p.name).size(12.0).color(theme::MUTED));
+        ui.label(RichText::new(&p.name).size(12.0).color(theme::MUTED()));
     }
     if let Some(a) = e.author.as_ref().filter(|a| !a.name.is_empty()) {
         ui.horizontal(|ui| {
             if let Some(icon) = &a.icon_url {
                 widgets::avatar(ui, icon, 20.0);
             }
-            let r = ui.add(egui::Label::new(RichText::new(&a.name).font(theme::font_semibold(13.5)).color(theme::HEADER)).sense(Sense::click()));
+            let r = ui.add(egui::Label::new(RichText::new(&a.name).font(theme::font_semibold(13.5)).color(theme::HEADER())).sense(Sense::click()));
             if let Some(u) = &a.url {
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     cx.actions.push(Action::OpenLink(u.clone()));
@@ -573,16 +573,16 @@ fn embed_text(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
         let rt = RichText::new(t).font(theme::font_semibold(15.5));
         match &e.url {
             Some(u) => {
-                if ui.add(egui::Label::new(rt.color(theme::LINK)).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                if ui.add(egui::Label::new(rt.color(theme::LINK())).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     cx.actions.push(Action::OpenLink(u.clone()));
                 }
             }
             None => {
-                ui.label(rt.color(theme::HEADER));
+                ui.label(rt.color(theme::HEADER()));
             }
         }
     }
-    let mut mcx = Cx { state: cx.state, guild: cx.guild, message: msg_id, revealed: &mut cx.uis.revealed, actions: cx.actions, size: 14.0, color: theme::TEXT, jumbo: false };
+    let mut mcx = Cx { state: cx.state, guild: cx.guild, message: msg_id, revealed: &mut cx.uis.revealed, actions: cx.actions, size: 14.0, color: theme::TEXT(), jumbo: false };
     if let Some(d) = e.description.as_deref().filter(|d| !d.is_empty()) {
         md::blocks(ui, &parsed(msg_id, d), &mut mcx);
     }
@@ -593,7 +593,7 @@ fn embed_text(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
         ui.columns(n, |cols| {
             for (j, col) in cols.iter_mut().enumerate() {
                 let f = &e.fields[i + j];
-                col.label(RichText::new(&f.name).font(theme::font_semibold(13.5)).color(theme::HEADER));
+                col.label(RichText::new(&f.name).font(theme::font_semibold(13.5)).color(theme::HEADER()));
                 md::blocks(col, &parsed(msg_id, &f.value), &mut mcx);
             }
         });
@@ -798,12 +798,12 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
         }
         return;
     }
-    let bar = e.color.map_or(theme::RAIL, |c| theme::role_color(Some(c)));
+    let bar = e.color.map_or(theme::RAIL(), |c| theme::role_color(Some(c)));
     // Videos and images are shown large below the text; thumbnails sit beside it, unless they're a video's
     // poster. Link previews only have room for one picture, so a large image hides their thumbnail.
     let video = e.video.as_ref().filter(|v| !v.url.is_empty());
     let side_thumb = e.thumbnail.as_ref().filter(|_| video.is_none() && (e.image.is_none() || kind == "rich"));
-    let r = egui::Frame::new().fill(theme::EMBED_BG).corner_radius(4).inner_margin(egui::Margin { left: 16, right: 14, top: 10, bottom: 12 }).show(ui, |ui| {
+    let r = egui::Frame::new().fill(theme::EMBED_BG()).corner_radius(4).inner_margin(egui::Margin { left: 16, right: 14, top: 10, bottom: 12 }).show(ui, |ui| {
         ui.set_max_width(520.0_f32.min(ui.available_width() - 8.0));
         ui.spacing_mut().item_spacing.y = 6.0;
         ui.horizontal_top(|ui| {
@@ -849,7 +849,7 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
                 if let Some(ts) = e.timestamp {
                     text = format!("{text} • {}", time_label(ts));
                 }
-                ui.label(RichText::new(text).size(11.5).color(theme::MUTED));
+                ui.label(RichText::new(text).size(11.5).color(theme::MUTED()));
             });
         }
     });
@@ -862,12 +862,12 @@ fn reactions(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
         for r in &msg.reactions {
-            let (fill, stroke) = if r.me { (theme::BLURPLE.gamma_multiply(0.25), theme::BLURPLE) } else { (theme::SIDEBAR, theme::SIDEBAR) };
+            let (fill, stroke) = if r.me { (theme::BLURPLE().gamma_multiply(0.25), theme::BLURPLE()) } else { (theme::SIDEBAR(), theme::SIDEBAR()) };
             let resp = egui::Frame::new().fill(fill).stroke(egui::Stroke::new(1.0, stroke)).corner_radius(8).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     ui.add(crate::emoji_sheet::any(ui.ctx(), &r.emoji, Vec2::splat(18.0)));
-                    ui.label(RichText::new(r.count.to_string()).font(theme::font_semibold(13.0)).color(if r.me { theme::MENTION_TEXT } else { theme::MUTED }));
+                    ui.label(RichText::new(r.count.to_string()).font(theme::font_semibold(13.0)).color(if r.me { theme::MENTION_TEXT() } else { theme::MUTED() }));
                 });
             });
             let resp = ui.interact(resp.response.rect, egui::Id::unique(("react", msg.id, r.emoji.reaction_key(), cx.read_only)), Sense::click());
@@ -877,7 +877,7 @@ fn reactions(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
             }
         }
         if cx.perms & perm::ADD_REACTIONS != 0 {
-            let add = ui.add(egui::Button::new(RichText::new(icon::EMOJI).font(theme::icon_font(14.0)).color(theme::MUTED)).fill(theme::SIDEBAR).corner_radius(8));
+            let add = ui.add(egui::Button::new(RichText::new(icon::EMOJI).font(theme::icon_font(14.0)).color(theme::MUTED())).fill(theme::SIDEBAR()).corner_radius(8));
             if add.clicked() {
                 cx.uis.emoji_picker = Some(PickerTarget::Reaction { channel: msg.channel_id, message: msg.id, at: add.rect.left_bottom() });
             }
@@ -909,7 +909,7 @@ fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, cx: &mut Ctx) {
     let w = (buttons.len() + quick.len()) as f32 * 32.0 + divider + 8.0;
     let rect = Rect::from_min_size(egui::pos2(row.right() - w - 16.0, row.top() - 14.0), Vec2::new(w, 32.0));
     let rect = rect.translate(Vec2::new(0.0, (ui.clip_rect().top() - rect.top()).max(0.0)));
-    ui.painter().rect(rect, 6, theme::SIDEBAR, egui::Stroke::new(1.0, theme::RAIL), egui::StrokeKind::Inside);
+    ui.painter().rect(rect, 6, theme::SIDEBAR(), egui::Stroke::new(1.0, theme::RAIL()), egui::StrokeKind::Inside);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(4.0)).layout(Layout::left_to_right(Align::Center)));
     child.spacing_mut().item_spacing.x = 4.0;
     for e in &quick {
@@ -917,11 +917,11 @@ fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, cx: &mut Ctx) {
     }
     if !quick.is_empty() {
         let x = child.cursor().left() + 2.0;
-        child.painter().vline(x, rect.y_range().shrink(8.0), egui::Stroke::new(1.0, theme::RAIL));
+        child.painter().vline(x, rect.y_range().shrink(8.0), egui::Stroke::new(1.0, theme::RAIL()));
         child.add_space(5.0);
     }
     for (glyph, tip, kind) in buttons {
-        let color = if kind == 3 { theme::RED } else { theme::MUTED };
+        let color = if kind == 3 { theme::RED() } else { theme::MUTED() };
         let r = child.add(egui::Button::new(RichText::new(glyph).font(theme::icon_font(15.0)).color(color)).frame_when_inactive(false).min_size(Vec2::splat(28.0)));
         let r = r.on_hover_text(tip);
         if r.clicked() {
@@ -941,7 +941,7 @@ fn quick_reaction(ui: &mut Ui, msg: &Message, e: &swiftcord_core::models::Emoji,
     // Drawn by hand at exactly the size of the toolbar's icon buttons (an image button pads itself wider).
     let (rect, r) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
     if r.hovered() || mine {
-        ui.painter().rect_filled(rect, 4, if mine { theme::BLURPLE.gamma_multiply(0.3) } else { theme::HOVER });
+        ui.painter().rect_filled(rect, 4, if mine { theme::BLURPLE().gamma_multiply(0.3) } else { theme::HOVER() });
     }
     crate::emoji_sheet::any(ui.ctx(), e, Vec2::splat(20.0)).paint_at(ui, rect.shrink(4.0));
     let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -972,7 +972,7 @@ fn context_menu(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
             for e in &quick {
                 picked |= quick_reaction(ui, msg, e, cx);
             }
-            let more = ui.add(egui::Button::new(RichText::new(icon::EMOJI).font(theme::icon_font(15.0)).color(theme::MUTED)).frame_when_inactive(false).min_size(Vec2::splat(28.0)));
+            let more = ui.add(egui::Button::new(RichText::new(icon::EMOJI).font(theme::icon_font(15.0)).color(theme::MUTED())).frame_when_inactive(false).min_size(Vec2::splat(28.0)));
             if more.on_hover_text("Add Reaction").clicked() {
                 cx.uis.emoji_picker = Some(PickerTarget::Reaction { channel: msg.channel_id, message: msg.id, at: ui.ctx().pointer_latest_pos().unwrap_or_default() });
                 picked = true;
@@ -1020,7 +1020,7 @@ fn context_menu(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     }
     if mine || (cx.guild.is_some() && cx.perms & perm::MANAGE_MESSAGES != 0) {
         ui.separator();
-        if ui.button(RichText::new("Delete Message").color(theme::RED)).clicked() {
+        if ui.button(RichText::new("Delete Message").color(theme::RED())).clicked() {
             cx.actions.push(Action::Delete { channel: msg.channel_id, message: msg.id });
             ui.close();
         }

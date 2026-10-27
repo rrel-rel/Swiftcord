@@ -113,7 +113,7 @@ fn is_ogg_opus(a: &Attachment) -> bool {
 /// A round play / pause button (a spinner while loading); true when clicked.
 fn play_button(ui: &Ui, rect: Rect, id: egui::Id, paused: bool, loading: bool) -> egui::Response {
     let b = ui.interact(rect, id, Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-    let fill = if b.hovered() { theme::BLURPLE.gamma_multiply(0.85) } else { theme::BLURPLE };
+    let fill = if b.hovered() { theme::BLURPLE().gamma_multiply(0.85) } else { theme::BLURPLE() };
     let c = rect.center();
     ui.painter().circle_filled(c, rect.width() / 2.0, fill);
     if loading {
@@ -150,7 +150,7 @@ impl AudioClips {
         if !ui.is_rect_visible(rect) {
             return;
         }
-        ui.painter().rect_filled(rect, 26, theme::EMBED_BG);
+        ui.painter().rect_filled(rect, 26, theme::EMBED_BG());
         let (playing, paused, loading, failed, progress) = self.status(&a.url);
         let duration = a.duration_secs.or_else(|| playing.map(|p| p.len.load(Ordering::Relaxed) as f64 / 2.0 / RATE as f64)).unwrap_or(0.0);
         let started = playing.is_some();
@@ -164,7 +164,7 @@ impl AudioClips {
             None if started => time(progress as f64 * duration),
             None => time(duration),
         };
-        let galley = ui.painter().layout_no_wrap(label, theme::font(12.5), theme::MUTED);
+        let galley = ui.painter().layout_no_wrap(label, theme::font(12.5), theme::MUTED());
         let wave = Rect::from_min_max(egui::pos2(button.right() + 12.0, rect.top() + 12.0), egui::pos2(rect.right() - galley.size().x - 22.0, rect.bottom() - 12.0));
         let w = ui.interact(wave, ui.scope_id().with(("vm-wave", &a.url)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
         let samples = waveform(a);
@@ -179,10 +179,10 @@ impl AudioClips {
             };
             let h = 3.0 + level * (wave.height() - 3.0);
             let x = wave.left() + i as f32 * 4.0 + 1.5;
-            let color = if (i as f32 + 0.5) / bars as f32 <= progress { theme::HEADER } else { theme::FAINT };
+            let color = if (i as f32 + 0.5) / bars as f32 <= progress { theme::HEADER() } else { theme::FAINT() };
             ui.painter().rect_filled(Rect::from_center_size(egui::pos2(x, wave.center().y), Vec2::new(2.5, h)), 1, color);
         }
-        ui.painter().galley(egui::pos2(rect.right() - galley.size().x - 16.0, rect.center().y - galley.size().y / 2.0), galley, theme::MUTED);
+        ui.painter().galley(egui::pos2(rect.right() - galley.size().x - 16.0, rect.center().y - galley.size().y / 2.0), galley, theme::MUTED());
         let b = match &failed {
             Some(e) => b.on_hover_text(e),
             None => b,
@@ -204,15 +204,15 @@ impl AudioClips {
         let started = playing.is_some();
         let mut toggle = false;
         let mut seek = None;
-        egui::Frame::new().fill(theme::EMBED_BG).corner_radius(6).inner_margin(10).stroke(egui::Stroke::new(1.0, theme::RAIL)).show(ui, |ui| {
+        egui::Frame::new().fill(theme::EMBED_BG()).corner_radius(6).inner_margin(10).stroke(egui::Stroke::new(1.0, theme::RAIL())).show(ui, |ui| {
             ui.set_width(380.0_f32.min(ui.available_width()));
             ui.horizontal(|ui| {
-                ui.label(RichText::new(icon::FILE).font(theme::icon_font(28.0)).color(theme::BLURPLE));
+                ui.label(RichText::new(icon::FILE).font(theme::icon_font(28.0)).color(theme::BLURPLE()));
                 ui.vertical(|ui| {
                     if ui.link(&a.filename).clicked() {
                         crate::platform::open_url(&a.url);
                     }
-                    ui.label(RichText::new(widgets::human_size(a.size)).size(12.0).color(theme::MUTED));
+                    ui.label(RichText::new(widgets::human_size(a.size)).size(12.0).color(theme::MUTED()));
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if widgets::icon_button(ui, icon::DOWNLOAD, "Download").clicked() {
@@ -232,16 +232,16 @@ impl AudioClips {
                 }
                 None => String::new(),
             };
-            let galley = ui.painter().layout_no_wrap(label, theme::font(12.0), theme::MUTED);
+            let galley = ui.painter().layout_no_wrap(label, theme::font(12.0), theme::MUTED());
             let bar = Rect::from_min_max(egui::pos2(button.right() + 12.0, row.center().y - 3.0), egui::pos2(row.right() - galley.size().x - 12.0, row.center().y + 3.0));
             let hit = ui.interact(bar.expand2(Vec2::new(0.0, 8.0)), ui.scope_id().with(("af-bar", &a.url)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-            ui.painter().rect_filled(bar, 3, theme::RAIL);
+            ui.painter().rect_filled(bar, 3, theme::RAIL());
             let filled = Rect::from_min_max(bar.min, egui::pos2(bar.left() + bar.width() * progress, bar.bottom()));
-            ui.painter().rect_filled(filled, 3, theme::BLURPLE);
+            ui.painter().rect_filled(filled, 3, theme::BLURPLE());
             if hit.hovered() || started {
                 ui.painter().circle_filled(egui::pos2(filled.right(), bar.center().y), 6.0, Color32::WHITE);
             }
-            ui.painter().galley(egui::pos2(row.right() - galley.size().x, row.center().y - galley.size().y / 2.0), galley, theme::MUTED);
+            ui.painter().galley(egui::pos2(row.right() - galley.size().x, row.center().y - galley.size().y / 2.0), galley, theme::MUTED());
             let b = match &failed {
                 Some(e) => b.on_hover_text(e),
                 None => b,

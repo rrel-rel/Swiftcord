@@ -173,7 +173,7 @@ fn grid(ui: &mut Ui, tiles: &[Tile], favorites: &HashSet<&str>, clips: &mut Clip
                     if !ui.is_rect_visible(rect) {
                         continue;
                     }
-                    ui.painter().rect_filled(rect, 4, theme::RAIL);
+                    ui.painter().rect_filled(rect, 4, theme::RAIL());
                     let hovered = r.hovered();
                     if hovered {
                         match &t.play {
@@ -193,7 +193,7 @@ fn grid(ui: &mut Ui, tiles: &[Tile], favorites: &HashSet<&str>, clips: &mut Clip
                     if hovered || starred {
                         let over_star = ui.rect_contains_pointer(star);
                         ui.painter().circle_filled(star.center(), 13.0, Color32::from_black_alpha(if over_star { 200 } else { 140 }));
-                        let (glyph, color) = if starred { (STAR_FILLED, theme::YELLOW) } else { (STAR, Color32::WHITE) };
+                        let (glyph, color) = if starred { (STAR_FILLED, theme::YELLOW()) } else { (STAR, Color32::WHITE) };
                         ui.painter().text(star.center(), egui::Align2::CENTER_CENTER, glyph, theme::icon_font(14.0), color);
                     }
                     let r = if t.title.is_empty() { r } else { r.on_hover_text(&t.title) };
@@ -238,7 +238,7 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
     let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     let mut picked = None;
     let area = egui::Area::new(egui::Id::unique("gif-picker")).order(egui::Order::Foreground).fixed_pos(pos).show(&ctx, |ui| {
-        egui::Frame::popup(ui.style()).fill(theme::SIDEBAR).inner_margin(10).show(ui, |ui| {
+        egui::Frame::popup(ui.style()).fill(theme::SIDEBAR()).inner_margin(10).show(ui, |ui| {
             ui.set_width(SIZE.x - 20.0);
             ui.set_height(SIZE.y - 20.0);
             ui.horizontal(|ui| {
@@ -272,7 +272,7 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 for name in row {
                                     let (rect, r) = ui.allocate_exact_size(Vec2::new(col_w, 64.0), Sense::click());
-                                    let base = if name == FAVORITES { theme::BLURPLE } else { tile_color(name) };
+                                    let base = if name == FAVORITES { theme::BLURPLE() } else { tile_color(name) };
                                     ui.painter().rect_filled(rect, 6, if r.hovered() { base.gamma_multiply(1.25) } else { base });
                                     if name == FAVORITES {
                                         ui.painter().text(rect.center() - Vec2::new(46.0, 0.0), egui::Align2::CENTER_CENTER, STAR_FILLED, theme::icon_font(15.0), Color32::WHITE);
@@ -304,8 +304,8 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                         if favorite_gifs.is_empty() {
                             ui.add_space(40.0);
                             ui.vertical_centered(|ui| {
-                                ui.label(RichText::new("No favourites yet.").color(theme::MUTED));
-                                ui.label(RichText::new("Hover over a GIF and click the star to add one.").small().color(theme::FAINT));
+                                ui.label(RichText::new("No favourites yet.").color(theme::MUTED()));
+                                ui.label(RichText::new("Hover over a GIF and click the star to add one.").small().color(theme::FAINT()));
                             });
                         } else {
                             let tiles: Vec<Tile> = favorite_gifs.iter().map(tile_from_favorite).collect();
@@ -319,7 +319,7 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                         }
                         Some(gifs) if gifs.is_empty() => {
                             ui.add_space(40.0);
-                            ui.vertical_centered(|ui| ui.label(RichText::new("No GIFs found.").color(theme::MUTED)));
+                            ui.vertical_centered(|ui| ui.label(RichText::new("No GIFs found.").color(theme::MUTED())));
                         }
                         Some(gifs) => {
                             let tiles: Vec<Tile> = gifs.iter().map(tile_from_gif).collect();
