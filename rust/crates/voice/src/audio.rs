@@ -79,7 +79,8 @@ struct Stream {
     last_underrun: Instant,
 }
 
-const MIN_TARGET: usize = 2;
+// Internet jitter of a few tens of ms is normal, so keep at least 60 ms of cushion.
+const MIN_TARGET: usize = 3;
 const MAX_TARGET: usize = 12;
 /// More than this many frames beyond the target are skipped to catch up (we've fallen behind).
 const MAX_BACKLOG: usize = 25;
@@ -93,7 +94,7 @@ impl Stream {
             next: 0,
             pcm: VecDeque::new(),
             playing: false,
-            target: 3,
+            target: 4,
             concealed: 0,
             last_arrival: Instant::now(),
             last_underrun: Instant::now(),
@@ -161,7 +162,11 @@ impl Stream {
                 self.target = (self.target + 1).min(MAX_TARGET);
                 self.last_underrun = Instant::now();
             }
-            return false;
+            // Fade out over one concealed frame rather than stopping dead, which would click.
+            let n = self.decoder.decode(None, &mut scratch[..FRAME * 2]);
+            let len = n.max(1) as f32;
+            self.pcm.extend(scratch[..n].iter().enumerate().map(|(i, &s)| s * (1.0 - i as f32 / len)));
+            return n > 0;
         };
         self.next += 1;
         if self.last_underrun.elapsed() > Duration::from_secs(15) && self.target > MIN_TARGET {
@@ -207,7 +212,7 @@ impl Mixer {
     /// Fills `out` (interleaved stereo at 48 kHz) with the mix.
     fn mix(&self, out: &mut [f32]) {
         out.fill(0.0);
-        let gains = self.gains.lock().clone();
+        let gains = self.gains.lock();
         let mut streams = self.streams.lock();
         streams.retain(|_, s| s.last_arrival.elapsed() < Duration::from_secs(30));
         let mut scratch = [0f32; FRAME * 2 * 6];
@@ -226,8 +231,38 @@ impl Mixer {
             }
         }
         for o in out.iter_mut() {
-            *o = o.clamp(-1.0, 1.0);
+            *o = soft_clip(*o);
         }
+    }
+}
+
+/// Leaves normal levels alone and bends loud peaks (several people talking at once, or volume above 100%)
+/// smoothly towards ±1, instead of squaring them off into crackle.
+fn soft_clip(x: f32) -> f32 {
+    const KNEE: f32 = 0.8;
+    let a = x.abs();
+    if a <= KNEE {
+        x
+    } else {
+        x.signum() * (KNEE + (1.0 - KNEE) * ((a - KNEE) / (1.0 - KNEE)).tanh())
+    }
+}
+
+/// Reports device errors to the user, except buffer under/overruns: those mean the system was briefly too
+/// busy to service the device (common on real hardware too), cost at most a tiny glitch and recover on their
+/// own, so they're only logged.
+fn device_errors(what: &'static str, errors: SyncSender<String>) -> impl FnMut(cpal::Error) + Send + 'static {
+    let mut xruns = 0u64;
+    move |e: cpal::Error| {
+        if e.kind() == cpal::ErrorKind::Xrun {
+            xruns += 1;
+            if xruns.is_power_of_two() {
+                tracing::debug!("{what}: buffer under/overrun ({xruns} so far)");
+            }
+            return;
+        }
+        tracing::warn!("{what} error: {e}");
+        let _ = errors.try_send(format!("{what} error: {e}"));
     }
 }
 
@@ -335,9 +370,7 @@ fn build_input(device: &cpal::Device, mic: SyncSender<Vec<f32>>, errors: SyncSen
             }
         }
     };
-    let err = move |e: cpal::Error| {
-        let _ = errors.try_send(format!("Microphone error: {e}"));
-    };
+    let err = device_errors("Microphone", errors);
     let stream = match format {
         SampleFormat::F32 => device.build_input_stream(config, move |d: &[f32], _: &_| process(&mut d.iter().copied()), err, None),
         SampleFormat::I16 => device.build_input_stream(config, move |d: &[i16], _: &_| process(&mut d.iter().map(|&s| s as f32 / 32768.0)), err, None),
@@ -396,26 +429,33 @@ pub fn play(output: Option<String>, fill: impl FnMut(&mut [f32]) + Send + 'stati
     Ok(io)
 }
 
-fn build_output(device: &cpal::Device, mut fill: impl FnMut(&mut [f32]) + Send + 'static, errors: SyncSender<String>) -> Result<cpal::Stream, String> {
+/// Turns `fill` (48 kHz stereo) into a function giving `frames` device frames as interleaved stereo at `rate`.
+///
+/// Sound is pulled in small fixed chunks and whatever the device doesn't take yet is kept for the next
+/// callback, so no sample is ever dropped or repeated (that used to click every callback).
+fn renderer(rate: u32, mut fill: impl FnMut(&mut [f32]) + Send + 'static) -> impl FnMut(usize) -> Vec<f32> + Send + 'static {
+    const CHUNK: usize = SAMPLE_RATE as usize / 200;
+    let mut resampler = Resampler::new(SAMPLE_RATE, rate, 2);
+    let mut mixed = vec![0f32; CHUNK * 2];
+    let mut pending: Vec<f32> = Vec::new();
+    move |frames| {
+        while pending.len() < frames * 2 {
+            fill(&mut mixed);
+            resampler.process(&mixed, &mut pending);
+        }
+        let rest = pending.split_off(frames * 2);
+        std::mem::replace(&mut pending, rest)
+    }
+}
+
+fn build_output(device: &cpal::Device, fill: impl FnMut(&mut [f32]) + Send + 'static, errors: SyncSender<String>) -> Result<cpal::Stream, String> {
     let supported = device.default_output_config().map_err(|e| e.to_string())?;
     let format = supported.sample_format();
     let config: StreamConfig = supported.config();
     let channels = config.channels as usize;
     let rate = config.sample_rate;
     tracing::info!("speakers: {} ch @ {rate} Hz ({format:?})", channels);
-    let mut resampler = Resampler::new(SAMPLE_RATE, rate, 2);
-    let mut mixed: Vec<f32> = Vec::new();
-    let mut stereo: Vec<f32> = Vec::new();
-    // Fills `frames` device frames as interleaved stereo at the device rate.
-    let mut render = move |frames: usize| -> Vec<f32> {
-        let need = ((frames as f64) * SAMPLE_RATE as f64 / rate as f64).ceil() as usize + 1;
-        mixed.resize(need * 2, 0.0);
-        fill(&mut mixed);
-        stereo.clear();
-        resampler.process(&mixed, &mut stereo);
-        stereo.resize(frames * 2, 0.0);
-        stereo.clone()
-    };
+    let mut render = renderer(rate, fill);
     let write = move |out: &mut dyn FnMut(usize, f32), frames: usize, render: &mut dyn FnMut(usize) -> Vec<f32>| {
         let st = render(frames);
         for f in 0..frames {
@@ -432,9 +472,7 @@ fn build_output(device: &cpal::Device, mut fill: impl FnMut(&mut [f32]) + Send +
             }
         }
     };
-    let err = move |e: cpal::Error| {
-        let _ = errors.try_send(format!("Speaker error: {e}"));
-    };
+    let err = device_errors("Speaker", errors);
     let stream = match format {
         SampleFormat::F32 => device.build_output_stream(
             config,
@@ -499,17 +537,18 @@ mod tests {
         let p = packets(8);
         let mut out = vec![0.0; FRAME * 2];
         m.push(1, 10, p[0].clone());
-        m.mix(&mut out);
-        assert_eq!(energy(&out), 0.0, "waits for the jitter buffer to fill");
         m.push(1, 11, p[1].clone());
         m.push(1, 12, p[2].clone());
         m.mix(&mut out);
+        assert_eq!(energy(&out), 0.0, "waits for the jitter buffer to fill");
+        m.push(1, 13, p[3].clone());
+        m.mix(&mut out);
         m.mix(&mut out);
         assert!(energy(&out) > 0.01, "plays once buffered");
-        // Packet 14 is lost; 13 and 15 arrive. The gap is concealed rather than silent.
-        m.push(1, 13, p[3].clone());
-        m.push(1, 15, p[5].clone());
+        // Packet 15 is lost; 14 and 16 arrive. The gap is concealed rather than silent.
+        m.push(1, 14, p[4].clone());
         m.push(1, 16, p[6].clone());
+        m.push(1, 17, p[7].clone());
         for _ in 0..3 {
             m.mix(&mut out);
             assert!(energy(&out) > 0.001);
@@ -530,17 +569,64 @@ mod tests {
     #[test]
     fn underrun_while_talking_deepens_the_buffer() {
         let m = Mixer::default();
-        let p = packets(4);
+        let p = packets(5);
         let mut out = vec![0.0; FRAME * 2];
-        for (i, pk) in p.iter().take(3).enumerate() {
+        for (i, pk) in p.iter().take(4).enumerate() {
             m.push(1, i as u16, pk.clone());
         }
         for _ in 0..8 {
             m.mix(&mut out);
         }
         // Still "talking" (a packet just arrived) but nothing to play.
-        m.push(1, 100, p[3].clone());
+        m.push(1, 100, p[4].clone());
         let target = m.streams.lock()[&1].target;
-        assert!(target > 3, "target {target}");
+        assert!(target > 4, "target {target}");
+    }
+
+    #[test]
+    fn running_dry_fades_out_instead_of_cutting_off() {
+        let m = Mixer::default();
+        for (i, pk) in packets(4).into_iter().enumerate() {
+            m.push(1, i as u16, pk);
+        }
+        // They've stopped sending (rather than a packet being merely late).
+        std::thread::sleep(Duration::from_millis(100));
+        // Four frames of audio, then one frame of tail.
+        let mut out = vec![0.0; FRAME * 2 * 5];
+        m.mix(&mut out);
+        let tail = &out[FRAME * 2 * 4..];
+        assert!(energy(&tail[..FRAME]) > energy(&tail[FRAME..]), "fades");
+        assert!(tail[tail.len() - 2..].iter().all(|s| s.abs() < 0.01), "ends near silence");
+    }
+
+    #[test]
+    fn output_keeps_every_sample_whatever_the_callback_size() {
+        for rate in [48_000, 44_100] {
+            let mut n = 0u32;
+            // A ramp, so a dropped or repeated sample shows up as a step that isn't 1.
+            let mut render = renderer(rate, move |out: &mut [f32]| {
+                for f in out.chunks_mut(2) {
+                    n += 1;
+                    f.fill(n as f32);
+                }
+            });
+            let mut all = Vec::new();
+            for frames in [441, 480, 7, 1024, 333, 480, 480] {
+                let st = render(frames);
+                assert_eq!(st.len(), frames * 2);
+                all.extend(st.chunks(2).map(|f| f[0]));
+            }
+            let step = SAMPLE_RATE as f32 / rate as f32;
+            assert!(all.windows(2).skip(2).all(|w| (w[1] - w[0] - step).abs() < 1e-3), "{rate} Hz: {:?}", &all[..8]);
+        }
+    }
+
+    #[test]
+    fn soft_clip_is_transparent_then_bounded() {
+        assert_eq!(soft_clip(0.5), 0.5);
+        assert_eq!(soft_clip(-0.8), -0.8);
+        assert!(soft_clip(3.0) <= 1.0 && soft_clip(3.0) > 0.95);
+        assert!(soft_clip(-3.0) >= -1.0);
+        assert!(soft_clip(0.9) > soft_clip(0.85));
     }
 }
