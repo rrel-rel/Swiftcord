@@ -56,6 +56,10 @@ pub struct Catalog {
     by_char: HashMap<String, usize>,
     /// 0 for the default yellow, 1–5 light to dark.
     skin_tone: usize,
+    /// The reactions used most, synced from Discord (Unicode emoji names and custom emoji IDs), most first.
+    frequent: Vec<String>,
+    /// Bumped when the recent or frequent lists change, so derived lists know to refresh.
+    pub version: u64,
 }
 
 #[derive(Deserialize)]
@@ -110,7 +114,53 @@ impl Catalog {
             .map(|(id, name, animated)| Emoji { id, name, animated })
             .collect();
         let skin_tone = std::fs::read_to_string(skin_tone_path()).ok().and_then(|s| s.trim().parse().ok()).filter(|t| *t <= 5).unwrap_or(0);
-        Catalog { unicode, groups: file.groups, recent, by_name, by_char, skin_tone }
+        Catalog { unicode, groups: file.groups, recent, by_name, by_char, skin_tone, frequent: Vec::new(), version: 0 }
+    }
+
+    /// The reactions Discord says are used most (from the synced frecency settings).
+    pub fn set_frequent(&mut self, keys: Vec<String>) {
+        self.frequent = keys;
+        self.version += 1;
+    }
+
+    /// The `n` reactions to offer with one click, as the official client does: ones reacted with here most
+    /// recently, then the ones used most anywhere (synced from Discord). Custom emoji are only offered where
+    /// they can be used: from this server, or from any server with Nitro.
+    pub fn quick_reactions(&self, state: &State, guild: Option<Snowflake>, n: usize) -> Vec<Emoji> {
+        let nitro = state.me.as_ref().is_some_and(|m| m.premium_type.is_some_and(|t| t > 0));
+        let here = guild.and_then(|g| state.guild(g)).map(|g| g.emojis.as_slice()).unwrap_or_default();
+        let custom = |id: Snowflake| -> Option<Emoji> {
+            let found = here.iter().find(|e| e.id == Some(id));
+            let found = match found {
+                Some(e) => Some(e),
+                None if nitro => state.guilds().find_map(|g| g.emojis.iter().find(|e| e.id == Some(id))),
+                None => None,
+            };
+            found.map(|e| Emoji { id: e.id, name: e.name.clone(), animated: e.animated })
+        };
+        let from_key = |key: &str| -> Option<Emoji> {
+            match key.parse::<u64>() {
+                Ok(id) if key.len() > 5 => custom(Snowflake(id)),
+                _ => {
+                    let u = &self.unicode[*self.by_name.get(key)?];
+                    Some(Emoji { id: None, name: Some(self.toned(u, self.skin_tone)), animated: false })
+                }
+            }
+        };
+        let recent = self.recent.iter().filter_map(|e| match e.id {
+            Some(id) => custom(id),
+            None => Some(e.clone()),
+        });
+        let mut out: Vec<Emoji> = Vec::new();
+        for e in recent.chain(self.frequent.iter().filter_map(|k| from_key(k))) {
+            if !out.iter().any(|o| o.same_as(&e)) {
+                out.push(e);
+            }
+            if out.len() == n {
+                break;
+            }
+        }
+        out
     }
 
     fn toned(&self, u: &Unicode, tone: usize) -> String {
@@ -173,6 +223,7 @@ impl Catalog {
         self.recent.retain(|r| !r.same_as(e));
         self.recent.insert(0, e.clone());
         self.recent.truncate(RECENT_MAX);
+        self.version += 1;
         let raw: Vec<_> = self.recent.iter().map(|e| (e.id, e.name.clone(), e.animated)).collect();
         let _ = std::fs::write(recent_path(), serde_json::to_string(&raw).unwrap_or_default());
     }

@@ -902,12 +902,24 @@ fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, cx: &mut Ctx) {
     if can_delete {
         buttons.push((icon::DELETE, "Delete", 3));
     }
-    let w = buttons.len() as f32 * 32.0 + 8.0;
+    // The reactions used most, one click each, as in the official client's hover bar.
+    let quick: Vec<swiftcord_core::models::Emoji> =
+        if cx.perms & perm::ADD_REACTIONS != 0 { cx.uis.quick_reactions.1.iter().take(3).cloned().collect() } else { Vec::new() };
+    let divider = if quick.is_empty() { 0.0 } else { 9.0 };
+    let w = (buttons.len() + quick.len()) as f32 * 32.0 + divider + 8.0;
     let rect = Rect::from_min_size(egui::pos2(row.right() - w - 16.0, row.top() - 14.0), Vec2::new(w, 32.0));
     let rect = rect.translate(Vec2::new(0.0, (ui.clip_rect().top() - rect.top()).max(0.0)));
     ui.painter().rect(rect, 6, theme::SIDEBAR, egui::Stroke::new(1.0, theme::RAIL), egui::StrokeKind::Inside);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(4.0)).layout(Layout::left_to_right(Align::Center)));
     child.spacing_mut().item_spacing.x = 4.0;
+    for e in &quick {
+        quick_reaction(&mut child, msg, e, cx);
+    }
+    if !quick.is_empty() {
+        let x = child.cursor().left() + 2.0;
+        child.painter().vline(x, rect.y_range().shrink(8.0), egui::Stroke::new(1.0, theme::RAIL));
+        child.add_space(5.0);
+    }
     for (glyph, tip, kind) in buttons {
         let color = if kind == 3 { theme::RED } else { theme::MUTED };
         let r = child.add(egui::Button::new(RichText::new(glyph).font(theme::icon_font(15.0)).color(color)).frame_when_inactive(false).min_size(Vec2::splat(28.0)));
@@ -923,6 +935,25 @@ fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, cx: &mut Ctx) {
     }
 }
 
+/// A one-click reaction: adds it, or takes ours back if we've already reacted with it.
+fn quick_reaction(ui: &mut Ui, msg: &Message, e: &swiftcord_core::models::Emoji, cx: &mut Ctx) -> bool {
+    let mine = msg.reactions.iter().any(|r| r.me && r.emoji.same_as(e));
+    // Drawn by hand at exactly the size of the toolbar's icon buttons (an image button pads itself wider).
+    let (rect, r) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
+    if r.hovered() || mine {
+        ui.painter().rect_filled(rect, 4, if mine { theme::BLURPLE.gamma_multiply(0.3) } else { theme::HOVER });
+    }
+    crate::emoji_sheet::any(ui.ctx(), e, Vec2::splat(20.0)).paint_at(ui, rect.shrink(4.0));
+    let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let name = e.name.clone().unwrap_or_default();
+    let shown = if e.id.is_some() { format!(":{name}:") } else { name };
+    if r.on_hover_text(shown).clicked() {
+        cx.actions.push(Action::React { channel: msg.channel_id, message: msg.id, emoji: e.clone(), add: !mine });
+        return true;
+    }
+    false
+}
+
 fn start_reply(msg: &Message, cx: &mut Ctx) {
     let mine = cx.state.me.as_ref().is_some_and(|m| m.id == msg.author.id);
     cx.uis.drafts.entry(cx.channel).or_default().reply = Some((msg.id, !mine));
@@ -932,6 +963,26 @@ fn start_reply(msg: &Message, cx: &mut Ctx) {
 fn context_menu(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     ui.set_min_width(180.0);
     let mine = cx.state.me.as_ref().is_some_and(|m| m.id == msg.author.id);
+    // The reactions used most, then the full picker, as at the top of the official client's menu.
+    if cx.perms & perm::ADD_REACTIONS != 0 && msg.pending.is_none() {
+        let quick = cx.uis.quick_reactions.1.clone();
+        let mut picked = false;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for e in &quick {
+                picked |= quick_reaction(ui, msg, e, cx);
+            }
+            let more = ui.add(egui::Button::new(RichText::new(icon::EMOJI).font(theme::icon_font(15.0)).color(theme::MUTED)).frame_when_inactive(false).min_size(Vec2::splat(28.0)));
+            if more.on_hover_text("Add Reaction").clicked() {
+                cx.uis.emoji_picker = Some(PickerTarget::Reaction { channel: msg.channel_id, message: msg.id, at: ui.ctx().pointer_latest_pos().unwrap_or_default() });
+                picked = true;
+            }
+        });
+        if picked {
+            ui.close();
+        }
+        ui.separator();
+    }
     if cx.perms & perm::SEND_MESSAGES != 0 && ui.button("Reply").clicked() {
         start_reply(msg, cx);
         ui.close();

@@ -149,6 +149,11 @@ pub struct State {
 impl State {
     // MARK: Queries
 
+    /// Every server we're in, in no particular order.
+    pub fn guilds(&self) -> impl Iterator<Item = &Guild> {
+        self.guilds.values()
+    }
+
     pub fn guild(&self, id: Snowflake) -> Option<&Guild> {
         self.guilds.get(&id)
     }

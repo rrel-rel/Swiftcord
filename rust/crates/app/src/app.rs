@@ -17,6 +17,9 @@ use crate::ui;
 
 const HISTORY_PAGE: u8 = 50;
 const TYPING_INTERVAL: Duration = Duration::from_secs(8);
+/// One-click reactions offered (the hover bar shows three of them; the right-click menu all).
+pub const QUICK_REACTIONS: usize = 4;
+
 /// Discord's upload limit without Nitro.
 pub const MAX_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 
@@ -254,6 +257,9 @@ pub struct UiState {
     pub profile_editor: Option<ui::profile_edit::Editor>,
     /// Apps' buttons and menus waiting for an answer, and an app's open form.
     pub interactions: crate::interactions_glue::Interactions,
+    /// One-click reactions for the server being viewed, and what they were worked out for (server, emoji
+    /// catalog version, state revision).
+    pub quick_reactions: (Option<(Option<Snowflake>, u64, u64)>, Vec<Emoji>),
     pub profile_card: Option<ui::profile::Card>,
     pub profiles: ui::profile::Profiles,
     /// The watched stream's sound: volume (0–2) and whether it plays while deafened (from settings).
@@ -843,6 +849,10 @@ impl App {
         }
         if let Some(favs) = favs {
             self.ui.favorite_gifs = favs;
+        }
+        // The same settings say which reactions are used most, for the one-click reactions.
+        if let Some(frequent) = swiftcord_core::proto::read_reaction_frecency(&b64) {
+            self.emoji.set_frequent(frequent);
         }
         self.frecency = safe.then_some(b64);
     }
@@ -1508,6 +1518,12 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let mut actions = Vec::new();
+        if let Some(s) = &self.session {
+            let key = (self.ui.guild, self.emoji.version, s.state.revision);
+            if self.ui.quick_reactions.0 != Some(key) {
+                self.ui.quick_reactions = (Some(key), self.emoji.quick_reactions(&s.state, self.ui.guild, QUICK_REACTIONS));
+            }
+        }
         match &self.session {
             None => ui::login::show(ui, &mut self.ui.login, &mut actions),
             Some(s) => ui::shell::show(ui, s, &mut self.ui, &mut self.emoji, &mut actions),

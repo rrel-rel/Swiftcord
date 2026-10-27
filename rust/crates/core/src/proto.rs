@@ -168,6 +168,54 @@ mod tests {
     }
 }
 
+// MARK: Emoji frecency (FrecencyUserSettings, settings-proto type 2)
+//
+// message FrecencyUserSettings { ...; EmojiFrecency emoji_frecency = 6; ...; EmojiFrecency emoji_reaction_frecency = 13; }
+// message EmojiFrecency { map<string, FrecencyItem> emojis = 1; }
+// message FrecencyItem { uint32 total_uses = 1; repeated uint64 recent_uses = 2; int32 frecency = 3; int32 score = 4; }
+
+const EMOJI_FRECENCY_FIELD: u64 = 6;
+const EMOJI_REACTION_FRECENCY_FIELD: u64 = 13;
+
+/// The emoji someone uses most for reactions (falling back to the ones they use in messages), most used
+/// first: keys are a Unicode emoji's name or a custom emoji's ID, as Discord's client stores them.
+pub fn read_reaction_frecency(base64: &str) -> Option<Vec<String>> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(base64).ok()?;
+    let read = |wanted: u64| -> Option<Vec<(String, i64)>> {
+        let mut out = Vec::new();
+        for (field, value) in fields(&bytes).ok()? {
+            let (true, Value::Bytes(freq)) = (field == wanted, value) else { continue };
+            for (f, entry) in fields(freq).ok()? {
+                let (1, Value::Bytes(entry)) = (f, entry) else { continue };
+                let (mut key, mut score, mut uses) = (None, 0i64, 0i64);
+                for (k, v) in fields(entry).ok()? {
+                    match (k, v) {
+                        (1, Value::Bytes(b)) => key = std::str::from_utf8(b).ok().map(str::to_owned),
+                        (2, Value::Bytes(item)) => {
+                            for (ik, iv) in fields(item).ok()? {
+                                match (ik, iv) {
+                                    (1, Value::Int(n)) => uses = n as i64,
+                                    // int32: negative scores arrive as 10-byte varints.
+                                    (4, Value::Int(n)) => score = n as i32 as i64,
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(k) = key {
+                    out.push((k, if score != 0 { score } else { uses }));
+                }
+            }
+        }
+        Some(out)
+    };
+    let mut list = read(EMOJI_REACTION_FRECENCY_FIELD).filter(|l| !l.is_empty()).or_else(|| read(EMOJI_FRECENCY_FIELD))?;
+    list.sort_by_key(|(_, s)| -s);
+    Some(list.into_iter().map(|(k, _)| k).collect())
+}
+
 // MARK: Favourite GIFs (FrecencyUserSettings, settings-proto type 2)
 //
 // message FrecencyUserSettings { ...; FavoriteGIFs favorite_gifs = 2; ... }
@@ -364,6 +412,35 @@ pub fn edit_round_trips(base64: &str) -> bool {
 #[cfg(test)]
 mod favorite_tests {
     use super::*;
+
+    /// Prints the most used reaction emoji from a real settings blob in `SWIFTCORD_TEST_FRECENCY` (a file of
+    /// base64), to check the key format.
+    #[test]
+    #[ignore]
+    fn reads_real_reaction_frecency() {
+        let path = std::env::var("SWIFTCORD_TEST_FRECENCY").expect("SWIFTCORD_TEST_FRECENCY");
+        let b64 = std::fs::read_to_string(path).unwrap();
+        let top = read_reaction_frecency(b64.trim()).expect("parses");
+        println!("{} keys, top: {:?}", top.len(), &top[..top.len().min(12)]);
+        assert!(!top.is_empty());
+    }
+
+    #[test]
+    fn reaction_frecency_orders_by_score() {
+        // Two entries: "joy" (score 50) and custom emoji "123" (score 90), in field 13.
+        let item = |uses: u8, score: u8| vec![0x08, uses, 0x20, score];
+        let mut entries = Vec::new();
+        for (key, it) in [("joy".as_bytes(), item(3, 50)), (b"123".as_slice(), item(1, 90))] {
+            let mut entry = Vec::new();
+            put_bytes_field(&mut entry, 1, key);
+            put_bytes_field(&mut entry, 2, &it);
+            put_bytes_field(&mut entries, 1, &entry);
+        }
+        let mut settings = Vec::new();
+        put_bytes_field(&mut settings, 13, &entries);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&settings);
+        assert_eq!(read_reaction_frecency(&b64), Some(vec!["123".to_owned(), "joy".to_owned()]));
+    }
 
     fn gif(url: &str, order: u32) -> FavoriteGif {
         FavoriteGif { url: url.into(), src: format!("{url}.mp4"), format: 2, width: 320, height: 240, order }
