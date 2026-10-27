@@ -73,6 +73,8 @@ struct Stream {
     next: u64,
     pcm: VecDeque<f32>,
     playing: bool,
+    /// The next decoded frame starts a talk spurt and is faded in.
+    fade_in: bool,
     target: usize,
     concealed: u32,
     last_arrival: Instant,
@@ -94,6 +96,7 @@ impl Stream {
             next: 0,
             pcm: VecDeque::new(),
             playing: false,
+            fade_in: true,
             target: 4,
             concealed: 0,
             last_arrival: Instant::now(),
@@ -139,10 +142,22 @@ impl Stream {
             self.playing = true;
             self.next = *self.packets.keys().next().unwrap();
             self.concealed = 0;
+            // A new talk spurt (or a restart after running dry): start the decoder afresh, since blending the
+            // first frame with what it last played clicks, and ramp up from silence.
+            self.decoder.reset();
+            self.fade_in = true;
         }
         let n = if let Some(p) = self.packets.remove(&self.next) {
             self.concealed = 0;
-            self.decoder.decode(Some(&p), scratch)
+            let n = self.decoder.decode(Some(&p), scratch);
+            if std::mem::take(&mut self.fade_in) {
+                // 5 ms.
+                let ramp = (SAMPLE_RATE as usize / 200 * 2).min(n);
+                for (i, s) in scratch[..ramp].iter_mut().enumerate() {
+                    *s *= (i / 2) as f32 / (ramp / 2) as f32;
+                }
+            }
+            n
         } else if !self.packets.is_empty() || (self.concealed < 3 && self.last_arrival.elapsed() < Duration::from_millis(80)) {
             // Lost or late: conceal. After several concealed frames with later packets waiting, skip ahead.
             self.concealed += 1;
@@ -597,6 +612,26 @@ mod tests {
         let tail = &out[FRAME * 2 * 4..];
         assert!(energy(&tail[..FRAME]) > energy(&tail[FRAME..]), "fades");
         assert!(tail[tail.len() - 2..].iter().all(|s| s.abs() < 0.01), "ends near silence");
+    }
+
+    #[test]
+    fn a_new_talk_spurt_ramps_up_from_silence() {
+        let m = Mixer::default();
+        let p = packets(12);
+        for (i, pk) in p.iter().take(4).enumerate() {
+            m.push(1, i as u16, pk.clone());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        let mut out = vec![0.0; FRAME * 2 * 6];
+        m.mix(&mut out);
+        // They start talking again mid-waveform (the test tone doesn't start at zero).
+        for (i, pk) in p.iter().enumerate().skip(6) {
+            m.push(1, i as u16, pk.clone());
+        }
+        let mut out = vec![0.0; FRAME * 2];
+        m.mix(&mut out);
+        assert!(out[..8].iter().all(|s| s.abs() < 0.02), "starts near silence: {:?}", &out[..8]);
+        assert!(energy(&out[FRAME..]) > 0.01, "then plays at full level");
     }
 
     #[test]

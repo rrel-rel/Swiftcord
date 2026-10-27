@@ -68,6 +68,13 @@ impl Decoder {
         let n = unsafe { opus::opus_decode_float(self.0, ptr, len, out.as_mut_ptr(), (out.len() / 2) as i32, 0) };
         if n > 0 { n as usize * 2 } else { 0 }
     }
+
+    /// Forgets everything decoded so far, so a new talk spurt isn't blended with the end of the last one.
+    pub fn reset(&mut self) {
+        if let Some(fresh) = Decoder::new() {
+            *self = fresh;
+        }
+    }
 }
 
 impl Drop for Decoder {

@@ -1072,10 +1072,10 @@ fn spawn_receiver(
                                 continue;
                             }
                             let Some(opus) = e2ee_decrypt(&shared, user, MediaType::AUDIO, p.payload) else { continue };
-                            if opus == codec::SILENCE {
-                                continue;
-                            }
-                            if let Some(u) = user {
+                            // Silence frames (sent as someone stops talking) still go to the jitter buffer, so
+                            // their decoder settles to quiet instead of guessing at more speech, but they don't
+                            // count as talking.
+                            if let (Some(u), false) = (user, opus == codec::SILENCE) {
                                 shared.last_heard.lock().insert(u, Instant::now());
                             }
                             // Decoding happens at playback, in the jitter buffer.
