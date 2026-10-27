@@ -356,6 +356,10 @@ fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Actio
                 if ui.button("Settings…").clicked() {
                     actions.push(Action::OpenSettings);
                 }
+                if ui.button("Edit Profile…").clicked() {
+                    // With the server being viewed, so its tab is one click away.
+                    actions.push(Action::EditProfile { guild: uis.guild, server: false });
+                }
                 if ui.button("Copy user ID").clicked() {
                     actions.push(Action::Copy(me.id.to_string()));
                 }

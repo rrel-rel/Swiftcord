@@ -13,7 +13,7 @@ pub mod shell;
 pub mod stream;
 pub mod suggest;
 pub mod profile;
-pub mod server_profile;
+pub mod profile_edit;
 pub mod settings;
 pub mod share;
 pub mod sidebar;

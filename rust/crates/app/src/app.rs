@@ -41,9 +41,10 @@ pub enum AppEvent {
     StickerPacks(Result<Vec<swiftcord_core::models::StickerPack>, String>),
     StreamPreview { key: String, result: Result<Option<String>, String> },
     SearchResults { generation: u64, result: Result<swiftcord_core::rest::SearchResult, String> },
-    /// A picture chosen for a server avatar: its data URI and a preview (`None` if the dialog was cancelled).
-    ServerAvatarPicked(Result<Option<(String, egui::ColorImage)>, String>),
-    ServerProfileSaved { guild: Snowflake, result: Result<swiftcord_core::models::Member, String> },
+    /// A picture chosen for the profile editor: its data URI and a preview (`None` if the dialog was cancelled).
+    ProfileImagePicked { server: bool, kind: ui::profile_edit::ImageKind, result: Result<Option<(String, egui::ColorImage)>, String> },
+    /// Profile changes saved: each request's path and response, then the error that stopped the rest, if any.
+    ProfileSaved { done: Vec<(String, serde_json::Value)>, error: Option<String> },
     Profile { user: Snowflake, guild: Option<Snowflake>, result: Result<swiftcord_core::models::Profile, String> },
     /// The frecency settings (favourite GIFs) as read or as saved.
     Frecency(Result<String, String>),
@@ -116,11 +117,12 @@ pub enum Action {
     WatchStream { guild: Option<Snowflake>, channel: Snowflake, user: Snowflake },
     /// Fetch a Go Live stream's preview picture (by stream key).
     LoadStreamPreview(String),
-    /// Open the editor for our profile in a server (nickname and server avatar).
-    EditServerProfile(Snowflake),
-    PickServerAvatar,
-    SaveServerProfile,
-    CloseServerProfile,
+    /// Open the profile editor: on the main profile, or (`server`) on our profile in `guild`.
+    EditProfile { guild: Option<Snowflake>, server: bool },
+    /// Choose a new avatar or banner for the main (`server: false`) or server profile.
+    PickProfileImage { server: bool, kind: ui::profile_edit::ImageKind },
+    SaveProfile,
+    CloseProfileEditor,
     /// Search messages (the whole server, or the DM) from this channel.
     Search { channel: Snowflake, text: String },
     SearchMore,
@@ -242,8 +244,8 @@ pub struct UiState {
     /// The open message search, and what's typed in the header's search box.
     pub search: Option<crate::search_glue::Search>,
     pub search_box: String,
-    /// The open server profile editor.
-    pub server_profile: Option<ui::server_profile::Editor>,
+    /// The open profile editor.
+    pub profile_editor: Option<ui::profile_edit::Editor>,
     pub profile_card: Option<ui::profile::Card>,
     pub profiles: ui::profile::Profiles,
     /// The watched stream's sound: volume (0–2) and whether it plays while deafened (from settings).
@@ -539,33 +541,20 @@ impl App {
                 self.banner(format!("Couldn't update favourites: {error}"));
             }
             AppEvent::SearchResults { generation, result } => crate::search_glue::on_results(self, generation, result),
-            AppEvent::ServerAvatarPicked(result) => {
+            AppEvent::ProfileImagePicked { server, kind, result } => {
                 let ctx = self.ctx().clone();
-                let Some(ed) = &mut self.ui.server_profile else { return };
+                let Some(ed) = &mut self.ui.profile_editor else { return };
                 match result {
                     Ok(Some((data_uri, image))) => {
-                        let preview = ctx.load_texture("server-avatar-preview", image, egui::TextureOptions::LINEAR);
-                        ed.avatar = ui::server_profile::AvatarChange::Set { data_uri, preview };
+                        let preview = ctx.load_texture("profile-image-preview", image, egui::TextureOptions::LINEAR);
+                        ui::profile_edit::set_image(ed, server, kind, data_uri, preview);
                         ed.error = None;
                     }
                     Ok(None) => {}
                     Err(e) => ed.error = Some(e),
                 }
             }
-            AppEvent::ServerProfileSaved { guild, result } => match result {
-                Ok(member) => {
-                    if let Some(s) = &mut self.session {
-                        s.state.set_my_member(guild, member);
-                    }
-                    self.ui.server_profile = None;
-                }
-                Err(e) => {
-                    if let Some(ed) = &mut self.ui.server_profile {
-                        ed.busy = false;
-                        ed.error = Some(format!("Couldn't save: {e}"));
-                    }
-                }
-            },
+            AppEvent::ProfileSaved { done, error } => self.on_profile_saved(done, error),
             AppEvent::Profile { user, guild, result } => {
                 if let Err(e) = &result {
                     tracing::info!("profile of {user}: {e}");
@@ -736,6 +725,53 @@ impl App {
                 crate::voice_glue::on_notice(self, notice);
             }
         }
+    }
+
+    /// After saving profile changes: our account and server member come back updated, so they're applied
+    /// right away, and our cached profiles are dropped so cards show the new ones.
+    fn on_profile_saved(&mut self, done: Vec<(String, serde_json::Value)>, error: Option<String>) {
+        if let Some(s) = &mut self.session {
+            for (path, v) in &done {
+                if path == "users/@me" {
+                    if let Ok(user) = serde_json::from_value::<swiftcord_core::models::User>(v.clone()) {
+                        let premium = s.state.me.as_ref().and_then(|m| m.premium_type);
+                        s.state.me = Some(swiftcord_core::models::User { premium_type: user.premium_type.or(premium), ..user });
+                    }
+                } else if let Some(g) = path.strip_prefix("guilds/").and_then(|p| p.strip_suffix("/members/@me")).and_then(|g| g.parse().ok()) {
+                    if let Ok(member) = serde_json::from_value(v.clone()) {
+                        s.state.set_my_member(Snowflake(g), member);
+                    }
+                }
+            }
+            if let Some(me) = s.state.me.as_ref().map(|m| m.id) {
+                self.ui.profiles.retain(|(u, _), _| *u != me);
+            }
+        }
+        match error {
+            None => self.ui.profile_editor = None,
+            Some(e) => {
+                if let Some(ed) = &mut self.ui.profile_editor {
+                    ed.busy = false;
+                    let saved = if done.is_empty() { String::new() } else { " (some changes were saved)".to_owned() };
+                    ed.error = Some(format!("Couldn't save: {e}{saved}"));
+                }
+            }
+        }
+    }
+
+    /// Fetches someone's profile (as in `guild`) unless it's loaded or loading. Kept for the session; failures
+    /// are retried next time. Bots have profiles too; webhook authors aren't users, which the request reports.
+    fn fetch_profile(&mut self, user: Snowflake, guild: Option<Snowflake>) {
+        let Some(s) = &self.session else { return };
+        if matches!(self.ui.profiles.get(&(user, guild)), Some(Some(Ok(_))) | Some(None)) {
+            return;
+        }
+        self.ui.profiles.insert((user, guild), None);
+        let rest = s.rest.clone();
+        self.spawn(async move {
+            let result = rest.user_profile(user, guild).await.map_err(|e| e.to_string());
+            AppEvent::Profile { user, guild, result }
+        });
     }
 
     /// Rings while a call is coming in, and plays the ringback while a DM call we're in rings the others.
@@ -1149,37 +1185,49 @@ impl App {
                     let _ = rest.typing(c).await;
                 });
             }
-            Action::EditServerProfile(guild) => {
-                if let Some(s) = &self.session {
-                    self.ui.server_profile = Some(ui::server_profile::Editor::new(s, guild));
+            Action::EditProfile { guild, server } => {
+                let Some(s) = &self.session else { return };
+                let Some(me) = s.state.me.as_ref().map(|m| m.id) else { return };
+                self.ui.profile_editor = Some(ui::profile_edit::Editor::new(s, guild, server));
+                // The current bio, pronouns, colours and banners come from our own profile.
+                self.fetch_profile(me, None);
+                if let Some(g) = guild {
+                    self.fetch_profile(me, Some(g));
                 }
             }
-            Action::PickServerAvatar => {
+            Action::PickProfileImage { server, kind } => {
+                let title = match kind {
+                    ui::profile_edit::ImageKind::Avatar => "Choose an avatar",
+                    ui::profile_edit::ImageKind::Banner => "Choose a banner",
+                };
                 self.spawn(async move {
-                    let picked = rfd::AsyncFileDialog::new()
-                        .set_title("Choose a server avatar")
-                        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
-                        .pick_file()
-                        .await;
-                    let Some(file) = picked else { return AppEvent::ServerAvatarPicked(Ok(None)) };
+                    let picked = rfd::AsyncFileDialog::new().set_title(title).add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"]).pick_file().await;
+                    let Some(file) = picked else { return AppEvent::ProfileImagePicked { server, kind, result: Ok(None) } };
                     let bytes = file.read().await;
-                    let result = tokio::task::spawn_blocking(move || ui::server_profile::prepare_avatar(&bytes)).await.map_err(|e| e.to_string()).and_then(|r| r);
-                    AppEvent::ServerAvatarPicked(result.map(Some))
+                    let result = tokio::task::spawn_blocking(move || ui::profile_edit::prepare_image(&bytes, kind)).await.map_err(|e| e.to_string()).and_then(|r| r);
+                    AppEvent::ProfileImagePicked { server, kind, result: result.map(Some) }
                 });
             }
-            Action::SaveServerProfile => {
+            Action::SaveProfile => {
                 let Some(s) = &self.session else { return };
-                let Some(ed) = &mut self.ui.server_profile else { return };
+                let Some(ed) = &mut self.ui.profile_editor else { return };
                 ed.busy = true;
                 ed.error = None;
-                let (guild, (nick, avatar)) = (ed.guild, ed.changes());
+                let requests = ed.requests();
                 let rest = s.rest.clone();
                 self.spawn(async move {
-                    let result = rest.update_server_profile(guild, nick.as_deref(), avatar.as_ref().map(|a| a.as_deref())).await.map_err(|e| e.to_string());
-                    AppEvent::ServerProfileSaved { guild, result }
+                    // One after another, stopping at the first failure (what's saved so far stays saved).
+                    let mut done = Vec::new();
+                    for (path, body) in requests {
+                        match rest.patch_me(&path, body).await {
+                            Ok(v) => done.push((path, v)),
+                            Err(e) => return AppEvent::ProfileSaved { done, error: Some(e.to_string()) },
+                        }
+                    }
+                    AppEvent::ProfileSaved { done, error: None }
                 });
             }
-            Action::CloseServerProfile => self.ui.server_profile = None,
+            Action::CloseProfileEditor => self.ui.profile_editor = None,
             Action::PickFiles(channel) => {
                 self.spawn(async move {
                     let picked = rfd::AsyncFileDialog::new().set_title("Upload files").pick_files().await.unwrap_or_default();
@@ -1207,19 +1255,11 @@ impl App {
                 });
             }
             Action::OpenProfile { user, guild, at } => {
-                let Some(s) = &self.session else { return };
-                self.ui.profile_card = Some(ui::profile::Card { user, guild, at });
-                // Fetched once per session (failures are retried on the next open). Bots and webhooks have
-                // profiles too, but webhook authors aren't users, which the request reports.
-                if matches!(self.ui.profiles.get(&(user, guild)), Some(Some(Ok(_))) | Some(None)) {
+                if self.session.is_none() {
                     return;
                 }
-                self.ui.profiles.insert((user, guild), None);
-                let rest = s.rest.clone();
-                self.spawn(async move {
-                    let result = rest.user_profile(user, guild).await.map_err(|e| e.to_string());
-                    AppEvent::Profile { user, guild, result }
-                });
+                self.ui.profile_card = Some(ui::profile::Card { user, guild, at });
+                self.fetch_profile(user, guild);
             }
             Action::CloseProfile => self.ui.profile_card = None,
             Action::SetStatus(status) => {

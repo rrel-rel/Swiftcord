@@ -369,17 +369,10 @@ impl Rest {
     }
 
     /// A channel or thread we haven't been sent (e.g. an archived thread someone linked).
-    /// Changes our server profile: `nick` (empty for none) and/or `avatar` (a data URI, or `None` to remove
-    /// it; a server avatar needs Nitro). Fields left as `None` at the outer level aren't changed.
-    pub async fn update_server_profile(&self, guild: Snowflake, nick: Option<&str>, avatar: Option<Option<&str>>) -> Result<Member> {
-        let mut body = serde_json::Map::new();
-        if let Some(n) = nick {
-            body.insert("nick".into(), json!(n));
-        }
-        if let Some(a) = avatar {
-            body.insert("avatar".into(), json!(a));
-        }
-        self.json(Method::PATCH, &format!("guilds/{guild}/members/@me"), Body::Json(serde_json::Value::Object(body))).await
+    /// Changes our account or profile: `PATCH` with `body` to `users/@me`, `users/@me/profile`,
+    /// `guilds/{id}/members/@me` or `guilds/{id}/profile/@me`. Only the fields given change.
+    pub async fn patch_me(&self, path: &str, body: serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value> {
+        self.json(Method::PATCH, path, Body::Json(serde_json::Value::Object(body))).await
     }
 
     /// Someone's profile for their profile card, with their server profile in `guild`.

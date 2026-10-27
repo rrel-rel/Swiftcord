@@ -174,21 +174,23 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
                 }
             });
 
-            if !me || guild.is_some() {
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if !me && ui.add(egui::Button::new(RichText::new("Message").color(Color32::WHITE)).fill(theme::BLURPLE)).clicked() {
-                        actions.push(Action::OpenDm(user_id));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if !me && ui.add(egui::Button::new(RichText::new("Message").color(Color32::WHITE)).fill(theme::BLURPLE)).clicked() {
+                    actions.push(Action::OpenDm(user_id));
+                    actions.push(Action::CloseProfile);
+                }
+                if me && ui.button("Edit Profile").clicked() {
+                    actions.push(Action::EditProfile { guild, server: false });
+                    actions.push(Action::CloseProfile);
+                }
+                if let (true, Some(g)) = (me, guild) {
+                    if ui.button("Edit Server Profile").clicked() {
+                        actions.push(Action::EditProfile { guild: Some(g), server: true });
                         actions.push(Action::CloseProfile);
                     }
-                    if let (true, Some(g)) = (me, guild) {
-                        if ui.button("Edit Server Profile").clicked() {
-                            actions.push(Action::EditServerProfile(g));
-                            actions.push(Action::CloseProfile);
-                        }
-                    }
-                });
-            }
+                }
+            });
         });
 
         // The card's background, now that its size is known: a gradient of their theme colours, or plain.

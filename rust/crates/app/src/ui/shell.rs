@@ -51,7 +51,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Ca
 
     emoji::show(ui, &s.state, uis, catalog, actions);
     crate::ui::settings::show(ui, uis, actions);
-    crate::ui::server_profile::show(ui, s, uis, actions);
+    crate::ui::profile_edit::show(ui, s, uis, actions);
     crate::ui::profile::show(ui, s, uis, actions);
     crate::ui::gif::show(ui, uis, actions);
     crate::ui::sticker_picker::show(ui, s, uis, actions);
