@@ -220,20 +220,27 @@ fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel, actions
             if speaking {
                 ui.painter().circle_stroke(r.rect.center(), 12.0, egui::Stroke::new(2.0, theme::GREEN));
             }
-            ui.add(egui::Label::new(RichText::new(name).size(14.0).color(theme::MUTED)).truncate().selectable(false));
-            if vs.self_stream {
-                let mine = state.me.as_ref().is_some_and(|m| m.id == vs.user_id);
-                let key = crate::stream_glue::stream_key(c.guild_id, c.id, vs.user_id);
-                let live = crate::ui::stream::live_badge(ui, uis, key, " LIVE ", 10.0, if mine { "" } else { "Click to watch" }, actions);
-                if !mine && live.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                    actions.push(Action::WatchStream { guild: c.guild_id, channel: c.id, user: vs.user_id });
+            // The badges are laid out from the right first, so a long name is cut short instead of pushing
+            // the LIVE button out of view.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(4.0);
+                if vs.self_deaf || vs.deaf {
+                    ui.label(RichText::new(icon::DEAFENED).font(theme::icon_font(12.0)).color(theme::RED));
+                } else if vs.self_mute || vs.mute {
+                    ui.label(RichText::new(icon::MIC_OFF).font(theme::icon_font(12.0)).color(theme::RED));
                 }
-            }
-            if vs.self_deaf || vs.deaf {
-                ui.label(RichText::new(icon::DEAFENED).font(theme::icon_font(12.0)).color(theme::RED));
-            } else if vs.self_mute || vs.mute {
-                ui.label(RichText::new(icon::MIC_OFF).font(theme::icon_font(12.0)).color(theme::RED));
-            }
+                if vs.self_stream {
+                    let mine = state.me.as_ref().is_some_and(|m| m.id == vs.user_id);
+                    let key = crate::stream_glue::stream_key(c.guild_id, c.id, vs.user_id);
+                    let live = crate::ui::stream::live_badge(ui, uis, key, " LIVE ", 10.0, if mine { "" } else { "Click to watch" }, actions);
+                    if !mine && live.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        actions.push(Action::WatchStream { guild: c.guild_id, channel: c.id, user: vs.user_id });
+                    }
+                }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(egui::Label::new(RichText::new(name).size(14.0).color(theme::MUTED)).truncate().selectable(false));
+                });
+            });
         });
     }
 }

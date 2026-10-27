@@ -48,22 +48,23 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) 
 
     if !view.fullscreen {
         egui::Panel::top("stream-bar").frame(egui::Frame::new().fill(theme::RAIL).inner_margin(egui::Margin::symmetric(12, 6))).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(" LIVE ").font(theme::font_bold(11.0)).color(Color32::WHITE).background_color(theme::RED));
-                ui.label(RichText::new(format!("{name}'s screen")).font(theme::font_semibold(15.0)).color(theme::HEADER));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add(egui::Button::new(RichText::new("Stop Watching").color(Color32::WHITE)).fill(theme::RED)).clicked() {
-                        actions.push(Action::StopWatching);
-                    }
-                    if ui.button("Fullscreen").clicked() {
-                        actions.push(Action::ToggleFullscreen);
-                    }
-                    sound_menu(ui, uis, actions);
-                    if ui.button("Show Chat").clicked() {
-                        actions.push(Action::ShowStream(false));
-                    }
+            // Buttons first, from the right, so a long name is cut short rather than pushing them out of view.
+            ui.horizontal(|ui| ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.add(egui::Button::new(RichText::new("Stop Watching").color(Color32::WHITE)).fill(theme::RED)).clicked() {
+                    actions.push(Action::StopWatching);
+                }
+                if ui.button("Fullscreen").clicked() {
+                    actions.push(Action::ToggleFullscreen);
+                }
+                sound_menu(ui, uis, actions);
+                if ui.button("Show Chat").clicked() {
+                    actions.push(Action::ShowStream(false));
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.label(RichText::new(" LIVE ").font(theme::font_bold(11.0)).color(Color32::WHITE).background_color(theme::RED));
+                    ui.add(egui::Label::new(RichText::new(format!("{name}'s screen")).font(theme::font_semibold(15.0)).color(theme::HEADER)).truncate());
                 });
-            });
+            }));
         });
     }
 
@@ -128,8 +129,8 @@ pub fn return_bar(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Act
     let Some(view) = uis.stream.as_ref().filter(|v| !v.visible) else { return };
     let name = s.state.display_name(view.owner, view.guild);
     egui::Panel::top("stream-return").frame(egui::Frame::new().fill(theme::BLURPLE.gamma_multiply(0.5)).inner_margin(egui::Margin::symmetric(12, 4))).show(ui, |ui| {
+        // Buttons first, from the right, so a long name is cut short rather than pushing them out of view.
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("Watching {name}'s stream")).color(Color32::WHITE));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if widgets::icon_button(ui, theme::icon::CLOSE, "Stop watching").clicked() {
                     actions.push(Action::StopWatching);
@@ -137,6 +138,9 @@ pub fn return_bar(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Act
                 if ui.button("Return to Stream").clicked() {
                     actions.push(Action::ShowStream(true));
                 }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.add(egui::Label::new(RichText::new(format!("Watching {name}'s stream")).color(Color32::WHITE)).truncate());
+                });
             });
         });
     });
