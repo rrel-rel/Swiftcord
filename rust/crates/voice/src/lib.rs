@@ -46,6 +46,8 @@ pub struct Share {
     pub fps: u32,
     /// Video bitrate in bits per second.
     pub bitrate: u32,
+    /// For a whole screen: try Desktop Duplication, which can see fullscreen-exclusive games (experimental).
+    pub fullscreen_games: bool,
 }
 
 /// How a stream we're sending is going.

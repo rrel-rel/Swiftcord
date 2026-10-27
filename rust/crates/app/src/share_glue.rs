@@ -72,6 +72,8 @@ pub struct Picker {
     pub sources: Vec<SourceInfo>,
     pub selected: Option<usize>,
     pub quality: Quality,
+    /// Try the capture that can see fullscreen-exclusive games (screens only).
+    pub fullscreen_games: bool,
 }
 
 pub fn open_picker(app: &mut App) {
@@ -81,7 +83,7 @@ pub fn open_picker(app: &mut App) {
     }
     let sources = capture::sources();
     let selected = (!sources.is_empty()).then_some(0);
-    app.ui.share_picker = Some(Picker { sources, selected, quality: app.ui.share_quality });
+    app.ui.share_picker = Some(Picker { sources, selected, quality: app.ui.share_quality, fullscreen_games: false });
 }
 
 fn in_call(app: &App) -> bool {
@@ -102,7 +104,7 @@ pub fn start(app: &mut App) {
     let key = stream_key(guild, channel, me);
     let (max_width, max_height) = picker.quality.max_size();
     let (w, h) = capture::output_size(&source.source, max_width, max_height).unwrap_or((max_width, max_height));
-    let share = Share { source: source.source, max_width, max_height, fps: picker.quality.fps, bitrate: picker.quality.bitrate(w, h) };
+    let share = Share { source: source.source, max_width, max_height, fps: picker.quality.fps, bitrate: picker.quality.bitrate(w, h), fullscreen_games: picker.fullscreen_games };
     tracing::info!("going live as {key}: {w}x{h} at {} fps, {} kbps", share.fps, share.bitrate / 1000);
     if let Some(s) = &app.session {
         s.gateway.create_stream(guild, channel);

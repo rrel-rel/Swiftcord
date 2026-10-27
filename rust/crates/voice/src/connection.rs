@@ -948,7 +948,7 @@ fn spawn_capture(
     std::thread::Builder::new()
         .name("swiftcord-capture".into())
         .spawn(move || {
-            let Some(mut capturer) = crate::capture::Capturer::new(share.source.clone(), share.max_width, share.max_height) else {
+            let Some(mut capturer) = crate::capture::Capturer::new(share.source.clone(), share.max_width, share.max_height, share.fullscreen_games) else {
                 let _ = cmd.send(Cmd::End("Couldn't capture that screen or window.".into()));
                 return;
             };
@@ -960,7 +960,7 @@ fn spawn_capture(
                     return;
                 }
             };
-            tracing::info!("sharing {:?} at {w}x{h}, {} fps, {} kbps", share.source, share.fps, share.bitrate / 1000);
+            tracing::info!("sharing {:?} at {w}x{h}, {} fps, {} kbps, through {}", share.source, share.fps, share.bitrate / 1000, capturer.method());
             let interval = Duration::from_secs_f64(1.0 / share.fps.max(1) as f64);
             let start = Instant::now();
             let ts_base = rand::random::<u32>();

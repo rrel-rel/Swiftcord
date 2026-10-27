@@ -38,6 +38,8 @@ pub fn fit(w: u32, h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
 pub use win::{output_size, sources, Capturer};
 
 #[cfg(windows)]
+mod dda;
+#[cfg(windows)]
 mod wgc;
 
 /// Scales a BGRA picture (`pitch` bytes per row) into `out` (`ow`×`oh`), keeping its shape: centred, with
@@ -259,41 +261,83 @@ mod win {
     }
 
     /// Grabs frames from one source, scaled into a fixed output size (a window that changes shape is
-    /// letterboxed), with the mouse pointer drawn in. Prefers Windows.Graphics.Capture; GDI is the fallback
-    /// (it works anywhere but reading the screen through it can be very slow).
+    /// letterboxed), with the mouse pointer drawn in. Uses Windows.Graphics.Capture, with GDI as the last
+    /// resort (it works anywhere but reading the screen through it can be very slow). With
+    /// `fullscreen_games`, a whole screen is first tried through Desktop Duplication, which can also see
+    /// fullscreen-exclusive games; if that gives no picture within a few seconds, it falls back.
     pub struct Capturer {
+        source: Source,
         width: usize,
         height: usize,
         backend: Backend,
+        started: std::time::Instant,
     }
 
     enum Backend {
+        Dda(super::dda::Dda),
         Wgc(super::wgc::Wgc),
         Gdi(GdiCapturer),
     }
 
     impl Capturer {
         /// Captures `source` at no more than `max_w`×`max_h`.
-        pub fn new(source: Source, max_w: u32, max_h: u32) -> Option<Capturer> {
+        pub fn new(source: Source, max_w: u32, max_h: u32, fullscreen_games: bool) -> Option<Capturer> {
             let (w, h) = output_size(&source, max_w, max_h)?;
-            let backend = match super::wgc::Wgc::new(&source, w as usize, h as usize) {
-                Ok(c) => Backend::Wgc(c),
+            let (w_us, h_us) = (w as usize, h as usize);
+            let dda = match &source {
+                Source::Monitor { rect } if fullscreen_games => match super::dda::Dda::new(*rect, w_us, h_us) {
+                    Ok(c) => Some(c),
+                    Err(e) => {
+                        tracing::info!("Desktop Duplication unavailable ({e}); fullscreen games may not show");
+                        None
+                    }
+                },
+                _ => None,
+            };
+            let backend = match dda {
+                Some(c) => {
+                    tracing::info!("capturing {source:?} through Desktop Duplication");
+                    Backend::Dda(c)
+                }
+                None => Self::usual(&source, w_us, h_us)?,
+            };
+            Some(Capturer { source, width: w_us, height: h_us, backend, started: std::time::Instant::now() })
+        }
+
+        /// Windows.Graphics.Capture, or GDI where that's unavailable.
+        fn usual(source: &Source, w: usize, h: usize) -> Option<Backend> {
+            match super::wgc::Wgc::new(source, w, h) {
+                Ok(c) => Some(Backend::Wgc(c)),
                 Err(e) => {
                     tracing::warn!("Windows.Graphics.Capture unavailable ({e}); capturing through GDI");
-                    Backend::Gdi(GdiCapturer::new(source, w, h)?)
+                    Some(Backend::Gdi(GdiCapturer::new(source.clone(), w as u32, h as u32)?))
                 }
-            };
-            Some(Capturer { width: w as usize, height: h as usize, backend })
+            }
         }
 
         pub fn size(&self) -> (usize, usize) {
             (self.width, self.height)
         }
 
+        /// Which way it's capturing, for logs.
+        pub fn method(&self) -> &'static str {
+            match self.backend {
+                Backend::Dda(_) => "Desktop Duplication",
+                Backend::Wgc(_) => "Windows.Graphics.Capture",
+                Backend::Gdi(_) => "GDI",
+            }
+        }
+
         /// The latest picture (the previous one again when nothing changed), or None once a shared window
         /// has closed.
         pub fn grab(&mut self) -> Option<Frame<'_>> {
+            // Desktop Duplication that hasn't produced a picture in a few seconds won't: use the usual way.
+            if matches!(&self.backend, Backend::Dda(d) if !d.pictured) && self.started.elapsed() > std::time::Duration::from_secs(3) {
+                tracing::warn!("Desktop Duplication gave no picture; capturing the usual way instead");
+                self.backend = Self::usual(&self.source, self.width, self.height)?;
+            }
             match &mut self.backend {
+                Backend::Dda(c) => Some(Frame { width: self.width, height: self.height, bgra: c.grab()? }),
                 Backend::Wgc(c) => Some(Frame { width: self.width, height: self.height, bgra: c.grab()? }),
                 Backend::Gdi(c) => c.grab(),
             }
@@ -433,10 +477,56 @@ mod tests {
     #[test]
     fn captures_the_main_screen() {
         let Some(screen) = sources().into_iter().find(|s| matches!(s.source, Source::Monitor { .. })) else { return };
-        let mut c = Capturer::new(screen.source, 640, 360).expect("capturer");
+        let mut c = Capturer::new(screen.source, 640, 360, false).expect("capturer");
         let f = c.grab().expect("frame");
         assert_eq!(f.bgra.len(), f.width * f.height * 4);
         assert!(f.width <= 640 && f.height <= 360);
+    }
+
+    /// Desktop Duplication gives a real picture of the main screen (the desktop isn't all black), several
+    /// times in a row. Skipped where duplication isn't available (some remote sessions).
+    /// With "Capture fullscreen games", a screen share always keeps giving frames: through Desktop Duplication
+    /// where it works, otherwise falling back after a few seconds.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "takes a few seconds; run by hand"]
+    fn fullscreen_game_capture_falls_back_when_duplication_gives_nothing() {
+        let Some(screen) = sources().into_iter().find(|s| matches!(s.source, Source::Monitor { .. })) else { return };
+        let mut c = Capturer::new(screen.source, 640, 360, true).expect("capturer");
+        let start = std::time::Instant::now();
+        let mut lit = 0;
+        while start.elapsed() < std::time::Duration::from_secs(5) {
+            let f = c.grab().expect("frame");
+            assert_eq!(f.bgra.len(), f.width * f.height * 4);
+            lit = f.bgra.chunks(4).filter(|p| p[0] > 16 || p[1] > 16 || p[2] > 16).count();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        eprintln!("after 5 s: {}, {lit} lit pixels", c.method());
+        assert!(lit > 640 * 360 / 20, "the share is black");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "needs a display whose driver supports duplication; run by hand"]
+    fn desktop_duplication_sees_the_screen() {
+        let Some(screen) = sources().into_iter().find(|s| matches!(s.source, Source::Monitor { .. })) else { return };
+        let Source::Monitor { rect } = screen.source else { return };
+        let (w, h) = output_size(&screen.source, 640, 360).unwrap();
+        let mut d = match super::dda::Dda::new(rect, w as usize, h as usize) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("desktop duplication unavailable here: {e}");
+                return;
+            }
+        };
+        let mut lit = 0;
+        for _ in 0..20 {
+            let f = d.grab().expect("frame");
+            assert_eq!(f.len(), w as usize * h as usize * 4);
+            lit = lit.max(f.chunks(4).filter(|p| p[0] > 16 || p[1] > 16 || p[2] > 16).count());
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(lit > (w * h / 20) as usize, "the screen came out black ({lit} lit pixels)");
     }
 }
 
@@ -449,7 +539,7 @@ mod bench {
         use std::time::Instant;
         let screen = super::sources().into_iter().next().expect("a screen");
         for (mw, mh) in [(1280, 720), (1920, 1080)] {
-            let mut c = super::Capturer::new(screen.source.clone(), mw, mh).unwrap();
+            let mut c = super::Capturer::new(screen.source.clone(), mw, mh, false).unwrap();
             let (w, h) = c.size();
             let mut enc = crate::video::Encoder::new(w as u32, h as u32, 30, 3_000_000).unwrap();
             let (mut t_cap, mut t_conv, mut t_enc) = (0.0, 0.0, 0.0);
@@ -480,7 +570,7 @@ mod dump {
     fn dump_frame() {
         let Ok(path) = std::env::var("SWIFTCORD_CAPTURE_DUMP") else { return };
         let screen = super::sources().into_iter().next().expect("a screen");
-        let mut c = super::Capturer::new(screen.source, 1280, 720).unwrap();
+        let mut c = super::Capturer::new(screen.source, 1280, 720, false).unwrap();
         for _ in 0..10 {
             c.grab();
             std::thread::sleep(std::time::Duration::from_millis(50));
