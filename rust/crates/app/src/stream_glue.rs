@@ -159,6 +159,8 @@ fn connect(app: &mut App) {
         vad_threshold_db: app.settings.vad_threshold_db,
         muted: true,
         deafened: app.ui.self_deaf && !app.settings.stream_audio_when_deafened,
+        // Never sends audio.
+        noise_suppression: false,
     };
     let sink = app.event_sink();
     let Some(w) = &mut app.watch else { return };

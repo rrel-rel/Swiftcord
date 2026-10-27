@@ -63,6 +63,7 @@ pub(crate) struct Shared {
     pub input_db: AtomicU32,
     /// Voice-activity threshold in dBFS × -1 (so it fits an atomic), e.g. 50 for -50 dBFS.
     pub threshold: AtomicU16,
+    pub noise_suppression: AtomicBool,
     pub dave: Mutex<Dave>,
     pub ssrc_users: Mutex<HashMap<u32, u64>>,
     pub last_heard: Mutex<HashMap<u64, Instant>>,
@@ -95,6 +96,7 @@ impl Shared {
             self_speaking: AtomicBool::new(false),
             input_db: AtomicU32::new((-100f32).to_bits()),
             threshold: AtomicU16::new((-settings.vad_threshold_db).clamp(0.0, 100.0) as u16),
+            noise_suppression: AtomicBool::new(settings.noise_suppression),
             dave: Mutex::new(Dave::default()),
             ssrc_users: Mutex::new(HashMap::new()),
             last_heard: Mutex::new(HashMap::new()),
@@ -707,6 +709,7 @@ fn spawn_sender(
                     ts = ts.wrapping_add(FRAME as u32);
                     let muted = shared.muted.load(Ordering::Relaxed) || shared.deafened.load(Ordering::Relaxed);
                     let threshold = -(shared.threshold.load(Ordering::Relaxed) as f32);
+                    tx.set_noise_suppression(shared.noise_suppression.load(Ordering::Relaxed));
                     let (out, change) = tx.process(frame, muted, threshold);
                     shared.input_db.store(tx.level_db.to_bits(), Ordering::Relaxed);
                     match change {

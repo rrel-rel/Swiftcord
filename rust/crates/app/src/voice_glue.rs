@@ -33,6 +33,8 @@ pub struct Call {
     voice: Option<Voice>,
     /// Bumped per connection, so events from a replaced connection are ignored.
     generation: u64,
+    /// Who else was in the channel at the last tick (once connected), for join and leave sounds.
+    others: Option<HashSet<Snowflake>>,
 }
 
 /// What the UI shows about the current call, refreshed every tick.
@@ -76,13 +78,23 @@ pub fn join(app: &mut App, guild: Option<Snowflake>, channel: Snowflake) {
             let _ = rest.ring(channel).await;
         });
     }
-    app.voice = Some(Call { guild, channel, status: Status::Joining, session_id: None, server: None, voice: None, generation: 0 });
+    app.voice = Some(Call { guild, channel, status: Status::Joining, session_id: None, server: None, voice: None, generation: 0, others: None });
+}
+
+/// A call sound, unless they're turned off or we're deafened.
+fn call_sound(app: &mut App, sound: crate::sounds::Sound) {
+    if app.settings.call_sounds && !app.ui.self_deaf {
+        app.sounds.play(sound, &app.settings.output_device);
+    }
 }
 
 pub fn leave(app: &mut App) {
     crate::stream_glue::stop(app);
     crate::share_glue::stop(app);
     let Some(call) = app.voice.take() else { return };
+    if matches!(call.status, Status::Connected { .. }) {
+        call_sound(app, crate::sounds::Sound::Leave);
+    }
     drop(call.voice);
     if let Some(s) = &app.session {
         s.gateway.update_voice_state(call.guild, None, false, false);
@@ -113,8 +125,9 @@ pub fn on_notice(app: &mut App, notice: Notice) {
             match mine {
                 Some(vs) => {
                     // We may have been moved by a moderator.
-                    if let Some(c) = vs.channel_id {
+                    if let Some(c) = vs.channel_id.filter(|&c| c != call.channel) {
                         call.channel = c;
+                        call.others = None;
                     }
                     call.guild = vs.guild_id;
                     if call.session_id.as_deref() != Some(&vs.session_id) {
@@ -164,6 +177,7 @@ fn connect(app: &mut App) {
         vad_threshold_db: app.settings.vad_threshold_db,
         muted: app.ui.self_mute,
         deafened: app.ui.self_deaf,
+        noise_suppression: app.settings.noise_suppression,
     };
     let sink = app.event_sink();
     let Some(call) = &mut app.voice else { return };
@@ -195,7 +209,11 @@ pub fn on_event(app: &mut App, generation: u64, event: Event) {
     match event {
         Event::Connecting => call.status = Status::Connecting,
         Event::Connected { e2ee } => {
+            let first = !matches!(call.status, Status::Connected { .. });
             call.status = Status::Connected { e2ee };
+            if first {
+                call_sound(app, crate::sounds::Sound::Join);
+            }
             crate::stream_glue::request_if_ready(app);
         }
         Event::Error(e) => app.banner(e),
@@ -208,7 +226,28 @@ pub fn on_event(app: &mut App, generation: u64, event: Event) {
     }
 }
 
+/// Plays a sound when someone joins or leaves the channel we're connected to.
+fn join_leave_sounds(app: &mut App) {
+    let Some(s) = &app.session else { return };
+    let me = s.state.me.as_ref().map(|m| m.id);
+    let Some(call) = &mut app.voice else { return };
+    if !matches!(call.status, Status::Connected { .. }) {
+        return;
+    }
+    let Some(channel) = s.state.channel(call.channel) else { return };
+    let now: HashSet<Snowflake> = s.state.voice_members(channel).iter().map(|v| v.user_id).filter(|u| Some(*u) != me).collect();
+    let sound = match call.others.replace(now.clone()) {
+        Some(before) if now.difference(&before).next().is_some() => Some(crate::sounds::Sound::Join),
+        Some(before) if before.difference(&now).next().is_some() => Some(crate::sounds::Sound::Leave),
+        _ => None,
+    };
+    if let Some(sound) = sound {
+        call_sound(app, sound);
+    }
+}
+
 pub fn tick(app: &mut App) {
+    join_leave_sounds(app);
     let Some(call) = &app.voice else { return };
     let mut speaking: HashSet<Snowflake> = HashSet::new();
     if let Some(v) = &call.voice {

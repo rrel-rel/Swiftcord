@@ -39,6 +39,9 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
         ui.label("Input sensitivity");
         ui.add(egui::Slider::new(&mut draft.settings.vad_threshold_db, -80.0..=-10.0).suffix(" dB").text("transmit above"));
         ui.label(RichText::new("Lower values pick up quieter speech, and more background noise.").small().color(theme::FAINT));
+        ui.add_space(4.0);
+        ui.checkbox(&mut draft.settings.noise_suppression, "Noise suppression");
+        ui.label(RichText::new("Removes background noise like fans, hum and typing from your microphone.").small().color(theme::FAINT));
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -48,7 +51,7 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                     Some(_) => None,
                     None => {
                         let devices = swiftcord_voice::Devices { input: draft.settings.input_device.clone(), output: draft.settings.output_device.clone() };
-                        Some(swiftcord_voice::MicTest::start(devices, draft.settings.vad_threshold_db))
+                        Some(swiftcord_voice::MicTest::start(devices, draft.settings.vad_threshold_db, draft.settings.noise_suppression))
                     }
                 };
             }
@@ -56,6 +59,7 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
         });
         if let Some(test) = &draft.mic_test {
             test.set_threshold(draft.settings.vad_threshold_db);
+            test.set_noise_suppression(draft.settings.noise_suppression);
             meter(ui, test.level_db(), draft.settings.vad_threshold_db, test.transmitting());
             for e in test.errors() {
                 actions.push(Action::Notice(e));
@@ -66,6 +70,9 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
         ui.add_space(12.0);
         ui.label(RichText::new("NOTIFICATIONS").font(theme::font_semibold(12.0)).color(theme::MUTED));
         ui.checkbox(&mut draft.settings.notifications, "Desktop notifications for mentions and DMs");
+        ui.checkbox(&mut draft.settings.message_sounds, "Message sounds");
+        ui.checkbox(&mut draft.settings.call_sounds, "Call sounds (ringing, people joining and leaving)");
+        ui.label(RichText::new("Sounds are off while you're deafened or on Do Not Disturb.").small().color(theme::FAINT));
 
         ui.add_space(12.0);
         ui.separator();

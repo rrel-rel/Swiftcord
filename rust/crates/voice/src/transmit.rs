@@ -26,6 +26,9 @@ pub struct Transmitter {
     previous: Vec<f32>,
     /// The latest frame's level, for meters.
     pub level_db: f32,
+    /// RNNoise, when noise suppression is on.
+    denoiser: Option<Box<nnnoiseless::DenoiseState<'static>>>,
+    denoise_buf: [f32; nnnoiseless::DenoiseState::FRAME_SIZE],
 }
 
 /// The level of a frame in dBFS.
@@ -52,7 +55,35 @@ impl Transmitter {
             silence_left: 0,
             previous: vec![0.0; FRAME],
             level_db: -100.0,
+            denoiser: None,
+            denoise_buf: [0.0; nnnoiseless::DenoiseState::FRAME_SIZE],
         })
+    }
+
+    /// Turns noise suppression on or off (cheap to call every frame).
+    pub fn set_noise_suppression(&mut self, on: bool) {
+        match (on, self.denoiser.is_some()) {
+            (true, false) => self.denoiser = Some(nnnoiseless::DenoiseState::new()),
+            (false, true) => self.denoiser = None,
+            _ => {}
+        }
+    }
+
+    /// Removes steady background noise (fans, hum, keyboards…) in place, with RNNoise.
+    fn denoise(&mut self, frame: &mut [f32]) {
+        let Some(d) = self.denoiser.as_mut() else { return };
+        // RNNoise works on 10 ms at 48 kHz, at 16-bit sample scale.
+        for chunk in frame.chunks_mut(nnnoiseless::DenoiseState::FRAME_SIZE) {
+            let input: Vec<f32> = chunk.iter().map(|s| s * 32768.0).collect();
+            let n = input.len();
+            if n < nnnoiseless::DenoiseState::FRAME_SIZE {
+                return;
+            }
+            d.process_frame(&mut self.denoise_buf, &input);
+            for (s, o) in chunk.iter_mut().zip(&self.denoise_buf[..n]) {
+                *s = o / 32768.0;
+            }
+        }
     }
 
     pub fn is_open(&self) -> bool {
@@ -63,6 +94,8 @@ impl Transmitter {
     /// talk spurt fully ending (`Some(false)`, after the trailing silence).
     pub fn process(&mut self, mut frame: Vec<f32>, muted: bool, threshold_db: f32) -> (Output, Option<bool>) {
         debug_assert_eq!(frame.len(), FRAME);
+        // Before the gate, so background noise alone doesn't open it.
+        self.denoise(&mut frame);
         self.level_db = level_db(&frame);
         let loud = !muted && self.level_db > threshold_db;
         self.loud_run = if loud { self.loud_run + 1 } else { 0 };
@@ -153,6 +186,39 @@ mod tests {
             ended |= change == Some(false);
         }
         assert!(ended);
+    }
+
+    #[test]
+    fn noise_suppression_quiets_steady_noise_and_keeps_the_gate_shut() {
+        // Low-pass filtered noise, like a fan or air conditioning, at about -37 dBFS.
+        let (mut state, mut y) = (12345u32, 0.0f32);
+        let mut noise = || {
+            (0..FRAME)
+                .map(|_| {
+                    state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                    let x = (state >> 8) as f32 / (1u32 << 24) as f32 - 0.5;
+                    y = 0.97 * y + 0.012 * x;
+                    y
+                })
+                .collect::<Vec<f32>>()
+        };
+        let (mut plain, mut quiet) = (Transmitter::new(64_000).unwrap(), Transmitter::new(64_000).unwrap());
+        quiet.set_noise_suppression(true);
+        let (mut plain_db, mut quiet_db, mut opened) = (0.0, 0.0, false);
+        // A second of fan-like noise: RNNoise adapts within the first few frames.
+        for i in 0..50 {
+            let n = noise();
+            plain.process(n.clone(), false, -40.0);
+            let (_, change) = quiet.process(n, false, -40.0);
+            if i >= 10 {
+                plain_db += plain.level_db / 40.0;
+                quiet_db += quiet.level_db / 40.0;
+                opened |= change == Some(true);
+            }
+        }
+        assert!(plain_db > -40.0, "the noise alone is above the threshold: {plain_db}");
+        assert!(quiet_db < plain_db - 30.0, "suppressed {plain_db:.1} dB → {quiet_db:.1} dB");
+        assert!(!opened, "noise alone doesn't open the gate");
     }
 
     #[test]

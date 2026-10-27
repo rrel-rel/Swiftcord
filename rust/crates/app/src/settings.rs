@@ -16,11 +16,28 @@ pub struct Settings {
     pub stream_volume: f32,
     /// Keep hearing a watched stream while deafened.
     pub stream_audio_when_deafened: bool,
+    /// Remove background noise from the microphone.
+    pub noise_suppression: bool,
+    /// Sounds for new messages (when a notification would show).
+    pub message_sounds: bool,
+    /// Sounds for calls: ringing, and people joining or leaving yours.
+    pub call_sounds: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { input_device: None, output_device: None, vad_threshold_db: -50.0, notifications: true, hide_members: false, stream_volume: 1.0, stream_audio_when_deafened: false }
+        Self {
+            input_device: None,
+            output_device: None,
+            vad_threshold_db: -50.0,
+            notifications: true,
+            hide_members: false,
+            stream_volume: 1.0,
+            stream_audio_when_deafened: false,
+            noise_suppression: true,
+            message_sounds: true,
+            call_sounds: true,
+        }
     }
 }
 

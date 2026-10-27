@@ -9,7 +9,7 @@ fn main() {
     println!("inputs:  {inputs:?}");
     println!("outputs: {outputs:?}");
 
-    let test = swiftcord_voice::MicTest::start(Default::default(), -50.0);
+    let test = swiftcord_voice::MicTest::start(Default::default(), -50.0, true);
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(4) {
         std::thread::sleep(Duration::from_millis(500));

@@ -277,6 +277,7 @@ pub struct App {
     members_requested: HashSet<(Snowflake, Snowflake)>,
     /// The frecency settings as last read or written, so favourites can be edited without touching the rest.
     frecency: Option<String>,
+    pub sounds: crate::sounds::Sounds,
 }
 
 impl App {
@@ -303,6 +304,7 @@ impl App {
             history_failed: HashMap::new(),
             members_requested: HashSet::new(),
             frecency: None,
+            sounds: Default::default(),
         };
         app.ui.hide_members = app.settings.hide_members;
         app.ui.stream_audio = (app.settings.stream_volume, app.settings.stream_audio_when_deafened);
@@ -708,8 +710,13 @@ impl App {
                 let _ = s;
                 if current == Some(message.channel_id) && focused {
                     self.queue_ack(message.channel_id, message.id);
-                } else if notify && self.settings.notifications && !dnd {
-                    self.toast(&message);
+                } else if notify && !dnd {
+                    if self.settings.notifications {
+                        self.toast(&message);
+                    }
+                    if self.settings.message_sounds && !self.ui.self_deaf {
+                        self.sounds.play(crate::sounds::Sound::Message, &self.settings.output_device);
+                    }
                 }
             }
             Notice::Ring(channel) => {
@@ -722,6 +729,25 @@ impl App {
                 crate::voice_glue::on_notice(self, notice);
             }
         }
+    }
+
+    /// Rings while a call is coming in, and plays the ringback while a DM call we're in rings the others.
+    /// Not while deafened or on Do Not Disturb, as in Discord.
+    fn ring_sounds(&mut self) {
+        use crate::sounds::Sound;
+        let (mut ring, mut ringback) = (false, false);
+        if let Some(s) = &self.session {
+            let me = s.state.me.as_ref().map(|m| m.id);
+            let in_call = self.voice.as_ref().map(|c| c.channel);
+            let quiet = !self.settings.call_sounds || self.ui.self_deaf || s.state.own_status() == swiftcord_core::models::PresenceStatus::Dnd;
+            ring = !quiet && s.state.ringing_me().into_iter().any(|c| Some(c) != in_call);
+            let connected = matches!(self.voice.as_ref().map(|c| c.status), Some(crate::voice_glue::Status::Connected { .. }));
+            ringback = !quiet && connected && in_call.and_then(|c| s.state.call(c)).is_some_and(|c| c.ringing.iter().any(|u| Some(*u) != me));
+        }
+        let output = self.settings.output_device.clone();
+        self.sounds.set_looping(Sound::Ring, ring, &output);
+        self.sounds.set_looping(Sound::Ringback, ringback, &output);
+        self.sounds.tick();
     }
 
     fn toast(&self, m: &Message) {
@@ -1371,11 +1397,12 @@ impl App {
                 self.ui.settings_draft = Some(ui::settings::Draft { settings: self.settings.clone(), inputs, outputs, mic_test: None });
             }
             Action::SaveSettings(s) => {
-                let vad = s.vad_threshold_db;
+                let (vad, noise_suppression) = (s.vad_threshold_db, s.noise_suppression);
                 self.settings = s;
                 self.settings.save();
                 if let Some(v) = self.voice.as_ref().and_then(|c| c.voice()) {
                     v.set_vad_threshold(vad);
+                    v.set_noise_suppression(noise_suppression);
                 }
             }
             Action::BrowserLogin => {
@@ -1407,6 +1434,7 @@ impl eframe::App for App {
             self.ui.banner = None;
         }
         crate::voice_glue::tick(self);
+        self.ring_sounds();
         crate::share_glue::tick(self);
         self.ui.clips.tick();
         self.ui.videos.tick();

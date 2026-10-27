@@ -19,6 +19,8 @@ aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
 cpal = "0.18"
 davey = "0.1.5"
+# RNNoise in Rust (BSD-3), for noise suppression; without its command-line tool's dependencies.
+nnnoiseless = { version = "0.5", default-features = false }
 # libopus transpiled to Rust: no C toolchain or CMake needed, which matters on ARM64 Windows.
 unsafe-libopus = "0.2"
 

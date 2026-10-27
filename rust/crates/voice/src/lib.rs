@@ -62,11 +62,13 @@ pub struct Settings {
     pub vad_threshold_db: f32,
     pub muted: bool,
     pub deafened: bool,
+    /// Remove background noise from the microphone (RNNoise).
+    pub noise_suppression: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { devices: Devices::default(), vad_threshold_db: -50.0, muted: false, deafened: false }
+        Self { devices: Devices::default(), vad_threshold_db: -50.0, muted: false, deafened: false, noise_suppression: true }
     }
 }
 
@@ -106,6 +108,10 @@ impl Voice {
 
     pub fn set_vad_threshold(&self, db: f32) {
         self.shared.threshold.store((-db).clamp(0.0, 100.0) as u16, Ordering::Relaxed);
+    }
+
+    pub fn set_noise_suppression(&self, on: bool) {
+        self.shared.noise_suppression.store(on, Ordering::Relaxed);
     }
 
     /// 0.0–2.0 for one person's volume.
@@ -154,13 +160,14 @@ pub struct MicTest {
     level: Arc<std::sync::atomic::AtomicU32>,
     open: Arc<std::sync::atomic::AtomicBool>,
     threshold: Arc<std::sync::atomic::AtomicU32>,
+    noise_suppression: Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
     errors: std::sync::mpsc::Receiver<String>,
     _io: audio::AudioIo,
 }
 
 impl MicTest {
-    pub fn start(devices: Devices, threshold_db: f32) -> MicTest {
+    pub fn start(devices: Devices, threshold_db: f32, noise_suppression: bool) -> MicTest {
         use std::sync::atomic::{AtomicBool, AtomicU32};
         let mixer = Arc::new(audio::Mixer::default());
         let (mic_tx, mic_rx) = std::sync::mpsc::sync_channel(256);
@@ -169,7 +176,8 @@ impl MicTest {
         let level = Arc::new(AtomicU32::new((-100f32).to_bits()));
         let open = Arc::new(AtomicBool::new(false));
         let threshold = Arc::new(AtomicU32::new(threshold_db.to_bits()));
-        let (s, l, o, t) = (stop.clone(), level.clone(), open.clone(), threshold.clone());
+        let noise_suppression = Arc::new(AtomicBool::new(noise_suppression));
+        let (s, l, o, t, ns) = (stop.clone(), level.clone(), open.clone(), threshold.clone(), noise_suppression.clone());
         let thread = std::thread::spawn(move || {
             let Some(mut tx) = transmit::Transmitter::new(64_000) else { return };
             let mut pending = Vec::new();
@@ -179,6 +187,7 @@ impl MicTest {
                 pending.extend_from_slice(&chunk);
                 while pending.len() >= codec::FRAME {
                     let frame: Vec<f32> = pending.drain(..codec::FRAME).collect();
+                    tx.set_noise_suppression(ns.load(Ordering::Relaxed));
                     let (out, _) = tx.process(frame, false, f32::from_bits(t.load(Ordering::Relaxed)));
                     l.store(tx.level_db.to_bits(), Ordering::Relaxed);
                     o.store(tx.is_open(), Ordering::Relaxed);
@@ -191,7 +200,11 @@ impl MicTest {
                 }
             }
         });
-        MicTest { stop, level, open, threshold, thread: Some(thread), errors, _io: io }
+        MicTest { stop, level, open, threshold, noise_suppression, thread: Some(thread), errors, _io: io }
+    }
+
+    pub fn set_noise_suppression(&self, on: bool) {
+        self.noise_suppression.store(on, Ordering::Relaxed);
     }
 
     /// The microphone's current level in dBFS.
