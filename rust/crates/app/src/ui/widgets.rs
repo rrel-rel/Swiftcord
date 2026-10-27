@@ -52,8 +52,17 @@ pub fn status_color(s: PresenceStatus) -> Color32 {
 }
 
 /// A status dot in Discord's shapes, cut out with `bg`: a moon for idle, a bar for do not disturb and a ring
-/// for offline, so they read without colour too.
-pub fn status_dot(painter: &egui::Painter, c: egui::Pos2, r: f32, status: PresenceStatus, bg: Color32) {
+/// for offline, so they read without colour too. Someone online only from a phone (`mobile`) gets a phone.
+pub fn status_dot(painter: &egui::Painter, c: egui::Pos2, r: f32, status: PresenceStatus, mobile: bool, bg: Color32) {
+    if mobile && status == PresenceStatus::Online {
+        // Taller than the dot, rising from the same bottom edge, with its own cut-out ring.
+        let body = egui::Rect::from_min_max(egui::pos2(c.x - r * 0.75, c.y - r * 1.6), egui::pos2(c.x + r * 0.75, c.y + r));
+        painter.rect_filled(body.expand(r * 0.35), r * 0.55, bg);
+        painter.rect_filled(body, r * 0.3, status_color(status));
+        let screen = egui::Rect::from_min_max(body.min + Vec2::splat(r * 0.28), egui::pos2(body.right() - r * 0.28, body.bottom() - r * 0.6));
+        painter.rect_filled(screen, 0.0, bg);
+        return;
+    }
     painter.circle_filled(c, r, status_color(status));
     match status {
         PresenceStatus::Online => {}
@@ -73,26 +82,27 @@ pub fn status_dot(painter: &egui::Painter, c: egui::Pos2, r: f32, status: Presen
 }
 
 /// Paints an avatar (`url`) into `rect` with a status dot in its bottom-right corner, ringed with `bg`.
-pub fn paint_avatar_with_status(ui: &Ui, url: String, rect: egui::Rect, status: PresenceStatus, bg: Color32) {
+pub fn paint_avatar_with_status(ui: &Ui, url: String, rect: egui::Rect, status: PresenceStatus, mobile: bool, bg: Color32) {
     let size = rect.width();
     egui::Image::from_uri(url)
         .corner_radius(CornerRadius::same((size / 2.0) as u8))
         .show_loading_spinner(false)
         .paint_at(ui, rect);
-    let dot = size * 0.3;
-    let c = rect.right_bottom() - Vec2::splat(dot * 0.5);
-    ui.painter().circle_filled(c, dot * 0.5 + 2.0, bg);
-    status_dot(ui.painter(), c, dot * 0.5, status, bg);
+    corner_status(ui, rect, status, mobile, bg);
 }
 
 /// An avatar with a presence dot in its bottom-right corner.
-pub fn avatar_with_status(ui: &mut Ui, user: &User, size: f32, status: PresenceStatus, bg: Color32) -> Response {
+pub fn avatar_with_status(ui: &mut Ui, user: &User, size: f32, status: PresenceStatus, mobile: bool, bg: Color32) -> Response {
     let r = user_avatar(ui, user, size);
-    let dot = size * 0.3;
-    let c = r.rect.right_bottom() - Vec2::splat(dot * 0.5);
-    ui.painter().circle_filled(c, dot * 0.5 + 2.0, bg);
-    status_dot(ui.painter(), c, dot * 0.5, status, bg);
+    corner_status(ui, r.rect, status, mobile, bg);
     r
+}
+
+fn corner_status(ui: &Ui, avatar: egui::Rect, status: PresenceStatus, mobile: bool, bg: Color32) {
+    let dot = avatar.width() * 0.3;
+    let c = avatar.right_bottom() - Vec2::splat(dot * 0.5);
+    ui.painter().circle_filled(c, dot * 0.5 + 2.0, bg);
+    status_dot(ui.painter(), c, dot * 0.5, status, mobile, bg);
 }
 
 /// A red pill with a count, e.g. unread mentions.

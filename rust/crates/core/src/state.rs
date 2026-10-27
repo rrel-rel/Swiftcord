@@ -127,6 +127,8 @@ pub struct State {
     messages: HashMap<Snowflake, ChannelMessages>,
     read_states: HashMap<Snowflake, ReadStateEntry>,
     presences: HashMap<Snowflake, PresenceStatus>,
+    /// People online only from a phone.
+    on_mobile: HashSet<Snowflake>,
     /// What people are doing ("Playing X", custom statuses), for those who are doing something.
     activities: HashMap<Snowflake, String>,
     /// Our custom status, to send back when our status changes (presence updates replace activities).
@@ -163,6 +165,11 @@ impl State {
 
     pub fn presence(&self, user: Snowflake) -> PresenceStatus {
         self.presences.get(&user).copied().unwrap_or_default()
+    }
+
+    /// Online only from a phone (shown with a phone instead of a dot).
+    pub fn on_mobile(&self, user: Snowflake) -> bool {
+        self.on_mobile.contains(&user)
     }
 
     pub fn activity(&self, user: Snowflake) -> Option<&str> {
@@ -649,7 +656,7 @@ impl State {
             Event::Ready(r) => self.on_ready(*r),
             Event::ReadySupplemental(s) => {
                 for p in s.merged_presences.friends {
-                    self.set_presence(p.user_id(), &p.status, &p.activities);
+                    self.set_presence(p.user_id(), &p.status, &p.activities, &p.client_status);
                 }
                 for g in s.guilds {
                     let states = self.voice_states.entry(g.id).or_default();
@@ -829,7 +836,7 @@ impl State {
                 // The local clock rather than the event timestamp, so clock skew can't hide indicators.
                 self.typing.entry(t.channel_id).or_default().insert(t.user_id, Instant::now() + TYPING_DURATION);
             }
-            Event::PresenceUpdate(p) => self.set_presence(p.user.id, &p.status, &p.activities),
+            Event::PresenceUpdate(p) => self.set_presence(p.user.id, &p.status, &p.activities, &p.client_status),
             Event::SessionsReplace(sessions) => self.set_own_presence(&sessions),
             Event::MemberListUpdate(u) => self.on_member_list(*u),
             Event::UserUpdate(u) => {
@@ -950,8 +957,13 @@ impl State {
         self.set_own_presence(&r.sessions);
     }
 
-    fn set_presence(&mut self, user: Snowflake, status: &str, activities: &[Activity]) {
+    fn set_presence(&mut self, user: Snowflake, status: &str, activities: &[Activity], devices: &ClientStatus) {
         self.presences.insert(user, PresenceStatus::parse(status));
+        if devices.mobile_only(status) {
+            self.on_mobile.insert(user);
+        } else {
+            self.on_mobile.remove(&user);
+        }
         match activity_summary(activities) {
             Some(a) => self.activities.insert(user, a),
             None => self.activities.remove(&user),
@@ -963,7 +975,7 @@ impl State {
     fn set_own_presence(&mut self, sessions: &[SessionInfo]) {
         let Some(me) = self.me.as_ref().map(|m| m.id) else { return };
         if let Some(s) = sessions.iter().find(|s| s.session_id == "all").or(sessions.first()) {
-            self.set_presence(me, &s.status, &s.activities);
+            self.set_presence(me, &s.status, &s.activities, &ClientStatus::default());
             self.own_custom_status = s.activities.iter().filter(|a| a.kind == Activity::CUSTOM).cloned().collect();
         }
     }
@@ -1007,12 +1019,12 @@ impl State {
                 },
             );
             if let Some(p) = &m.presence {
-                presences.push((user.id, p.status.clone(), p.activities.clone()));
+                presences.push((user.id, p.status.clone(), p.activities.clone(), p.client_status.clone()));
             }
         }
         let me = self.me.as_ref().map(|m| m.id);
-        for (user, status, activities) in presences.into_iter().filter(|(user, ..)| Some(*user) != me) {
-            self.set_presence(user, &status, &activities);
+        for (user, status, activities, devices) in presences.into_iter().filter(|(user, ..)| Some(*user) != me) {
+            self.set_presence(user, &status, &activities, &devices);
         }
 
         // Only one channel per guild is subscribed. After switching channels, the old list's updates are

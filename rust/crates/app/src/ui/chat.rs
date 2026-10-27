@@ -147,7 +147,7 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut
             if c.kind == ChannelType::Dm {
                 if let Some(u) = c.recipients.first() {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
-                    widgets::status_dot(ui.painter(), rect.center(), 5.0, s.state.presence(u.id), theme::CHAT);
+                    widgets::status_dot(ui.painter(), rect.center(), 5.0, s.state.presence(u.id), s.state.on_mobile(u.id), theme::CHAT);
                 }
             }
             if let Some(topic) = c.topic.as_deref().filter(|t| !t.is_empty()) {

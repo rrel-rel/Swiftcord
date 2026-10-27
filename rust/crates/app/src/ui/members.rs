@@ -68,7 +68,7 @@ fn member_row(ui: &Ui, state: &State, guild: Snowflake, user_id: Snowflake, rect
     }
     let status = state.presence(user_id);
     let avatar = Rect::from_center_size(egui::pos2(rect.left() + 8.0 + AVATAR / 2.0, rect.center().y), Vec2::splat(AVATAR));
-    widgets::paint_avatar_with_status(ui, state.avatar_url(user, Some(guild), widgets::avatar_px(AVATAR)), avatar, status, bg);
+    widgets::paint_avatar_with_status(ui, state.avatar_url(user, Some(guild), widgets::avatar_px(AVATAR)), avatar, status, state.on_mobile(user_id), bg);
 
     // Offline members are dimmed, as in Discord, until hovered.
     let dim = |c: Color32| if status == PresenceStatus::Offline && !hovered { c.gamma_multiply(0.45) } else { c };

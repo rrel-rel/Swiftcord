@@ -101,6 +101,23 @@ pub struct Presence {
     pub status: String,
     #[serde(deserialize_with = "lenient_vec")]
     pub activities: Vec<Activity>,
+    pub client_status: ClientStatus,
+}
+
+/// Someone's status on each kind of device they're signed in on.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct ClientStatus {
+    pub desktop: Option<String>,
+    pub mobile: Option<String>,
+    pub web: Option<String>,
+}
+
+impl ClientStatus {
+    /// Online only from a phone, which Discord shows with a phone instead of a dot.
+    pub fn mobile_only(&self, status: &str) -> bool {
+        status == "online" && self.mobile.as_deref() == Some("online") && self.desktop.is_none() && self.web.is_none()
+    }
 }
 
 /// A game, a song, a custom status…
@@ -316,6 +333,7 @@ pub struct PresenceUpdate {
     pub status: String,
     #[serde(deserialize_with = "lenient_vec")]
     pub activities: Vec<Activity>,
+    pub client_status: ClientStatus,
 }
 
 /// THREAD_LIST_SYNC: the active threads of a guild (or of some of its channels), and which of them we're in.

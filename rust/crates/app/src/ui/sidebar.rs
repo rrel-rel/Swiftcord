@@ -252,7 +252,7 @@ fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Acti
         let r = row(ui, is_selected, 42.0, |ui, hovered| {
             if c.kind == ChannelType::Dm {
                 if let Some(u) = c.recipients.first() {
-                    widgets::avatar_with_status(ui, u, 32.0, state.presence(u.id), if is_selected { theme::SELECTED } else if hovered { theme::HOVER } else { theme::SIDEBAR });
+                    widgets::avatar_with_status(ui, u, 32.0, state.presence(u.id), state.on_mobile(u.id), if is_selected { theme::SELECTED } else if hovered { theme::HOVER } else { theme::SIDEBAR });
                 }
             } else {
                 match swiftcord_core::cdn::group_dm_icon(c, 64) {
@@ -310,7 +310,7 @@ fn status_menu(ui: &mut Ui, actions: &mut Vec<Action>) {
             ui.painter().rect_filled(rect, 3, fill);
         }
         let top = rect.top() + 15.0;
-        widgets::status_dot(ui.painter(), egui::pos2(rect.left() + 14.0, top), 5.0, status, fill);
+        widgets::status_dot(ui.painter(), egui::pos2(rect.left() + 14.0, top), 5.0, status, false, fill);
         let text = if r.hovered() { Color32::WHITE } else { theme::TEXT };
         ui.painter().text(egui::pos2(rect.left() + 30.0, top), egui::Align2::LEFT_CENTER, label, theme::font_semibold(14.0), text);
         if let Some(d) = detail {
@@ -329,7 +329,7 @@ fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Actio
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        let avatar = widgets::avatar_with_status(ui, me, 32.0, state.own_status(), Color32::from_rgb(0x23, 0x24, 0x28));
+        let avatar = widgets::avatar_with_status(ui, me, 32.0, state.own_status(), false, Color32::from_rgb(0x23, 0x24, 0x28));
         egui::Popup::menu(&avatar).show(|ui| status_menu(ui, actions));
         avatar.on_hover_text("Set Status");
         ui.vertical(|ui| {
