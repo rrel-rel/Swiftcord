@@ -489,7 +489,12 @@ pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
     }
     if a.is_voice_message() {
         let (output, volume) = (cx.uis.videos.output.clone(), cx.uis.videos.volume.unwrap_or(1.0));
-        cx.uis.voice_messages.show(ui, a, output, volume);
+        cx.uis.audio.voice_message(ui, a, output, volume);
+        return;
+    }
+    if a.is_audio() {
+        let (output, volume) = (cx.uis.videos.output.clone(), cx.uis.videos.volume.unwrap_or(1.0));
+        cx.uis.audio.file(ui, a, output, volume);
         return;
     }
     if a.is_video() {
@@ -963,6 +968,8 @@ pub fn estimate_height(msg: &Message, compact: bool) -> f32 {
     for a in &msg.attachments {
         h += if a.is_voice_message() {
             58.0
+        } else if a.is_audio() {
+            104.0
         } else if a.is_image() || a.is_video() { fit(a.width.or(Some(480)), a.height.or(Some(270)), MAX_MEDIA).y + 6.0 } else { 64.0 };
     }
     h += msg.embeds.len() as f32 * 120.0;

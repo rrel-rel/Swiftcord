@@ -249,7 +249,8 @@ pub struct UiState {
     pub clips: crate::clip::Clips,
     /// Videos played in chat.
     pub videos: crate::player::Videos,
-    pub voice_messages: crate::voice_message::VoiceMessages,
+    /// Voice messages and audio files played in chat.
+    pub audio: crate::audio::AudioClips,
 }
 
 impl UiState {
@@ -1410,7 +1411,7 @@ impl eframe::App for App {
         self.ui.clips.tick();
         self.ui.videos.tick();
         let (output, volume) = (self.ui.videos.output.clone(), self.ui.videos.volume.unwrap_or(1.0));
-        self.ui.voice_messages.tick(output, volume);
+        self.ui.audio.tick(output, volume);
         self.ui.stickers.tick();
         crate::search_glue::tick(self);
     }

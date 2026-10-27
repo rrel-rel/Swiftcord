@@ -587,7 +587,7 @@ fn sound_feed(sh: Arc<Shared>) -> impl FnMut(&mut [f32]) + Send + 'static {
 }
 
 /// Converts decoded sound to 48 kHz stereo: extra channels dropped, mono doubled, and linear resampling.
-struct Converter {
+pub(crate) struct Converter {
     channels: usize,
     step: f64,
     pos: f64,
@@ -595,11 +595,11 @@ struct Converter {
 }
 
 impl Converter {
-    fn new(rate: u32, channels: usize) -> Self {
+    pub(crate) fn new(rate: u32, channels: usize) -> Self {
         Self { channels: channels.max(1), step: rate as f64 / RATE as f64, pos: 0.0, prev: [0.0; 2] }
     }
 
-    fn convert(&mut self, input: &[f32]) -> Vec<f32> {
+    pub(crate) fn convert(&mut self, input: &[f32]) -> Vec<f32> {
         let frames = input.len() / self.channels;
         let stereo = |i: usize| -> [f32; 2] {
             let f = &input[i * self.channels..];
@@ -627,14 +627,14 @@ impl Converter {
         out
     }
 
-    fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.pos = 0.0;
         self.prev = [0.0; 2];
     }
 }
 
 #[cfg(windows)]
-mod decode {
+pub(crate) mod decode {
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use std::time::Duration;
@@ -653,7 +653,7 @@ mod decode {
     const AUDIO: u32 = MF_SOURCE_READER_FIRST_AUDIO_STREAM.0 as u32;
 
     /// Selects the first audio stream decoded to float, returning its rate and channel count.
-    fn select_audio(reader: &IMFSourceReader) -> windows::core::Result<(u32, usize)> {
+    pub(crate) fn select_audio(reader: &IMFSourceReader) -> windows::core::Result<(u32, usize)> {
         unsafe {
             reader.SetStreamSelection(AUDIO, true)?;
             let want = MFCreateMediaType()?;
@@ -670,7 +670,7 @@ mod decode {
         }
     }
 
-    fn pcm(sample: &IMFSample) -> windows::core::Result<Vec<f32>> {
+    pub(crate) fn pcm(sample: &IMFSample) -> windows::core::Result<Vec<f32>> {
         unsafe {
             let buf = sample.ConvertToContiguousBuffer()?;
             let (mut ptr, mut len) = (std::ptr::null_mut(), 0u32);
@@ -681,7 +681,7 @@ mod decode {
         }
     }
 
-    pub fn run(url: &str, output: Option<String>, sh: &Arc<Shared>, ctx: &egui::Context) -> Result<(), String> {
+    pub(super) fn run(url: &str, output: Option<String>, sh: &Arc<Shared>, ctx: &egui::Context) -> Result<(), String> {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             MFStartup(MF_VERSION, MFSTARTUP_LITE).map_err(|e| e.to_string())?;

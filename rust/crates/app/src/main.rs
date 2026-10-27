@@ -18,7 +18,7 @@ mod player;
 mod theme;
 mod ui;
 mod voice_glue;
-mod voice_message;
+mod audio;
 
 use std::fs::{self, File};
 use std::sync::Mutex;

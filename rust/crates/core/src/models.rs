@@ -521,6 +521,16 @@ pub struct Attachment {
 }
 
 impl Attachment {
+    /// A sound file (by type, or by extension when Discord didn't say).
+    pub fn is_audio(&self) -> bool {
+        const EXTENSIONS: [&str; 9] = [".mp3", ".wav", ".ogg", ".opus", ".m4a", ".aac", ".flac", ".wma", ".oga"];
+        let name = self.filename.to_ascii_lowercase();
+        match self.content_type.as_deref() {
+            Some(t) => t.starts_with("audio/"),
+            None => EXTENSIONS.iter().any(|e| name.ends_with(e)),
+        }
+    }
+
     pub fn is_voice_message(&self) -> bool {
         self.waveform.is_some() && self.content_type.as_deref().is_none_or(|t| t.starts_with("audio/"))
     }
