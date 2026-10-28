@@ -5,6 +5,7 @@ mod app;
 mod clip;
 mod demo;
 mod emoji_sheet;
+mod inbox_glue;
 mod interactions_glue;
 mod lottie;
 mod stickers;

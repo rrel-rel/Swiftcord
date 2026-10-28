@@ -44,6 +44,7 @@ pub enum AppEvent {
     StickerPacks(Result<Vec<swiftcord_core::models::StickerPack>, String>),
     StreamPreview { key: String, result: Result<Option<String>, String> },
     SearchResults { generation: u64, result: Result<swiftcord_core::rest::SearchResult, String> },
+    Mentions { generation: u64, result: Result<Vec<Message>, String> },
     /// A picture chosen for the profile editor: its data URI and a preview (`None` if the dialog was cancelled).
     ProfileImagePicked { server: bool, kind: ui::profile_edit::ImageKind, result: Result<Option<(String, egui::ColorImage)>, String> },
     /// A server's (or DM's) slash commands, by the server or DM channel ID.
@@ -143,6 +144,11 @@ pub enum Action {
     Search { channel: Snowflake, text: String },
     SearchMore,
     CloseSearch,
+    /// Opens or closes the mentions inbox.
+    ShowInbox,
+    InboxMore,
+    InboxFilters { guild: Option<Snowflake>, everyone: bool, roles: bool },
+    DismissMention(Snowflake),
     StopWatching,
     /// The watched stream's volume (0–2), and whether to keep hearing it while deafened.
     SetStreamAudio { volume: f32, when_deafened: bool },
@@ -264,6 +270,8 @@ pub struct UiState {
     /// The open message search, and what's typed in the header's search box.
     pub search: Option<crate::search_glue::Search>,
     pub search_box: String,
+    /// The open mentions inbox.
+    pub inbox: Option<crate::inbox_glue::Inbox>,
     /// The open profile editor.
     pub profile_editor: Option<ui::profile_edit::Editor>,
     /// Apps' buttons and menus waiting for an answer, and an app's open form.
@@ -570,6 +578,7 @@ impl App {
                 self.banner(format!("Couldn't update favourites: {error}"));
             }
             AppEvent::SearchResults { generation, result } => crate::search_glue::on_results(self, generation, result),
+            AppEvent::Mentions { generation, result } => crate::inbox_glue::on_loaded(self, generation, result),
             AppEvent::ProfileImagePicked { server, kind, result } => {
                 let ctx = self.ctx().clone();
                 let Some(ed) = &mut self.ui.profile_editor else { return };
@@ -659,6 +668,7 @@ impl App {
                     }
                     _ => false,
                 };
+                crate::inbox_glue::on_event(&mut self.ui.inbox, &s.state, &event);
                 let notices = s.state.apply(event);
                 if is_ready {
                     tracing::info!("READY: {} channels, me = {:?}", s.state.private_channels().len(), s.state.me.as_ref().map(|m| m.id));
@@ -1387,6 +1397,7 @@ impl App {
                 }
                 let Some(s) = &self.session else { return };
                 self.ui.pins = Some((channel, None));
+                self.ui.inbox = None;
                 self.ui.threads_panel = None;
                 let rest = s.rest.clone();
                 self.spawn(async move {
@@ -1414,6 +1425,10 @@ impl App {
             Action::Search { channel, text } => crate::search_glue::start(self, channel, text),
             Action::SearchMore => crate::search_glue::more(self),
             Action::CloseSearch => self.ui.search = None,
+            Action::ShowInbox => crate::inbox_glue::toggle(self),
+            Action::InboxMore => crate::inbox_glue::more(self),
+            Action::InboxFilters { guild, everyone, roles } => crate::inbox_glue::set_filters(self, guild, everyone, roles),
+            Action::DismissMention(message) => crate::inbox_glue::dismiss(self, message),
             Action::LoadStreamPreview(key) => {
                 let Some(s) = &self.session else { return };
                 self.ui.stream_previews.insert(key.clone(), (Instant::now(), None));

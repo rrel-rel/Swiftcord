@@ -3,6 +3,7 @@ pub mod chat;
 pub mod components;
 pub mod emoji;
 pub mod gif;
+pub mod inbox;
 pub mod login;
 pub mod markdown;
 pub mod members;

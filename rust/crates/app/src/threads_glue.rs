@@ -41,6 +41,7 @@ pub fn toggle_panel(app: &mut App, channel: Snowflake) {
     }
     app.ui.pins = None;
     app.ui.threads_panel = Some(channel);
+    app.ui.inbox = None;
     load(app, channel, false);
 }
 

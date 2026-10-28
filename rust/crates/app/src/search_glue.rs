@@ -105,6 +105,7 @@ pub fn start(app: &mut App, channel: Snowflake, text: String) {
     let generation = app.ui.search.as_ref().map_or(1, |s| s.generation + 1);
     app.ui.pins = None;
     app.ui.threads_panel = None;
+    app.ui.inbox = None;
     // People we don't have cached yet: ask the server for them first, as Discord's client does.
     let mut waiting = None;
     if let (Some(g), Some(s)) = (guild, &app.session) {

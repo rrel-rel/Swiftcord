@@ -18,6 +18,8 @@ use crate::Snowflake;
 const API_BASE: &str = "https://discord.com/api/v10/";
 const MAX_RATE_LIMIT_RETRIES: u32 = 3;
 pub const USER_AGENT: &str = concat!("Swiftcord-rs/", env!("CARGO_PKG_VERSION"));
+/// Recent mentions asked for at a time.
+pub const MENTIONS_PAGE: usize = 25;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
@@ -356,6 +358,24 @@ impl Rest {
         }
         let page: Page = self.json(Method::GET, &format!("channels/{channel}/messages/pins?limit=50"), Body::None).await?;
         Ok(page.items.into_iter().map(|i| i.message).collect())
+    }
+
+    /// A page of recent messages that mention us (the inbox), newest first and older than `before`. `guild`
+    /// keeps one server's; `everyone` and `roles` include @everyone/@here and role mentions.
+    pub async fn mentions(&self, before: Option<Snowflake>, guild: Option<Snowflake>, everyone: bool, roles: bool) -> Result<Vec<Message>> {
+        let mut path = format!("users/@me/mentions?limit={MENTIONS_PAGE}&everyone={everyone}&roles={roles}");
+        if let Some(b) = before {
+            path.push_str(&format!("&before={b}"));
+        }
+        if let Some(g) = guild {
+            path.push_str(&format!("&guild_id={g}"));
+        }
+        self.json(Method::GET, &path, Body::None).await
+    }
+
+    /// Removes a message from our recent mentions.
+    pub async fn dismiss_mention(&self, message: Snowflake) -> Result<()> {
+        self.empty(Method::DELETE, &format!("users/@me/mentions/{message}"), Body::None).await
     }
 
     /// Rings everyone in a DM or group DM call.

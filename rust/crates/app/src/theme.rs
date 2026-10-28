@@ -211,6 +211,7 @@ pub mod icon {
     pub const SIGNAL: &str = "\u{E701}";
     pub const PHONE: &str = "\u{E717}";
     pub const CHAT: &str = "\u{E8BD}";
+    pub const INBOX: &str = "\u{E715}";
     /// A monitor: screens, and going live.
     pub const SCREEN: &str = "\u{E7F4}";
     pub const CAMERA: &str = "\u{E714}";

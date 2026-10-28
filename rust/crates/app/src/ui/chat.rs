@@ -95,7 +95,11 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
 
     let searching = uis.search.as_ref().is_some_and(|q| q.applies_to(channel.id, channel.guild_id));
     let pins = uis.pins.as_ref().filter(|(c, _)| *c == channel.id).map(|(_, p)| p.clone());
-    if searching {
+    if uis.inbox.is_some() {
+        egui::Panel::right("inbox").exact_size(400.0).frame(egui::Frame::new().fill(theme::SIDEBAR()).inner_margin(8)).show(ui, |ui| {
+            crate::ui::inbox::panel(ui, s, uis, actions);
+        });
+    } else if searching {
         egui::Panel::right("search").exact_size(400.0).frame(egui::Frame::new().fill(theme::SIDEBAR()).inner_margin(8)).show(ui, |ui| {
             crate::ui::search::panel(ui, s, uis, actions);
         });
@@ -156,7 +160,7 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut
                 ui.add(egui::Separator::default().vertical().spacing(16.0));
                 let first_line = topic.lines().next().unwrap_or_default();
                 // Leave room for the buttons and search box on the right, which are laid out after.
-                let icons = [c.guild_id.is_some(), !c.is_forum(), c.has_threads() && !c.is_forum(), c.is_private()].iter().filter(|b| **b).count();
+                let icons = [true, c.guild_id.is_some(), !c.is_forum(), c.has_threads() && !c.is_forum(), c.is_private()].iter().filter(|b| **b).count();
                 let right = 230.0 + 34.0 * icons as f32 + if c.is_thread() { 110.0 } else { 0.0 };
                 let room = (ui.available_width() - right).max(40.0);
                 ui.scope(|ui| {
@@ -165,6 +169,9 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut
                 });
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if widgets::icon_button(ui, icon::INBOX, "Inbox").clicked() {
+                    actions.push(Action::ShowInbox);
+                }
                 search_field(ui, c, search_box, actions);
                 if c.guild_id.is_some() && widgets::icon_button(ui, icon::PEOPLE, "Member List").clicked() {
                     actions.push(Action::ToggleMemberList);

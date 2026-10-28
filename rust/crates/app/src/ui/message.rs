@@ -193,7 +193,9 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
 }
 
 fn header(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
-    ui.horizontal(|ui| {
+    // Wrapped, so a long name in a narrow column (the inbox, search) puts the time on the next line rather
+    // than widening the column.
+    ui.horizontal_wrapped(|ui| {
         let name = match &msg.member {
             Some(m) if m.nick.as_deref().is_some_and(|n| !n.is_empty()) => m.nick.clone().unwrap(),
             _ if msg.webhook_id.is_some() => msg.author.display_name().to_owned(),
@@ -380,7 +382,11 @@ fn reply_preview(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         let p = ui.painter();
         p.line_segment([rect.left_bottom() + Vec2::new(4.0, 2.0), rect.left_top() + Vec2::new(4.0, 7.0)], stroke);
         p.line_segment([rect.left_top() + Vec2::new(4.0, 7.0), rect.right_top() + Vec2::new(-4.0, 7.0)], stroke);
-        match msg.referenced_message.as_deref() {
+        let reference = msg.message_reference.as_ref().and_then(|r| Some((r.channel_id.unwrap_or(msg.channel_id), r.message_id?)));
+        // Lists from elsewhere (recent mentions) leave the replied-to message out: use ours if it's loaded.
+        let cached = || reference.and_then(|(c, id)| cx.state.message(c, id)).cloned();
+        let referenced = msg.referenced_message.as_deref().cloned().or_else(cached);
+        match referenced.as_ref() {
             Some(r) => {
                 widgets::member_avatar(ui, cx.state, &r.author, cx.guild, 16.0);
                 let color = cx.guild.and_then(|g| cx.state.role_color(g, r.author.id));
@@ -389,6 +395,14 @@ fn reply_preview(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
                 let resp = ui.add(egui::Label::new(RichText::new(preview).size(13.0).color(theme::MUTED())).truncate().sense(Sense::click()));
                 if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     cx.actions.push(Action::JumpTo { channel: cx.channel, message: Some(r.id) });
+                }
+            }
+            // In those lists it's only missing, not necessarily deleted, so offer to go and see it.
+            None if cx.read_only && reference.is_some() => {
+                let resp = ui.add(egui::Label::new(RichText::new("Click to see original message").italics().size(13.0).color(theme::MUTED())).sense(Sense::click()));
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    let (channel, id) = reference.unwrap_or_default();
+                    cx.actions.push(Action::JumpTo { channel, message: Some(id) });
                 }
             }
             None => {
