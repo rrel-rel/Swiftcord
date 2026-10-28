@@ -84,6 +84,7 @@ pub enum Action {
     Typing(Snowflake),
     PickFiles(Snowflake),
     AddFiles { channel: Snowflake, files: Vec<FileUpload> },
+    PasteImage { channel: Snowflake, image: std::sync::Arc<egui::ColorImage> },
     Notice(String),
     SearchMembers { guild: Snowflake, query: String },
     OpenGifPicker { channel: Snowflake, at: egui::Pos2 },
@@ -1078,6 +1079,14 @@ impl App {
                 self.select_channel(c);
             }
             Action::AddFiles { channel, files } => self.add_files(channel, files),
+            Action::PasteImage { channel, image } => {
+                self.spawn(async move {
+                    match tokio::task::spawn_blocking(move || pasted_png(&image)).await.map_err(|e| e.to_string()).and_then(|r| r) {
+                        Ok(bytes) => AppEvent::FilesPicked { channel, files: vec![FileUpload { name: "image.png".into(), bytes, content_type: Some("image/png".into()) }] },
+                        Err(e) => AppEvent::Error(format!("Couldn't paste the image: {e}")),
+                    }
+                });
+            }
             Action::Notice(text) => self.banner(text),
             Action::OpenGifPicker { channel, at } => {
                 self.ui.emoji_picker = None;
@@ -1584,5 +1593,29 @@ impl eframe::App for App {
         if let Some(c) = self.ui.channel() {
             self.ensure_history(c);
         }
+    }
+}
+
+/// A pasted clipboard image as PNG bytes, to upload.
+fn pasted_png(image: &egui::ColorImage) -> Result<Vec<u8>, String> {
+    let [w, h] = image.size;
+    let rgba: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_srgba_unmultiplied()).collect();
+    let img = image::RgbaImage::from_raw(w as u32, h as u32, rgba).ok_or("the image is malformed")?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(img).write_to(&mut out, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    Ok(out.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pasted_image_round_trips_through_png() {
+        let pixels = vec![egui::Color32::from_rgb(200, 30, 90); 6];
+        let png = pasted_png(&egui::ColorImage::new([3, 2], pixels)).unwrap();
+        let back = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(back.dimensions(), (3, 2));
+        assert_eq!(back.get_pixel(2, 1).0, [200, 30, 90, 255]);
     }
 }

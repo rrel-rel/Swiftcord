@@ -678,6 +678,17 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
             if draft.text.len() != before && !draft.text.is_empty() {
                 actions.push(Action::Typing(c.id));
             }
+            // An image on the clipboard (a screenshot, say) is pasted as an attachment.
+            if r.has_focus() {
+                let pasted = ui.input(|i| i.events.iter().find_map(|e| if let egui::Event::PasteImage(image) = e { Some(image.clone()) } else { None }));
+                if let Some(image) = pasted {
+                    if perms & perm::ATTACH_FILES != 0 {
+                        actions.push(Action::PasteImage { channel: c.id, image });
+                    } else {
+                        actions.push(Action::Notice("You can't upload files in this channel".into()));
+                    }
+                }
+            }
             if uis.focus_composer {
                 r.request_focus();
                 uis.focus_composer = false;
