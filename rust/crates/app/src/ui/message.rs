@@ -607,7 +607,8 @@ fn embed_text(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
             if let Some(icon) = &a.icon_url {
                 widgets::avatar(ui, icon, 20.0);
             }
-            let r = ui.add(egui::Label::new(RichText::new(&a.name).font(theme::font_semibold(13.5)).color(theme::HEADER())).sense(Sense::click()));
+            // Wrapped: a long author line in a narrow column mustn't widen it.
+            let r = ui.add(egui::Label::new(RichText::new(&a.name).font(theme::font_semibold(13.5)).color(theme::HEADER())).wrap().sense(Sense::click()));
             if let Some(u) = &a.url {
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     cx.actions.push(Action::OpenLink(u.clone()));
@@ -639,7 +640,11 @@ fn embed_text(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
         ui.columns(n, |cols| {
             for (j, col) in cols.iter_mut().enumerate() {
                 let f = &e.fields[i + j];
-                col.label(RichText::new(&f.name).font(theme::font_semibold(13.5)).color(theme::HEADER()));
+                // Names take markdown too (emoji, timestamps, links), shown bold and brighter, as in Discord.
+                let (size, color) = (mcx.size, mcx.color);
+                (mcx.size, mcx.color) = (13.5, theme::HEADER());
+                md::blocks(col, &parsed(msg_id, &format!("**{}**", f.name.trim())), &mut mcx);
+                (mcx.size, mcx.color) = (size, color);
                 md::blocks(col, &parsed(msg_id, &f.value), &mut mcx);
             }
         });

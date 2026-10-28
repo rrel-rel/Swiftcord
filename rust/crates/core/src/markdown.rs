@@ -18,7 +18,8 @@ pub struct Style {
 pub enum Span {
     Text(String, Style),
     Code(String),
-    Link { text: String, url: String, style: Style },
+    /// `title` is the hover text a masked link may carry: `[text](url "title")`.
+    Link { text: String, url: String, style: Style, title: Option<String> },
     User(Snowflake),
     Role(Snowflake),
     Channel(Snowflake),
@@ -341,7 +342,7 @@ fn inline(s: &str, style: Style, out: &mut Vec<Span>, spoilers: &mut u16) {
                 if let Some(span) = angle_span(inner) {
                     flush!();
                     out.push(match span {
-                        Span::Link { text, url, .. } => Span::Link { text, url, style },
+                        Span::Link { text, url, title, .. } => Span::Link { text, url, style, title },
                         other => other,
                     });
                     i += end + 1;
@@ -351,17 +352,16 @@ fn inline(s: &str, style: Style, out: &mut Vec<Span>, spoilers: &mut u16) {
             }
         }
 
-        // [text](https://…)
+        // [text](https://…) or [text](https://… "title")
         if c == b'[' {
             if let Some(close) = rest.find("](") {
                 let label = &rest[1..close];
-                let after = &rest[close + 2..];
-                if let Some(paren) = after.find(')') {
-                    let url = after[..paren].trim().trim_start_matches('<').trim_end_matches('>');
+                if let Some((url, title, used)) = masked_target(&rest[close + 2..]) {
                     if !label.is_empty() && !label.contains('\n') && is_url(url) {
                         flush!();
-                        out.push(Span::Link { text: label.to_owned(), url: url.to_owned(), style });
-                        i += close + 2 + paren + 1;
+                        let (text, style) = link_label(label, style);
+                        out.push(Span::Link { text: text.to_owned(), url: url.to_owned(), style, title: title.map(str::to_owned) });
+                        i += close + 2 + used;
                         text_start = i;
                         continue;
                     }
@@ -382,7 +382,7 @@ fn inline(s: &str, style: Style, out: &mut Vec<Span>, spoilers: &mut u16) {
             let url = &rest[..end];
             if url.len() > "https://".len() {
                 flush!();
-                out.push(Span::Link { text: url.to_owned(), url: url.to_owned(), style });
+                out.push(Span::Link { text: url.to_owned(), url: url.to_owned(), style, title: None });
                 i += end;
                 text_start = i;
                 continue;
@@ -408,6 +408,42 @@ fn inline(s: &str, style: Style, out: &mut Vec<Span>, spoilers: &mut u16) {
         i += rest.chars().next().map_or(1, char::len_utf8);
     }
     push_text(out, &s[text_start..], style);
+}
+
+/// What follows a masked link's `](`: the URL (angle brackets allowed), an optional quoted title (shown on
+/// hover), and how many bytes up to and including the closing `)`.
+fn masked_target(after: &str) -> Option<(&str, Option<&str>, usize)> {
+    let lead = after.len() - after.trim_start().len();
+    let body = &after[lead..];
+    let url_len = body.find(|c: char| c.is_whitespace() || c == ')')?;
+    let url = body[..url_len].trim_start_matches('<').trim_end_matches('>');
+    let mut pos = lead + url_len;
+    pos += after[pos..].len() - after[pos..].trim_start().len();
+    let mut title = None;
+    if let Some(q) = after[pos..].chars().next().filter(|&q| q == '"' || q == '\'') {
+        let end = after[pos + 1..].find(q)?;
+        title = Some(&after[pos + 1..pos + 1 + end]);
+        pos += end + 2;
+        pos += after[pos..].len() - after[pos..].trim_start().len();
+    }
+    after[pos..].starts_with(')').then_some((url, title, pos + 1))
+}
+
+/// A masked link's text, without the code ticks or bold stars around it (Discord shows those as formatting).
+fn link_label(mut label: &str, mut style: Style) -> (&str, Style) {
+    loop {
+        if label.len() > 4 && label.starts_with("**") && label.ends_with("**") {
+            style.bold = true;
+            label = &label[2..label.len() - 2];
+        } else if label.len() > 2 && (label.starts_with('`') && label.ends_with('`') || label.starts_with('*') && label.ends_with('*')) {
+            if label.starts_with('*') {
+                style.italic = true;
+            }
+            label = &label[1..label.len() - 1];
+        } else {
+            return (label, style);
+        }
+    }
 }
 
 fn is_url(s: &str) -> bool {
@@ -528,8 +564,28 @@ mod tests {
         assert!(s.contains(&Span::User(Snowflake(123))));
         assert!(s.contains(&Span::Channel(Snowflake(5))));
         assert!(s.contains(&Span::Emoji { id: Snowflake(77), name: "blob".into(), animated: false }));
-        assert!(s.contains(&Span::Link { text: "https://x.com/a".into(), url: "https://x.com/a".into(), style: Style::default() }));
-        assert!(s.contains(&Span::Link { text: "site".into(), url: "https://y.org".into(), style: Style::default() }));
+        assert!(s.contains(&Span::Link { text: "https://x.com/a".into(), url: "https://x.com/a".into(), style: Style::default(), title: None }));
+        assert!(s.contains(&Span::Link { text: "site".into(), url: "https://y.org".into(), style: Style::default(), title: None }));
+    }
+
+    #[test]
+    fn masked_links_with_titles_and_formatting() {
+        // As a bot (owo's osu! profile embed) writes them.
+        let s = spans("Accuracy: [`99.37%`](https://discord.com/channels/1/2/# \"99.3695\") • [**Link to skin**](https://drive.google.com/x 'drive')");
+        let link = |text: &str, url: &str, title: &str, bold: bool| Span::Link {
+            text: text.into(),
+            url: url.into(),
+            style: Style { bold, ..Default::default() },
+            title: Some(title.into()),
+        };
+        assert!(s.contains(&link("99.37%", "https://discord.com/channels/1/2/#", "99.3695", false)), "{s:?}");
+        assert!(s.contains(&link("Link to skin", "https://drive.google.com/x", "drive", true)), "{s:?}");
+        // A title with a bracket in it, and angle brackets round the URL.
+        let s = spans("[a](<https://z.org> \"x (y)\") after");
+        assert_eq!(s[0], link("a", "https://z.org", "x (y)", false));
+        assert_eq!(s[1], Span::Text(" after".into(), Style::default()));
+        // Not a masked link with an unclosed title (the bare URL in it is still linked, as in Discord).
+        assert!(!spans("[a](https://z.org \"open").iter().any(|s| matches!(s, Span::Link { text, .. } if text == "a")));
     }
 
     #[test]

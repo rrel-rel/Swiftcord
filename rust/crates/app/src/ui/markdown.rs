@@ -76,11 +76,17 @@ fn block(ui: &mut Ui, b: &Block, cx: &mut Cx) {
 }
 
 fn spans_ui(ui: &mut Ui, spans: &[Span], cx: &mut Cx, size: f32) {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(0.0, 2.0);
-        for s in spans {
-            span(ui, s, cx, size);
-        }
+    ui.scope(|ui| {
+        // Pieces of a line are centred on a row as tall as the text: with egui's default (a button's height,
+        // shorter than the text) text hangs low while smaller pieces like inline code sit high.
+        let row = ui.painter().layout_no_wrap("Ag".into(), theme::font(size), Color32::WHITE).size().y;
+        ui.spacing_mut().interact_size.y = row;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(0.0, 2.0);
+            for s in spans {
+                span(ui, s, cx, size);
+            }
+        });
     });
 }
 
@@ -121,9 +127,15 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
             }
         }
         Span::Code(code) => {
-            ui.label(RichText::new(code).monospace().size(size - 1.5).background_color(theme::CODE_BG()).color(theme::TEXT()));
+            // Alone, the monospace font's shorter line sits high beside the text, like superscript. An invisible
+            // character in the text's font gives the line the text's height, and the code (aligned to the bottom,
+            // egui's default for mixed fonts) then sits on its baseline.
+            let mut job = egui::text::LayoutJob::default();
+            job.append("\u{200B}", 0.0, egui::TextFormat { font_id: theme::font(size), color: Color32::TRANSPARENT, ..Default::default() });
+            job.append(code, 0.0, egui::TextFormat { font_id: egui::FontId::monospace(size - 1.5), color: theme::TEXT(), background: theme::CODE_BG(), ..Default::default() });
+            ui.label(job);
         }
-        Span::Link { text, url, style } => {
+        Span::Link { text, url, style, title } => {
             if let Some(i) = hidden(cx, style) {
                 if ui.add(egui::Label::new(styled(text, style, size, theme::RAIL()).background_color(theme::RAIL())).sense(Sense::click())).clicked() {
                     cx.revealed.insert((cx.message, i));
@@ -141,7 +153,12 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
                 None => {
                     let r = ui.add(egui::Label::new(styled(text, style, size, theme::LINK())).sense(Sense::click()));
                     let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
-                    let r = if text != url { r.on_hover_text(url) } else { r };
+                    // The hover shows a masked link's title if it has one (as Discord does), else where it goes.
+                    let r = match title {
+                        Some(t) => r.on_hover_text(t),
+                        None if text != url => r.on_hover_text(url),
+                        None => r,
+                    };
                     if r.hovered() {
                         ui.painter().hline(r.rect.x_range(), r.rect.bottom() - 2.0, egui::Stroke::new(1.0, theme::LINK()));
                     }
