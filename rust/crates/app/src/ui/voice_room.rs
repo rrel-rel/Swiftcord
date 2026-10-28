@@ -177,11 +177,12 @@ fn tile(ui: &Ui, s: &Session, uis: &UiState, channel: &Channel, vs: &VoiceState,
                 painter.rect_filled(button, 6, Color32::from_black_alpha(200));
                 painter.text(button.center(), Align2::CENTER_CENTER, "Watch Stream", theme::font_semibold(14.0), Color32::WHITE);
             }
-            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            if r.clone().on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 actions.push(Action::WatchStream { guild: channel.guild_id, channel: channel.id, user });
             }
         }
     }
+    r.context_menu(|ui| crate::ui::user_menu::voice_user(ui, state, uis, channel, user, &r, actions));
 }
 
 /// A name in a dark pill in a tile's bottom-left corner.

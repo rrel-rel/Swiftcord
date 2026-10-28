@@ -1044,6 +1044,10 @@ fn context_menu(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         cx.uis.editing = Some((msg.id, msg.content.clone()));
         ui.close();
     }
+    if msg.is_regular() && msg.pending.is_none() && ui.button("Forward").clicked() {
+        cx.uis.forward = Some(crate::ui::forward::Forward { channel: msg.channel_id, message: msg.id, ..Default::default() });
+        ui.close();
+    }
     if cx.perms & perm::ADD_REACTIONS != 0 && ui.button("Add Reaction").clicked() {
         let at = ui.ctx().pointer_latest_pos().unwrap_or_default();
         cx.uis.emoji_picker = Some(PickerTarget::Reaction { channel: msg.channel_id, message: msg.id, at });

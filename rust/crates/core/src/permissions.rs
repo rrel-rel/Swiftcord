@@ -20,6 +20,9 @@ pub mod perm {
     pub const MENTION_EVERYONE: u64 = 1 << 17;
     pub const CONNECT: u64 = 1 << 20;
     pub const SPEAK: u64 = 1 << 21;
+    pub const MUTE_MEMBERS: u64 = 1 << 22;
+    pub const DEAFEN_MEMBERS: u64 = 1 << 23;
+    pub const MOVE_MEMBERS: u64 = 1 << 24;
     pub const USE_VAD: u64 = 1 << 25;
     pub const CHANGE_NICKNAME: u64 = 1 << 26;
     pub const MANAGE_THREADS: u64 = 1 << 34;

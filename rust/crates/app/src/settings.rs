@@ -28,6 +28,10 @@ pub struct Settings {
     pub palette: crate::theme::Palette,
     /// The accent colour (RGB).
     pub accent: u32,
+    /// How loud people are in calls, by user (1.0 as sent; 0–2), as set from their voice menu.
+    pub user_volumes: std::collections::HashMap<u64, f32>,
+    /// People muted for us alone in calls.
+    pub muted_users: std::collections::HashSet<u64>,
 }
 
 impl Default for Settings {
@@ -46,6 +50,19 @@ impl Default for Settings {
             call_sounds: true,
             palette: crate::theme::Palette::Dark,
             accent: crate::theme::ACCENTS[0].1,
+            user_volumes: Default::default(),
+            muted_users: Default::default(),
+        }
+    }
+}
+
+impl Settings {
+    /// The gain to play someone at: silent when muted for us, else their volume.
+    pub fn user_gain(&self, user: u64) -> f32 {
+        if self.muted_users.contains(&user) {
+            0.0
+        } else {
+            self.user_volumes.get(&user).copied().unwrap_or(1.0)
         }
     }
 }

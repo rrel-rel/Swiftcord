@@ -256,7 +256,12 @@ fn connect(app: &mut App) {
     call.status = Status::Connecting;
     call.generation += 1;
     let generation = call.generation;
-    call.voice = Some(Voice::connect(&app.rt, info, settings, move |e| sink(AppEvent::Voice { generation, event: e })));
+    let voice = Voice::connect(&app.rt, info, settings, move |e| sink(AppEvent::Voice { generation, event: e }));
+    // People's volumes and mutes carry over between calls.
+    for &user in app.settings.user_volumes.keys().chain(&app.settings.muted_users) {
+        voice.set_user_volume(user, app.settings.user_gain(user));
+    }
+    call.voice = Some(voice);
 }
 
 pub fn on_event(app: &mut App, generation: u64, event: Event) {

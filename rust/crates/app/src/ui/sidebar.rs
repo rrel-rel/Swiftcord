@@ -212,11 +212,12 @@ fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel, actions
             ui.add_space(36.0);
             let r = match state.user(vs.user_id) {
                 Some(u) => widgets::member_avatar(ui, state, u, c.guild_id, 22.0),
-                None => ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover()).1,
+                None => ui.allocate_exact_size(Vec2::splat(22.0), Sense::click()).1,
             };
             if speaking {
                 ui.painter().circle_stroke(r.rect.center(), 12.0, egui::Stroke::new(2.0, theme::GREEN()));
             }
+            person_clicks(state, uis, c, vs.user_id, &r, actions);
             // The badges are laid out from the right first, so a long name is cut short instead of pushing
             // the LIVE button out of view.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -238,11 +239,21 @@ fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel, actions
                     }
                 }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.add(egui::Label::new(RichText::new(name).size(14.0).color(theme::MUTED())).truncate().selectable(false));
+                    let r = ui.add(egui::Label::new(RichText::new(name).size(14.0).color(theme::MUTED())).truncate().selectable(false).sense(Sense::click()));
+                    person_clicks(state, uis, c, vs.user_id, &r, actions);
                 });
             });
         });
     }
+}
+
+/// Someone in a voice channel: a click opens their profile, a right-click their voice menu.
+fn person_clicks(state: &State, uis: &UiState, c: &Channel, user: swiftcord_core::Snowflake, r: &egui::Response, actions: &mut Vec<Action>) {
+    let r = r.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+    if r.clicked() {
+        actions.push(crate::ui::profile::open(user, c.guild_id, &r));
+    }
+    r.context_menu(|ui| crate::ui::user_menu::voice_user(ui, state, uis, c, user, &r, actions));
 }
 
 fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Action>) {

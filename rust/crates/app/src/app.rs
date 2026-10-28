@@ -71,6 +71,14 @@ pub enum AppEvent {
     ThreadJoinFailed { thread: Snowflake, joined: bool, error: String },
 }
 
+/// A moderator's change to someone's voice: server mute or deafen, a move, or (`Move(None)`) a disconnect.
+#[derive(Debug, Clone, Copy)]
+pub enum VoiceMod {
+    Mute(bool),
+    Deafen(bool),
+    Move(Option<Snowflake>),
+}
+
 /// Things the UI asks for; applied after the frame is drawn so drawing only borrows state.
 pub enum Action {
     SelectGuild(Option<Snowflake>),
@@ -120,6 +128,16 @@ pub enum Action {
     SetShareActivity(bool),
     /// Opens a voice channel's screen with its text chat showing.
     OpenVoiceChat(Snowflake),
+    /// Someone's volume in calls, for us; `save` once the slider is let go.
+    SetUserVolume { user: Snowflake, volume: f32, save: bool },
+    /// Mutes or unmutes someone in calls, for us alone.
+    ToggleLocalMute(Snowflake),
+    /// Opens a DM with someone and starts a call there.
+    CallUser(Snowflake),
+    /// Forwards a message to up to five DMs or channels, each followed by `note` if there is one.
+    Forward { channel: Snowflake, message: Snowflake, to: Vec<Snowflake>, note: String },
+    /// A moderator's change to someone's voice state in a server.
+    ModerateVoice { guild: Snowflake, user: Snowflake, change: VoiceMod },
     /// The member list beside `channel` shows rows `first..=last`; subscribes to the blocks covering them.
     MemberListRange { guild: Snowflake, channel: Snowflake, first: usize, last: usize },
     Ack(Snowflake),
@@ -235,6 +253,8 @@ pub struct UiState {
     pub viewer: Option<ui::viewer::Viewed>,
     /// The voice channel screen shows the channel's text chat beside it.
     pub voice_room_chat: bool,
+    /// The "Forward To" picker, while open.
+    pub forward: Option<ui::forward::Forward>,
     /// Where we'd read up to when the open channel was opened with unread messages: the NEW line goes after
     /// it, until the channel is marked read.
     pub unread_marker: HashMap<Snowflake, Snowflake>,
@@ -298,6 +318,9 @@ pub struct UiState {
     pub profiles: ui::profile::Profiles,
     /// The watched stream's sound: volume (0–2) and whether it plays while deafened (from settings).
     pub stream_audio: (f32, bool),
+    /// Copies of the saved per-person call volumes and mutes, for their voice menus.
+    pub user_volumes: HashMap<Snowflake, f32>,
+    pub muted_users: HashSet<Snowflake>,
     /// Favourite GIFs, most recent first (from the synced frecency settings).
     pub favorite_gifs: Vec<swiftcord_core::proto::FavoriteGif>,
     /// Players for GIF-style video clips on screen.
@@ -328,6 +351,8 @@ pub struct App {
     pub sharing: Option<crate::share_glue::Sharing>,
     pub settings: crate::settings::Settings,
     history_failed: HashMap<Snowflake, Instant>,
+    /// Someone we asked to call before their DM existed: the call starts once it's open.
+    pending_call: Option<Snowflake>,
     /// Members already asked for (by server), so each is asked for once per connection.
     members_requested: HashSet<(Snowflake, Snowflake)>,
     /// The frecency settings as last read or written, so favourites can be edited without touching the rest.
@@ -359,12 +384,15 @@ impl App {
             sharing: None,
             settings,
             history_failed: HashMap::new(),
+            pending_call: None,
             members_requested: HashSet::new(),
             frecency: None,
             sounds: Default::default(),
         };
         app.ui.hide_members = app.settings.hide_members;
         app.ui.stream_audio = (app.settings.stream_volume, app.settings.stream_audio_when_deafened);
+        app.ui.user_volumes = app.settings.user_volumes.iter().map(|(&u, &v)| (Snowflake(u), v)).collect();
+        app.ui.muted_users = app.settings.muted_users.iter().map(|&u| Snowflake(u)).collect();
         match credentials::load_token() {
             Some(token) => app.start_session(token),
             None => app.start_qr_login(),
@@ -649,11 +677,15 @@ impl App {
             }
             AppEvent::DmOpened(channel) => {
                 let id = channel.id;
+                let call = self.pending_call.take().filter(|u| channel.recipients.iter().any(|r| r.id == *u));
                 if let Some(s) = &mut self.session {
                     s.state.add_channel(channel);
                 }
                 self.ui.guild = None;
                 self.select_channel(id);
+                if call.is_some() {
+                    self.apply(Action::JoinVoice { guild: None, channel: id });
+                }
             }
         }
     }
@@ -1379,6 +1411,87 @@ impl App {
                     match rest.set_status(status).await {
                         Ok(()) => AppEvent::Error(String::new()),
                         Err(e) => AppEvent::Error(format!("Couldn't save your status: {e}")),
+                    }
+                });
+            }
+            Action::SetUserVolume { user, volume, save } => {
+                let volume = volume.clamp(0.0, 2.0);
+                self.ui.user_volumes.insert(user, volume);
+                self.settings.user_volumes.insert(user.0, volume);
+                if let Some(v) = self.voice.as_ref().and_then(|c| c.voice()) {
+                    v.set_user_volume(user.0, self.settings.user_gain(user.0));
+                }
+                if save {
+                    self.settings.save();
+                }
+            }
+            Action::ToggleLocalMute(user) => {
+                if !self.ui.muted_users.remove(&user) {
+                    self.ui.muted_users.insert(user);
+                }
+                if !self.settings.muted_users.remove(&user.0) {
+                    self.settings.muted_users.insert(user.0);
+                }
+                if let Some(v) = self.voice.as_ref().and_then(|c| c.voice()) {
+                    v.set_user_volume(user.0, self.settings.user_gain(user.0));
+                }
+                self.settings.save();
+            }
+            Action::CallUser(user) => {
+                let Some(s) = &self.session else { return };
+                let dm = s.state.private_channels().iter().find(|c| c.kind == swiftcord_core::models::ChannelType::Dm && c.recipients.iter().any(|r| r.id == user)).map(|c| c.id);
+                match dm {
+                    Some(channel) => {
+                        self.ui.guild = None;
+                        self.select_channel(channel);
+                        self.apply(Action::JoinVoice { guild: None, channel });
+                    }
+                    None => {
+                        // The call starts when the new DM opens.
+                        self.pending_call = Some(user);
+                        self.apply(Action::OpenDm(user));
+                    }
+                }
+            }
+            Action::Forward { channel, message, to, note } => {
+                let Some(s) = &self.session else { return };
+                let guild = s.state.channel(channel).and_then(|c| c.guild_id);
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    let mut failed = Vec::new();
+                    for dest in to {
+                        // The forward itself carries nothing but the reference; a note follows it as its own message.
+                        let reference = serde_json::json!({ "type": 1, "message_id": message, "channel_id": channel, "guild_id": guild });
+                        let fwd = NewMessage { nonce: Some(nonce_now().to_string()), message_reference: Some(reference), ..Default::default() };
+                        match rest.send_message(dest, fwd, Vec::new()).await {
+                            Ok(_) if !note.is_empty() => {
+                                let msg = NewMessage { content: note.clone(), nonce: Some(nonce_now().to_string()), ..Default::default() };
+                                if let Err(e) = rest.send_message(dest, msg, Vec::new()).await {
+                                    failed.push(e.to_string());
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(e) => failed.push(e.to_string()),
+                        }
+                    }
+                    match failed.first() {
+                        None => AppEvent::Error(String::new()),
+                        Some(e) => AppEvent::Error(format!("Couldn't forward the message: {e}")),
+                    }
+                });
+            }
+            Action::ModerateVoice { guild, user, change } => {
+                let Some(s) = &self.session else { return };
+                let body = match change {
+                    VoiceMod::Mute(on) => serde_json::json!({ "mute": on }),
+                    VoiceMod::Deafen(on) => serde_json::json!({ "deaf": on }),
+                    VoiceMod::Move(channel) => serde_json::json!({ "channel_id": channel }),
+                };
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    match rest.moderate_voice(guild, user, body).await {
+                        Ok(()) => AppEvent::Error(String::new()),
+                        Err(e) => AppEvent::Error(format!("Couldn't change their voice state: {e}")),
                     }
                 });
             }

@@ -244,6 +244,12 @@ impl Rest {
         self.json(Method::GET, "users/@me", Body::None).await
     }
 
+    /// A moderator's change to someone's voice state: `{"mute": true}`, `{"deaf": false}`, `{"channel_id": id}` to
+    /// move them, or `{"channel_id": null}` to disconnect them.
+    pub async fn moderate_voice(&self, guild: Snowflake, user: Snowflake, change: serde_json::Value) -> Result<()> {
+        self.empty(Method::PATCH, &format!("guilds/{guild}/members/{user}"), Body::Json(change)).await
+    }
+
     pub async fn create_dm(&self, recipient: Snowflake) -> Result<Channel> {
         self.json(Method::POST, "users/@me/channels", Body::Json(json!({ "recipients": [recipient] }))).await
     }
