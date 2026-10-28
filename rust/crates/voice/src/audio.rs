@@ -62,11 +62,14 @@ impl Resampler {
 /// One remote speaker: a jitter buffer of Opus packets, decoded as they're played.
 ///
 /// Packets wait until `target` frames are buffered, then play in sequence order. A packet missing while later
-/// ones have arrived is concealed by the decoder (packet-loss concealment) instead of leaving a gap. When
-/// the speaker stops (silence frames, or nothing more arrives), the last few milliseconds of real sound fade
-/// out; the next talk spurt starts a fresh decoder and fades in. If the buffer runs dry while the speaker is
-/// still sending, `target` grows so the next run has more cushion, and shrinks again after a stretch
-/// without trouble.
+/// ones have arrived is recovered from the next packet's error-correction copy when it has one, and otherwise
+/// covered by repeating the last frame more and more quietly (Opus's own concealment can burst to several
+/// times the real level, which pops). The seams this leaves are smoothed. When the speaker stops (silence
+/// frames, or nothing more arrives), the last few milliseconds of real sound fade out, and the next talk
+/// spurt fades in. The decoder is never started afresh mid-stream: Opus codes each frame relative to the
+/// one before, so silence frames are still decoded (just not played). If the buffer runs dry while the speaker is still sending, `target`
+/// grows so the next run has more cushion, and shrinks again after a stretch without trouble. If it keeps
+/// filling up (the sender's clock runs fast), two frames are now and then blended into one to catch up.
 struct Stream {
     decoder: Decoder,
     packets: BTreeMap<u64, Vec<u8>>,
@@ -82,7 +85,22 @@ struct Stream {
     concealed: u32,
     last_arrival: Instant,
     last_underrun: Instant,
+    /// The last stereo sample queued, to smooth seams against.
+    tail: [f32; 2],
+    /// The next frame doesn't continue the last one (after a covered loss): smooth the join.
+    seam: bool,
+    /// The last real decoded frame, repeated (quieter) to cover a lost packet.
+    last_frame: Vec<f32>,
+    /// Frames played since two were last blended into one.
+    since_merge: u32,
 }
+
+/// How long a seam is smoothed over (2.5 ms).
+const DECLICK: usize = SAMPLE_RATE as usize / 400;
+/// Catch up (blend two frames into one) when this many frames beyond the target are waiting…
+const CATCH_UP_AT: usize = 2;
+/// …at most once in this many frames played (twice a second).
+const MERGE_EVERY: u32 = 25;
 
 // Internet jitter of a few tens of ms is normal, so keep at least 60 ms of cushion.
 const MIN_TARGET: usize = 3;
@@ -106,7 +124,31 @@ impl Stream {
             concealed: 0,
             last_arrival: Instant::now(),
             last_underrun: Instant::now(),
+            tail: [0.0; 2],
+            seam: false,
+            last_frame: Vec::new(),
+            since_merge: 0,
         })
+    }
+
+    /// Queues a decoded frame. After a covered loss the join is smoothed: the jump between the last sample
+    /// played and this frame's first is eased out over a few milliseconds instead of clicking.
+    fn emit(&mut self, frame: &mut [f32]) {
+        if frame.len() < 2 {
+            return;
+        }
+        if std::mem::take(&mut self.seam) {
+            let d = [self.tail[0] - frame[0], self.tail[1] - frame[1]];
+            let n = (frame.len() / 2).min(DECLICK);
+            for i in 0..n {
+                let k = 1.0 - i as f32 / n as f32;
+                frame[i * 2] += d[0] * k;
+                frame[i * 2 + 1] += d[1] * k;
+            }
+        }
+        self.tail = [frame[frame.len() - 2], frame[frame.len() - 1]];
+        self.since_merge = self.since_merge.saturating_add(1);
+        self.pcm.extend(frame.iter());
     }
 
     fn unwrap_seq(&self, seq: u16) -> u64 {
@@ -129,12 +171,15 @@ impl Stream {
         self.highest = Some(self.highest.map_or(ext, |h| h.max(ext)));
         self.packets.insert(ext, opus);
         if self.packets.len() > self.target + MAX_BACKLOG {
-            // Far behind (e.g. after a stall): drop down to the target and carry on from there.
+            // Far behind (e.g. after a long stall): fade out what's playing, drop down to the target and carry
+            // on from there (the next packet starts afresh and fades in).
             while self.packets.len() > self.target {
                 self.packets.pop_first();
             }
             self.next = *self.packets.keys().next().unwrap();
-            self.pcm.clear();
+            if !self.quiet {
+                self.fade_out();
+            }
         }
     }
 
@@ -148,6 +193,9 @@ impl Stream {
             self.next = *self.packets.keys().next().unwrap();
             self.concealed = 0;
         }
+        if self.catch_up(scratch) {
+            return true;
+        }
         let n = match self.packets.remove(&self.next) {
             // The silence frames sent as someone stops talking: end with our own fade rather than decoding
             // them, which makes the decoder switch modes abruptly (a click).
@@ -155,17 +203,21 @@ impl Stream {
                 if !self.quiet {
                     self.fade_out();
                 }
+                // Still decoded (and not played), so the decoder keeps step with the sender's encoder: Opus codes
+                // each frame relative to the one before, and a decoder that missed frames can get the next
+                // one's loudness badly wrong.
+                self.decoder.decode(Some(&p), scratch);
                 self.pcm.extend(std::iter::repeat_n(0.0, FRAME * 2));
                 self.next += 1;
                 return true;
             }
             Some(p) => {
                 self.concealed = 0;
-                // A new talk spurt: start the decoder afresh, since blending the first frame with what it last
-                // played clicks, and ramp up from silence over 5 ms.
+                // A new talk spurt: ramp up from silence over 5 ms, so it doesn't start with a jump. (The decoder
+                // carries on rather than starting afresh, for the reason above.)
                 let fade_in = std::mem::take(&mut self.quiet);
                 if fade_in {
-                    self.decoder.reset();
+                    self.seam = false;
                 }
                 let n = self.decoder.decode(Some(&p), scratch);
                 if fade_in {
@@ -174,6 +226,8 @@ impl Stream {
                         *s *= (i / 2) as f32 / (ramp / 2) as f32;
                     }
                 }
+                self.last_frame.clear();
+                self.last_frame.extend_from_slice(&scratch[..n]);
                 n
             }
             None if !self.packets.is_empty() => self.conceal(scratch),
@@ -201,7 +255,41 @@ impl Stream {
             self.target -= 1;
             self.last_underrun = Instant::now();
         }
-        self.pcm.extend(&scratch[..n]);
+        let mut frame = scratch[..n].to_vec();
+        self.emit(&mut frame);
+        true
+    }
+
+    /// When packets keep piling up beyond the target (the sender's clock runs a little fast, so we'd drift
+    /// further and further behind), plays two frames as one, blending the first into the second, at most
+    /// twice a second. That keeps the delay steady without a jump. True when it did.
+    fn catch_up(&mut self, scratch: &mut [f32]) -> bool {
+        if self.quiet || self.packets.len() <= self.target + CATCH_UP_AT || self.since_merge < MERGE_EVERY {
+            return false;
+        }
+        let (Some(a), Some(b)) = (self.packets.get(&self.next), self.packets.get(&(self.next + 1))) else { return false };
+        if *a == SILENCE || *b == SILENCE {
+            return false;
+        }
+        let (a, b) = (self.packets.remove(&self.next).unwrap(), self.packets.remove(&(self.next + 1)).unwrap());
+        let (first, second) = scratch.split_at_mut(scratch.len() / 2);
+        let na = self.decoder.decode(Some(&a), first);
+        let nb = self.decoder.decode(Some(&b), second);
+        let n = na.min(nb);
+        // The first frame's start continues what's playing and the second's end leads into the next frame,
+        // so blending across the frame keeps both joins seamless.
+        let frames = (n / 2).max(1) as f32;
+        let mut blended: Vec<f32> = (0..n).map(|i| {
+            let w = (i / 2) as f32 / frames;
+            first[i] * (1.0 - w) + second[i] * w
+        })
+        .collect();
+        self.next += 2;
+        self.concealed = 0;
+        self.since_merge = 0;
+        self.last_frame.clear();
+        self.last_frame.extend_from_slice(&second[..nb]);
+        self.emit(&mut blended);
         true
     }
 
@@ -214,29 +302,68 @@ impl Stream {
             *s *= 1.0 - ((i / 2) as f32 + 1.0) / frames;
         }
         self.quiet = true;
+        self.tail = [0.0; 2];
+        self.seam = false;
     }
 
-    /// A packet is missing but later ones have arrived: conceal it, or after several in a row skip ahead to
-    /// what's there. Returns the samples concealed, or `usize::MAX` after skipping.
+    /// A packet is missing but later ones have arrived. If the next one carries an error-correction copy of
+    /// it, that's decoded; otherwise the last real frame is repeated, quieter each time (Opus's own
+    /// concealment can burst to several times the real level, which pops). After three in a row the sound
+    /// has faded away and playback skips ahead to what's there. Returns the samples produced, or
+    /// `usize::MAX` after skipping.
     fn conceal(&mut self, scratch: &mut [f32]) -> usize {
         if self.quiet {
             // Nothing playing to continue: just move on.
             self.next = *self.packets.keys().next().unwrap();
             return usize::MAX;
         }
-        {
-            // Lost or late: conceal. After several concealed frames with later packets waiting, skip ahead.
-            self.concealed += 1;
-            if self.concealed > 5 {
-                // Skipping is a jump in the sound: fade out first, and the next packet fades in.
-                self.fade_out();
-                self.next = *self.packets.keys().next().unwrap();
+        // Recovered from the next packet's copy: real audio, decoded in order. Voice packets don't always
+        // carry one, and then libopus quietly conceals instead, which can burst; a result much louder than
+        // the frame before it is that, and isn't used.
+        if let Some(next) = self.packets.get(&(self.next + 1)).filter(|p| crate::codec::carries_fec(p)) {
+            let before = self.decoder.snapshot();
+            let n = self.decoder.decode_fec(next, &mut scratch[..FRAME * 2]);
+            let peak = |s: &[f32]| s.iter().fold(0f32, |m, v| m.max(v.abs()));
+            if n > 0 && peak(&scratch[..n]) <= (peak(&self.last_frame) * 1.3).max(0.05) {
                 self.concealed = 0;
-                return usize::MAX;
+                self.last_frame.clear();
+                self.last_frame.extend_from_slice(&scratch[..n]);
+                return n;
             }
-            // Conceal exactly one frame (the decoder would otherwise fill the whole buffer).
-            self.decoder.decode(None, &mut scratch[..FRAME * 2])
+            // The burst also lives on in the decoder's state, where it would spill into the next frame: go back
+            // to before the attempt.
+            self.decoder.restore(&before);
         }
+        self.concealed += 1;
+        if self.concealed > 3 || self.last_frame.is_empty() {
+            // Faded away: skip to what's there, which starts afresh and fades in.
+            self.fade_out();
+            self.next = *self.packets.keys().next().unwrap();
+            self.concealed = 0;
+            return usize::MAX;
+        }
+        // The last real frame again, ramping down a third of the way to silence each time.
+        let n = self.last_frame.len();
+        let frames = (n / 2) as f32;
+        let (from, to) = (1.0 - (self.concealed - 1) as f32 / 3.0, 1.0 - self.concealed as f32 / 3.0);
+        for (i, (o, s)) in scratch[..n].iter_mut().zip(&self.last_frame).enumerate() {
+            let t = (i / 2) as f32 / frames;
+            *o = s * (from + (to - from) * t);
+        }
+        // Where the repeat begins doesn't follow where the frame ended, and the next real frame won't follow
+        // the repeat either: both joins get smoothed.
+        self.seam = true;
+        let mut frame = scratch[..n].to_vec();
+        self.emit(&mut frame);
+        self.seam = true;
+        if self.concealed == 3 {
+            // Down to silence: the next real packet starts afresh and fades in.
+            self.quiet = true;
+            self.tail = [0.0; 2];
+            self.seam = false;
+        }
+        self.next += 1;
+        usize::MAX
     }
 }
 
@@ -313,8 +440,10 @@ fn device_errors(what: &'static str, errors: SyncSender<String>) -> impl FnMut(c
     move |e: cpal::Error| {
         if e.kind() == cpal::ErrorKind::Xrun {
             xruns += 1;
+            // In the log (1st, 2nd, 4th, 8th… time), so a tester's log shows whether glitches they heard were the
+            // system falling behind rather than the network.
             if xruns.is_power_of_two() {
-                tracing::debug!("{what}: buffer under/overrun ({xruns} so far)");
+                tracing::info!("{what}: buffer under/overrun ({xruns} so far)");
             }
             return;
         }
@@ -723,6 +852,221 @@ mod tests {
         let tail = &out[FRAME * 2 * 4..];
         assert_eq!(energy(tail), 0.0, "silent once the real sound has faded");
         assert!(max_step(&out) < 0.1, "largest step {}", max_step(&out));
+    }
+
+    /// A continuous 220 Hz tone, 0.3 loud, as Opus packets (its natural step is under 0.01 per sample).
+    fn steady(n: usize) -> Vec<Vec<u8>> {
+        let mut enc = crate::codec::Encoder::new(64_000).unwrap();
+        let mut buf = [0u8; 1400];
+        (0..n)
+            .map(|f| {
+                let pcm: Vec<f32> = (0..FRAME).map(|i| ((f * FRAME + i) as f32 * 220.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.3).collect();
+                let k = enc.encode(&pcm, &mut buf).unwrap();
+                buf[..k].to_vec()
+            })
+            .collect()
+    }
+
+    /// Plays `schedule` (per 20 ms tick: which packets arrive) through a mixer and returns the left channel.
+    fn play(schedule: &[Vec<(u16, Vec<u8>)>], ticks: usize, per_tick: usize) -> Vec<f32> {
+        let m = Mixer::default();
+        let mut left = Vec::new();
+        let mut out = vec![0.0; per_tick * 2];
+        for t in 0..ticks {
+            for (seq, p) in schedule.get(t).into_iter().flatten() {
+                m.push(1, *seq, p.clone());
+            }
+            m.mix(&mut out);
+            left.extend(out.chunks(2).map(|f| f[0]));
+        }
+        left
+    }
+
+    fn worst_step(left: &[f32]) -> (f32, usize) {
+        left.windows(2).enumerate().map(|(i, w)| ((w[1] - w[0]).abs(), i)).fold((0.0, 0), |a, b| if b.0 > a.0 { b } else { a })
+    }
+
+    /// Voice-like audio: a 150 Hz voice with harmonics, a little vibrato, and syllable-like swells.
+    fn voicey(n: usize, bitrate: i32) -> Vec<Vec<u8>> {
+        let mut enc = crate::codec::Encoder::new(bitrate).unwrap();
+        let mut buf = [0u8; 1400];
+        let tau = std::f32::consts::TAU;
+        (0..n)
+            .map(|f| {
+                let pcm: Vec<f32> = (0..FRAME)
+                    .map(|i| {
+                        let t = (f * FRAME + i) as f32 / 48_000.0;
+                        let pitch = 150.0 + 8.0 * (tau * 5.0 * t).sin();
+                        let swell = 0.55 + 0.45 * (tau * 3.0 * t).sin();
+                        let voice: f32 = (1..=6).map(|h| (tau * pitch * h as f32 * t).sin() / h as f32).sum();
+                        voice * swell * 0.2
+                    })
+                    .collect();
+                let k = enc.encode(&pcm, &mut buf).unwrap();
+                buf[..k].to_vec()
+            })
+            .collect()
+    }
+
+    /// Plays `packets` with the ones `lost` (by index) missing, and returns the worst step relative to the
+    /// same audio with nothing lost, and how loud the lost stretches are relative to normal.
+    fn loss_effect(packets: &[Vec<u8>], lost: impl Fn(usize) -> bool) -> (f32, f32) {
+        let n = packets.len();
+        let clean: Vec<_> = (0..n).map(|i| vec![(i as u16, packets[i].clone())]).collect();
+        let lossy: Vec<_> = (0..n).map(|i| if lost(i) { vec![] } else { vec![(i as u16, packets[i].clone())] }).collect();
+        let (a, b) = (play(&clean, n, FRAME), play(&lossy, n, FRAME));
+        let skip = FRAME * 10;
+        let base = worst_step(&a[skip..]).0;
+        let worst = worst_step(&b[skip..]).0;
+        let rms = |s: &[f32]| (s.iter().map(|v| v * v).sum::<f32>() / s.len().max(1) as f32).sqrt();
+        (worst / base, rms(&b[skip..]) / rms(&a[skip..]))
+    }
+
+    #[test]
+    fn lost_packets_dont_click() {
+        // A tone: Opus's own concealment burst to three times its level here (a loud click).
+        let (step, level) = loss_effect(&steady(400), |i| i % 50 == 25);
+        assert!(step < 1.5, "worst step {step:.2}x normal");
+        assert!(level > 0.9, "level {level:.2}x");
+        // Voice-like audio in voice mode, which carries copies of lost frames, and in music mode.
+        for bitrate in [24_000, 64_000] {
+            let (step, level) = loss_effect(&voicey(400, bitrate), |i| i % 10 == 5);
+            assert!(step < 1.5, "{bitrate} bps: worst step {step:.2}x normal");
+            assert!(level > 0.85, "{bitrate} bps: level {level:.2}x");
+            let (step, _) = loss_effect(&voicey(400, bitrate), |i| i % 60 >= 30 && i % 60 < 33);
+            assert!(step < 1.5, "{bitrate} bps, bursts: worst step {step:.2}x normal");
+        }
+    }
+
+    #[test]
+    fn talk_spurts_from_one_encoder_start_and_stop_cleanly() {
+        // As official clients send: one encoder running throughout; each spurt ends with five silence frames,
+        // then nothing for a while (sequence numbers carry on), then speech again.
+        let p = steady(400);
+        let mut sched: Vec<Vec<(u16, Vec<u8>)>> = Vec::new();
+        let (mut seq, mut frame) = (0u16, 0usize);
+        for _ in 0..4 {
+            for _ in 0..40 {
+                sched.push(vec![(seq, p[frame].clone())]);
+                seq = seq.wrapping_add(1);
+                frame += 1;
+            }
+            for _ in 0..5 {
+                sched.push(vec![(seq, SILENCE.to_vec())]);
+                seq = seq.wrapping_add(1);
+            }
+            // A pause: the encoder keeps running on silence, nothing is sent.
+            frame += 25;
+            sched.extend(std::iter::repeat_n(Vec::new(), 25));
+        }
+        let left = play(&sched, sched.len(), FRAME);
+        let (step, at) = worst_step(&left);
+        assert!(step < 0.015, "worst step {step} at {:.2} s", at as f32 / 48_000.0);
+    }
+
+    #[test]
+    fn a_fast_sender_is_caught_up_without_a_jump() {
+        // Their clock 2% fast for 30 s: packets pile up, which used to end in an abrupt cut (a pop) once
+        // half a second had built up.
+        let p = steady(1600);
+        let mut sched: Vec<Vec<(u16, Vec<u8>)>> = vec![Vec::new(); 1500];
+        let mut seq = 0usize;
+        for (t, slot) in sched.iter_mut().enumerate() {
+            slot.push((seq as u16, p[seq].clone()));
+            seq += 1;
+            if t % 50 == 49 {
+                slot.push((seq as u16, p[seq].clone()));
+                seq += 1;
+            }
+        }
+        let m = Mixer::default();
+        let mut left = Vec::new();
+        let mut out = vec![0.0; FRAME * 2];
+        let mut most = 0;
+        for slot in &sched {
+            for (s, pk) in slot {
+                m.push(1, *s, pk.clone());
+            }
+            m.mix(&mut out);
+            left.extend(out.chunks(2).map(|f| f[0]));
+            most = most.max(m.streams.lock()[&1].packets.len());
+        }
+        let (step, _) = worst_step(&left[FRAME * 10..]);
+        assert!(step < 0.015, "worst step {step}");
+        assert!(most <= 4 + CATCH_UP_AT + 2, "fell {most} packets behind");
+    }
+
+    #[test]
+    #[ignore = "diagnostic: prints how losses sound with voice-like audio"]
+    fn voice_loss_scenarios() {
+        for bitrate in [24_000, 64_000] {
+            let p = voicey(600, bitrate);
+            let mode = if crate::codec::carries_fec(&p[300]) { "voice mode" } else { "music mode" };
+            for (name, lost) in [
+                ("2% single losses", Box::new(|i: usize| i % 50 == 25) as Box<dyn Fn(usize) -> bool>),
+                ("10% single losses", Box::new(|i: usize| i % 10 == 5)),
+                ("bursts of 3 lost", Box::new(|i: usize| i % 60 >= 30 && i % 60 < 33)),
+            ] {
+                let (step, level) = loss_effect(&p, lost);
+                println!("{bitrate} bps ({mode}), {name:<20} worst step {step:.2}x normal, level {level:.2}x");
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic: prints the worst pop in each network scenario"]
+    fn pop_scenarios() {
+        let p = steady(3100);
+        let report = |name: &str, left: &[f32]| {
+            let (step, at) = worst_step(&left[FRAME * 10..]);
+            println!("{name:<40} worst step {step:.4} at {:.2} s", (at + FRAME * 10) as f32 / 48_000.0);
+        };
+        // Steady, every packet on time.
+        let sched: Vec<_> = (0..600).map(|i| vec![(i as u16, p[i].clone())]).collect();
+        report("steady", &play(&sched, 600, FRAME));
+        // One packet in 50 lost.
+        let sched: Vec<_> = (0..600).map(|i| if i % 50 == 25 { vec![] } else { vec![(i as u16, p[i].clone())] }).collect();
+        let left = play(&sched, 600, FRAME);
+        report("2% loss", &left);
+        let (_, at) = worst_step(&left[FRAME * 10..]);
+        let at = at + FRAME * 10;
+        println!("  at frame {} sample {}; around: {:?}", at / FRAME, at % FRAME, &left[at - 3..at + 4].iter().map(|v| (v * 1000.0).round() / 1000.0).collect::<Vec<_>>());
+        // The sender's clock 1% fast: an extra packet every 100.
+        let mut sched: Vec<Vec<(u16, Vec<u8>)>> = vec![Vec::new(); 3000];
+        let mut seq = 0usize;
+        for (t, slot) in sched.iter_mut().enumerate() {
+            slot.push((seq as u16, p[seq].clone()));
+            seq += 1;
+            if t % 100 == 99 {
+                slot.push((seq as u16, p[seq].clone()));
+                seq += 1;
+            }
+        }
+        report("sender 1% fast (60 s)", &play(&sched[..2900], 2900, FRAME));
+        // The sender's clock 1% slow: a packet missing every 100 ticks (but nothing lost).
+        let mut sched: Vec<Vec<(u16, Vec<u8>)>> = vec![Vec::new(); 3000];
+        let mut seq = 0usize;
+        for (t, slot) in sched.iter_mut().enumerate() {
+            if t % 100 != 99 {
+                slot.push((seq as u16, p[seq].clone()));
+                seq += 1;
+            }
+        }
+        report("sender 1% slow (60 s)", &play(&sched, 3000, FRAME));
+        // A 600 ms stall, then everything at once.
+        let mut sched: Vec<Vec<(u16, Vec<u8>)>> = (0..600).map(|i| vec![(i as u16, p[i].clone())]).collect();
+        let held: Vec<_> = (100..130).flat_map(|t| std::mem::take(&mut sched[t])).collect();
+        sched[130].extend(held);
+        report("600 ms stall then burst", &play(&sched, 600, FRAME));
+        // Neighbouring packets swapped now and then.
+        let mut sched: Vec<Vec<(u16, Vec<u8>)>> = (0..600).map(|i| vec![(i as u16, p[i].clone())]).collect();
+        for t in (20..590).step_by(37) {
+            sched.swap(t, t + 1);
+        }
+        report("reordering", &play(&sched, 600, FRAME));
+        // A device that asks for 10 ms at a time.
+        let sched: Vec<_> = (0..1200).map(|i| if i % 2 == 0 { vec![((i / 2) as u16, p[i / 2].clone())] } else { vec![] }).collect();
+        report("10 ms callbacks", &play(&sched, 1200, FRAME / 2));
     }
 
     #[test]

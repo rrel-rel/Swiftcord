@@ -69,12 +69,35 @@ impl Decoder {
         if n > 0 { n as usize * 2 } else { 0 }
     }
 
-    /// Forgets everything decoded so far, so a new talk spurt isn't blended with the end of the last one.
-    pub fn reset(&mut self) {
-        if let Some(fresh) = Decoder::new() {
-            *self = fresh;
+    /// Recovers the frame before `next_packet` from the copy of it that voice (SILK and hybrid) packets carry
+    /// (in-band forward error correction), into interleaved stereo. Only call it when [`carries_fec`] says
+    /// the packet has one: otherwise libopus falls back to its own concealment.
+    pub fn decode_fec(&mut self, next_packet: &[u8], out: &mut [f32]) -> usize {
+        let frames = (out.len() / 2).min(FRAME) as i32;
+        let n = unsafe { opus::opus_decode_float(self.0, next_packet.as_ptr(), next_packet.len() as i32, out.as_mut_ptr(), frames, 1) };
+        if n > 0 { n as usize * 2 } else { 0 }
+    }
+
+    /// A copy of the decoder's whole state, to go back to with [`Decoder::restore`]. libopus keeps its state in
+    /// one block with offsets rather than pointers inside, so it can be copied as bytes.
+    pub fn snapshot(&self) -> Vec<u8> {
+        let size = unsafe { opus::opus_decoder_get_size(2) } as usize;
+        unsafe { std::slice::from_raw_parts(self.0 as *const u8, size) }.to_vec()
+    }
+
+    /// Puts back a state from [`Decoder::snapshot`] of this decoder.
+    pub fn restore(&mut self, state: &[u8]) {
+        let size = unsafe { opus::opus_decoder_get_size(2) } as usize;
+        if state.len() == size {
+            unsafe { std::ptr::copy_nonoverlapping(state.as_ptr(), self.0 as *mut u8, size) };
         }
     }
+}
+
+/// Whether an Opus packet can carry a copy of the frame before it (forward error correction): only voice
+/// modes do, SILK (configurations 0–11) and hybrid (12–15), not CELT (16–31).
+pub fn carries_fec(packet: &[u8]) -> bool {
+    packet.first().is_some_and(|toc| toc >> 3 < 16) && packet != SILENCE
 }
 
 impl Drop for Decoder {
@@ -105,5 +128,32 @@ mod tests {
         assert!(energy > 0.05, "decoded energy {energy}");
         // Concealment produces a frame too.
         assert_eq!(dec.decode(None, &mut out), FRAME * 2);
+    }
+
+    #[test]
+    fn restoring_a_snapshot_undoes_decoding() {
+        let mut enc = Encoder::new(64_000).unwrap();
+        let mut dec = Decoder::new().unwrap();
+        let mut packet = [0u8; 1500];
+        let mut out = vec![0f32; FRAME * 2];
+        let tone = |f: usize| (0..FRAME).map(|i| ((f * FRAME + i) as f32 * 0.05).sin() * 0.4).collect::<Vec<f32>>();
+        let packets: Vec<Vec<u8>> = (0..6)
+            .map(|f| {
+                let n = enc.encode(&tone(f), &mut packet).unwrap();
+                packet[..n].to_vec()
+            })
+            .collect();
+        for p in &packets[..4] {
+            dec.decode(Some(p), &mut out);
+        }
+        let saved = dec.snapshot();
+        dec.decode(Some(&packets[4]), &mut out);
+        let first = out.clone();
+        // Something else happens (here, concealment), then the state is put back: decoding again gives the
+        // same result as the first time.
+        dec.decode(None, &mut out);
+        dec.restore(&saved);
+        dec.decode(Some(&packets[4]), &mut out);
+        assert_eq!(out, first);
     }
 }
