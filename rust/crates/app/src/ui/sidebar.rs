@@ -184,16 +184,13 @@ fn channel_row(ui: &mut Ui, state: &State, c: &Channel, selected: bool, unread: 
     }
     let r = r.on_hover_text(c.topic.clone().unwrap_or_default());
     if open_chat {
-        actions.push(Action::SelectChannel(c.id));
+        actions.push(Action::OpenVoiceChat(c.id));
     } else if r.clicked() {
+        // A voice channel opens its own screen, joining the call there (already in it: just the screen).
+        actions.push(Action::SelectChannel(c.id));
         if c.is_voice() {
             actions.push(Action::JoinVoice { guild: c.guild_id, channel: c.id });
-        } else {
-            actions.push(Action::SelectChannel(c.id));
         }
-    }
-    if c.is_voice() && r.double_clicked() {
-        actions.push(Action::SelectChannel(c.id));
     }
     r.context_menu(|ui| {
         if ui.button("Copy channel ID").clicked() {

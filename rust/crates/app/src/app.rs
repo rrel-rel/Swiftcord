@@ -118,6 +118,8 @@ pub enum Action {
     SetStatus(swiftcord_core::models::PresenceStatus),
     /// Discord's "Share my activity".
     SetShareActivity(bool),
+    /// Opens a voice channel's screen with its text chat showing.
+    OpenVoiceChat(Snowflake),
     /// The member list beside `channel` shows rows `first..=last`; subscribes to the blocks covering them.
     MemberListRange { guild: Snowflake, channel: Snowflake, first: usize, last: usize },
     Ack(Snowflake),
@@ -231,6 +233,8 @@ pub struct UiState {
     pub confirm_delete: Option<(Snowflake, Snowflake)>,
     /// The picture open in the image viewer.
     pub viewer: Option<ui::viewer::Viewed>,
+    /// The voice channel screen shows the channel's text chat beside it.
+    pub voice_room_chat: bool,
     /// Where we'd read up to when the open channel was opened with unread messages: the NEW line goes after
     /// it, until the channel is marked read.
     pub unread_marker: HashMap<Snowflake, Snowflake>,
@@ -1377,6 +1381,10 @@ impl App {
                         Err(e) => AppEvent::Error(format!("Couldn't save your status: {e}")),
                     }
                 });
+            }
+            Action::OpenVoiceChat(channel) => {
+                self.ui.voice_room_chat = true;
+                self.apply(Action::SelectChannel(channel));
             }
             Action::SetShareActivity(show) => {
                 let Some(s) = &mut self.session else { return };

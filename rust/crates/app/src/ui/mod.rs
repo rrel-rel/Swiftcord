@@ -19,6 +19,7 @@ pub mod profile_edit;
 pub mod settings;
 pub mod share;
 pub mod viewer;
+pub mod voice_room;
 pub mod sidebar;
 pub mod sticker_picker;
 pub mod threads;

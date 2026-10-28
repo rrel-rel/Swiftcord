@@ -84,15 +84,20 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, actions
 }
 
 /// One person's camera in `rect`: the picture filling it (cropped, not stretched), their name, and a green
-/// ring while they talk. Our own is mirrored, like a mirror.
+/// ring while they talk. A phone held upright in a wide tile is shown whole, with bars, rather than cropped
+/// to a sliver. Our own is mirrored, like a mirror.
 pub fn camera_tile(ui: &Ui, s: &Session, uis: &UiState, guild: Option<Snowflake>, user: Snowflake, rect: egui::Rect) {
     let Some(tex) = uis.cameras.get(&user) else { return };
     let mine = s.state.me.as_ref().is_some_and(|m| m.id == user);
-    // Crop the picture to the tile's shape around its centre.
     let (pic, tile) = (tex.size_vec2(), rect.size());
     let (pa, ta) = (pic.x / pic.y.max(1.0), tile.x / tile.y.max(1.0));
     let (mut u0, mut u1, mut v0, mut v1) = (0.0, 1.0, 0.0, 1.0);
-    if pa > ta {
+    let mut at = rect;
+    if pa < 1.0 && ta > 1.0 {
+        ui.painter().rect_filled(rect, 8, Color32::BLACK);
+        at = egui::Rect::from_center_size(rect.center(), Vec2::new(tile.y * pa, tile.y));
+    } else if pa > ta {
+        // Crop the picture to the tile's shape around its centre.
         let keep = ta / pa;
         (u0, u1) = ((1.0 - keep) / 2.0, (1.0 + keep) / 2.0);
     } else {
@@ -102,7 +107,7 @@ pub fn camera_tile(ui: &Ui, s: &Session, uis: &UiState, guild: Option<Snowflake>
     if mine {
         (u0, u1) = (u1, u0);
     }
-    egui::Image::new(tex).uv(egui::Rect::from_min_max(egui::pos2(u0, v0), egui::pos2(u1, v1))).corner_radius(8).paint_at(ui, rect);
+    egui::Image::new(tex).uv(egui::Rect::from_min_max(egui::pos2(u0, v0), egui::pos2(u1, v1))).corner_radius(8).paint_at(ui, at);
     if uis.speaking.contains(&user) {
         ui.painter().rect_stroke(rect, 8, egui::Stroke::new(3.0, theme::GREEN()), egui::StrokeKind::Inside);
     }
@@ -111,35 +116,6 @@ pub fn camera_tile(ui: &Ui, s: &Session, uis: &UiState, guild: Option<Snowflake>
     let label = egui::Rect::from_min_size(rect.left_bottom() + Vec2::new(8.0, -galley.size().y - 12.0), galley.size() + Vec2::new(10.0, 4.0));
     ui.painter().rect_filled(label.intersect(rect), 4, Color32::from_black_alpha(150));
     ui.painter().with_clip_rect(rect).galley(label.min + Vec2::new(5.0, 2.0), galley, Color32::WHITE);
-}
-
-/// The cameras of everyone in a server voice call who has one on, above the channel's chat.
-pub fn camera_grid(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel) {
-    let mut users: Vec<Snowflake> = uis.cameras.keys().copied().collect();
-    if users.is_empty() {
-        return;
-    }
-    users.sort();
-    egui::Panel::top(("cameras", channel.id)).frame(egui::Frame::new().fill(BG).inner_margin(12)).show(ui, |ui| {
-        // Up to three across, 16:9, and no taller than a third of the window per row.
-        let columns = users.len().min(3);
-        let gap = 8.0;
-        let max_h = ui.ctx().content_rect().height() / 3.0;
-        let w = ((ui.available_width() - gap * (columns - 1) as f32) / columns as f32).min(max_h * 16.0 / 9.0);
-        let size = Vec2::new(w, w * 9.0 / 16.0);
-        for row in users.chunks(columns) {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                let used = row.len() as f32 * (size.x + gap) - gap;
-                ui.add_space(((ui.available_width() - used) / 2.0).max(0.0));
-                for &u in row {
-                    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-                    camera_tile(ui, s, uis, channel.guild_id, u, rect);
-                }
-            });
-            ui.add_space(gap);
-        }
-    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -193,7 +169,7 @@ fn participant(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, u: &U
 }
 
 /// A round call-control button.
-fn round(ui: &mut Ui, glyph: &str, fg: Color32, bg: Color32, tip: &str) -> egui::Response {
+pub(crate) fn round(ui: &mut Ui, glyph: &str, fg: Color32, bg: Color32, tip: &str) -> egui::Response {
     let (rect, r) = ui.allocate_exact_size(Vec2::splat(48.0), Sense::click());
     let fill = if r.hovered() { bg.gamma_multiply(1.2) } else { bg };
     ui.painter().circle_filled(rect.center(), 24.0, fill);

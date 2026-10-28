@@ -69,12 +69,16 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
     };
     let perms = state.permissions(channel.id);
 
+    // A voice channel has its own screen (its chat goes alongside it there).
+    if channel.is_voice() {
+        crate::ui::voice_room::show(ui, s, uis, catalog, channel, actions);
+        return;
+    }
+
     let in_call = uis.voice.as_ref().is_some_and(|v| v.channel == channel.id);
     header(ui, s, channel, in_call, &mut uis.search_box, actions);
     if channel.is_private() {
         crate::ui::call::panel(ui, s, uis, channel, actions);
-    } else if channel.is_voice() && in_call {
-        crate::ui::call::camera_grid(ui, s, uis, channel);
     }
 
     // Forums list posts (threads) instead of messages.
@@ -119,6 +123,18 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
         });
     }
 
+    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT())).show(ui, |ui| {
+        message_list(ui, s, uis, channel, perms, actions);
+    });
+}
+
+/// Just a channel's messages and composer, for a column beside something else (a voice channel's screen).
+pub fn column(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, channel: &Channel, actions: &mut Vec<Action>) {
+    let perms = s.state.permissions(channel.id);
+    egui::Panel::bottom(("composer", channel.id)).frame(egui::Frame::new().fill(theme::CHAT()).inner_margin(egui::Margin { left: 12, right: 12, top: 0, bottom: 16 })).show(ui, |ui| {
+        typing_line(ui, s, channel);
+        composer(ui, s, uis, catalog, channel, perms, actions);
+    });
     egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT())).show(ui, |ui| {
         message_list(ui, s, uis, channel, perms, actions);
     });
