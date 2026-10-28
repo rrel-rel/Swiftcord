@@ -30,6 +30,8 @@ pub enum Notice {
     VoiceServer(VoiceServerUpdate),
     /// Favourite GIFs, stickers or emoji changed (possibly on another device).
     FrecencyChanged,
+    /// Our status was changed in the synced settings (on another device).
+    OwnStatusChanged,
     /// A DM call started ringing the current user.
     Ring(Snowflake),
     /// A DM call stopped ringing the current user (answered elsewhere, declined, or ended).
@@ -135,6 +137,9 @@ pub struct State {
     activities: HashMap<Snowflake, String>,
     /// Our custom status, to send back when our status changes (presence updates replace activities).
     own_custom_status: Vec<Activity>,
+    /// Our status and "Share my activity" as chosen in the synced settings (or just now, here). The status
+    /// shown for us comes from this rather than presence updates, which can be stale or from other servers.
+    own_settings: crate::proto::StatusSettings,
     /// The member list of the channel being viewed, by guild.
     member_lists: HashMap<Snowflake, MemberList>,
     /// Notification settings by guild; DM settings are under `Snowflake::NONE`.
@@ -171,7 +176,20 @@ impl State {
     }
 
     pub fn presence(&self, user: Snowflake) -> PresenceStatus {
+        if let Some(status) = self.own_settings.status.as_deref().filter(|_| self.me.as_ref().is_some_and(|m| m.id == user)) {
+            return PresenceStatus::parse(status);
+        }
         self.presences.get(&user).copied().unwrap_or_default()
+    }
+
+    /// Whether our activities (games, music) are shown to others: Discord's "Share my activity".
+    pub fn shares_activity(&self) -> bool {
+        self.own_settings.show_activity.unwrap_or(true)
+    }
+
+    /// Records "Share my activity" as just chosen here.
+    pub fn set_shares_activity(&mut self, show: bool) {
+        self.own_settings.show_activity = Some(show);
     }
 
     /// Online only from a phone (shown with a phone instead of a dot).
@@ -862,6 +880,9 @@ impl State {
                     if let Some(f) = crate::proto::read_guild_folders(&u.settings.proto) {
                         self.folders = Some(f);
                     }
+                    if self.apply_status_settings(&u.settings.proto) {
+                        notices.push(Notice::OwnStatusChanged);
+                    }
                 } else if u.settings.kind == 2 {
                     notices.push(Notice::FrecencyChanged);
                 }
@@ -966,6 +987,10 @@ impl State {
             .filter(|p| !p.is_empty())
             .and_then(crate::proto::read_guild_folders)
             .or_else(|| r.user_settings.and_then(|s| s.guild_folders));
+        self.own_settings = Default::default();
+        if let Some(p) = r.user_settings_proto.as_deref().filter(|p| !p.is_empty()) {
+            self.apply_status_settings(p);
+        }
         self.set_own_presence(&r.sessions);
     }
 
@@ -992,11 +1017,27 @@ impl State {
         }
     }
 
-    /// Shows a status we just picked before Discord confirms it with SESSIONS_REPLACE.
+    /// Records a status we just picked (it's also saved to the settings, which then confirm it).
     pub fn set_own_status(&mut self, status: PresenceStatus) {
         if let Some(me) = self.me.as_ref().map(|m| m.id) {
             self.presences.insert(me, status);
         }
+        self.own_settings.status = Some(status.as_str().to_owned());
+    }
+
+    /// Takes in what the synced settings say about our status; `true` if the status itself changed (chosen on
+    /// another device), so this session's presence should follow.
+    fn apply_status_settings(&mut self, base64: &str) -> bool {
+        let Some(new) = crate::proto::read_status_settings(base64) else { return false };
+        let mut changed = false;
+        if let Some(status) = new.status.filter(|s| !s.is_empty()) {
+            changed = self.own_settings.status.as_deref() != Some(&status);
+            self.own_settings.status = Some(status);
+        }
+        if new.show_activity.is_some() {
+            self.own_settings.show_activity = new.show_activity;
+        }
+        changed
     }
 
     pub fn own_custom_status(&self) -> &[Activity] {
@@ -1377,6 +1418,26 @@ mod tests {
         assert_eq!(sent[0]["emoji"]["name"], "☕");
         s.set_own_status(PresenceStatus::Dnd);
         assert_eq!(s.own_status(), PresenceStatus::Dnd);
+    }
+
+    #[test]
+    fn own_status_follows_the_settings_not_stale_presences() {
+        let mut s = ready_state();
+        s.set_own_status(PresenceStatus::Dnd);
+        // A server's presence for us lags behind (or comes from before the change): it doesn't win.
+        s.apply(ev("PRESENCE_UPDATE", r#"{"user":{"id":"1"},"status":"online","activities":[]}"#));
+        assert_eq!(s.own_status(), PresenceStatus::Dnd);
+        // Changed on another device: the settings say so, and this session is told to follow.
+        let proto = crate::proto::status_settings("idle");
+        let notices = s.apply(ev("USER_SETTINGS_PROTO_UPDATE", &format!(r#"{{"settings":{{"type":1,"proto":"{proto}"}},"partial":true}}"#)));
+        assert_eq!(s.own_status(), PresenceStatus::Idle);
+        assert!(notices.iter().any(|n| matches!(n, Notice::OwnStatusChanged)));
+        // A partial update about something else leaves the status alone.
+        let proto = crate::proto::show_activity_settings(false);
+        let notices = s.apply(ev("USER_SETTINGS_PROTO_UPDATE", &format!(r#"{{"settings":{{"type":1,"proto":"{proto}"}},"partial":true}}"#)));
+        assert_eq!(s.own_status(), PresenceStatus::Idle);
+        assert!(!s.shares_activity());
+        assert!(!notices.iter().any(|n| matches!(n, Notice::OwnStatusChanged)));
     }
 
     #[test]

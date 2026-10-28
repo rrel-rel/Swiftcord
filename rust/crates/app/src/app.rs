@@ -116,6 +116,8 @@ pub enum Action {
     ToggleMemberList,
     /// Online, idle, do not disturb or invisible (`Offline`).
     SetStatus(swiftcord_core::models::PresenceStatus),
+    /// Discord's "Share my activity".
+    SetShareActivity(bool),
     /// The member list beside `channel` shows rows `first..=last`; subscribes to the blocks covering them.
     MemberListRange { guild: Snowflake, channel: Snowflake, first: usize, last: usize },
     Ack(Snowflake),
@@ -776,6 +778,12 @@ impl App {
             }
             Notice::RingStopped(_) => {}
             Notice::FrecencyChanged => self.load_frecency(),
+            Notice::OwnStatusChanged => {
+                // Chosen on another device: this session follows.
+                if let Some(s) = &self.session {
+                    s.gateway.update_presence(s.state.own_status(), s.state.own_custom_status());
+                }
+            }
             Notice::OwnVoiceState | Notice::VoiceServer(_) | Notice::Other(..) => {
                 crate::voice_glue::on_notice(self, notice);
             }
@@ -1368,6 +1376,17 @@ impl App {
                     }
                 });
             }
+            Action::SetShareActivity(show) => {
+                let Some(s) = &mut self.session else { return };
+                s.state.set_shares_activity(show);
+                let rest = s.rest.clone();
+                self.spawn(async move {
+                    match rest.set_share_activity(show).await {
+                        Ok(()) => AppEvent::Error(String::new()),
+                        Err(e) => AppEvent::Error(format!("Couldn't save your activity setting: {e}")),
+                    }
+                });
+            }
             Action::SetStreamAudio { volume, when_deafened } => {
                 self.settings.stream_volume = volume.clamp(0.0, 2.0);
                 self.settings.stream_audio_when_deafened = when_deafened;
@@ -1546,7 +1565,8 @@ impl App {
                 let (inputs, outputs) = swiftcord_voice::list_devices();
                 let cameras = swiftcord_voice::camera::list();
                 let saved_theme = (self.settings.palette, self.settings.accent);
-                self.ui.settings_draft = Some(ui::settings::Draft { settings: self.settings.clone(), inputs, outputs, cameras, mic_test: None, saved_theme });
+                let share_activity = self.session.as_ref().is_none_or(|s| s.state.shares_activity());
+                self.ui.settings_draft = Some(ui::settings::Draft { settings: self.settings.clone(), inputs, outputs, cameras, mic_test: None, saved_theme, share_activity, saved_share_activity: share_activity });
             }
             Action::SaveSettings(s) => {
                 let (vad, noise_suppression) = (s.vad_threshold_db, s.noise_suppression);

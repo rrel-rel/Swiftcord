@@ -268,6 +268,12 @@ impl Rest {
         self.json::<serde_json::Value>(Method::PATCH, "users/@me/settings-proto/1", body).await.map(drop)
     }
 
+    /// Discord's "Share my activity": whether games and music we're playing are shown to others.
+    pub async fn set_share_activity(&self, show: bool) -> Result<()> {
+        let body = Body::Json(json!({ "settings": crate::proto::show_activity_settings(show) }));
+        self.json::<serde_json::Value>(Method::PATCH, "users/@me/settings-proto/1", body).await.map(drop)
+    }
+
     /// The frecency settings (favourite GIFs, stickers and emoji), base64-encoded protobuf.
     pub async fn frecency_settings(&self) -> Result<String> {
         #[derive(Deserialize)]

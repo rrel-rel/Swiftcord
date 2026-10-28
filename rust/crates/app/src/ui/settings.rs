@@ -16,6 +16,9 @@ pub struct Draft {
     pub mic_test: Option<swiftcord_voice::MicTest>,
     /// The theme when the window opened, restored if it's closed without saving.
     pub saved_theme: (crate::theme::Palette, u32),
+    /// "Share my activity" (an account setting), and what it was when the window opened.
+    pub share_activity: bool,
+    pub saved_share_activity: bool,
 }
 
 /// Choosing how dark the app is and its accent colour; changes show straight away.
@@ -121,10 +124,22 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
         ui.label(RichText::new("Sounds are off while you're deafened or on Do Not Disturb.").small().color(theme::FAINT()));
 
         ui.add_space(12.0);
+        ui.label(RichText::new("ACTIVITY PRIVACY").font(theme::font_semibold(12.0)).color(theme::MUTED()));
+        ui.checkbox(&mut draft.share_activity, "Share my activity");
+        ui.label(
+            RichText::new("Show the games and music you're playing (from any device signed in to Discord) on your profile and in member lists. This is a Discord account setting.")
+                .small()
+                .color(theme::FAINT()),
+        );
+
+        ui.add_space(12.0);
         ui.separator();
         ui.horizontal(|ui| {
             if ui.add(egui::Button::new(RichText::new("Save").color(egui::Color32::WHITE)).fill(theme::BLURPLE())).clicked() {
                 actions.push(Action::SaveSettings(draft.settings.clone()));
+                if draft.share_activity != draft.saved_share_activity {
+                    actions.push(Action::SetShareActivity(draft.share_activity));
+                }
                 draft.saved_theme = (draft.settings.palette, draft.settings.accent);
                 close = true;
             }

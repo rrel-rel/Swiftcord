@@ -142,6 +142,27 @@ mod tests {
         assert_eq!(bytes, [0x5a, 7, 0x0a, 5, 0x0a, 3, b'd', b'n', b'd']);
     }
 
+    /// Prints what a real account's settings say about status: `SWIFTCORD_PROTO_FILE` names a saved
+    /// `GET users/@me/settings-proto/1` response.
+    #[test]
+    #[ignore]
+    fn print_status_settings_from_file() {
+        let path = std::env::var("SWIFTCORD_PROTO_FILE").unwrap();
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        println!("{:?}", read_status_settings(json["settings"].as_str().unwrap()));
+    }
+
+    #[test]
+    fn reads_back_status_and_activity_sharing() {
+        assert_eq!(read_status_settings(&status_settings("dnd")).unwrap().status.as_deref(), Some("dnd"));
+        assert_eq!(read_status_settings(&status_settings("dnd")).unwrap().show_activity, None);
+        assert_eq!(read_status_settings(&show_activity_settings(true)).unwrap().show_activity, Some(true));
+        // Off is an empty wrapper (the default value isn't written), which still counts as set.
+        assert_eq!(read_status_settings(&show_activity_settings(false)).unwrap().show_activity, Some(false));
+        let bytes = base64::engine::general_purpose::STANDARD.decode(show_activity_settings(false)).unwrap();
+        assert_eq!(bytes, [0x5a, 2, 0x1a, 0]);
+    }
+
     #[test]
     fn reads_folders() {
         // Folder with two guilds, id 7 and name "Games".
@@ -324,6 +345,50 @@ pub fn status_settings(status: &str) -> String {
     put_bytes_field(&mut value, 1, status.as_bytes());
     let mut settings = Vec::new();
     put_bytes_field(&mut settings, 1, &value);
+    let mut out = Vec::new();
+    put_bytes_field(&mut out, STATUS_FIELD, &settings);
+    base64::engine::general_purpose::STANDARD.encode(out)
+}
+
+/// The status part of the user settings, as far as it's set: the chosen status ("online", "idle", "dnd",
+/// "invisible") and whether activities are shared ("Share my activity").
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct StatusSettings {
+    pub status: Option<String>,
+    pub show_activity: Option<bool>,
+}
+
+// message StatusSettings { StringValue status = 1; CustomStatus custom_status = 2; BoolValue show_current_game = 3; }
+pub fn read_status_settings(base64: &str) -> Option<StatusSettings> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(base64).ok()?;
+    let mut out = StatusSettings::default();
+    for (field, value) in fields(&bytes).ok()? {
+        let (STATUS_FIELD, Value::Bytes(status)) = (field, value) else { continue };
+        for (field, value) in fields(status).ok()? {
+            match (field, value) {
+                // Wrapper messages: the value is their field 1, absent when it's the default.
+                (1, Value::Bytes(w)) => {
+                    let text = fields(w).ok()?.into_iter().find_map(|(f, v)| if let (1, Value::Bytes(s)) = (f, v) { Some(s) } else { None });
+                    out.status = Some(String::from_utf8_lossy(text.unwrap_or_default()).into_owned());
+                }
+                (3, Value::Bytes(w)) => {
+                    out.show_activity = Some(fields(w).ok()?.into_iter().any(|(f, v)| matches!((f, v), (1, Value::Int(1)))));
+                }
+                _ => {}
+            }
+        }
+    }
+    Some(out)
+}
+
+/// User settings holding only "Share my activity" (`status { show_current_game: BoolValue }`), for a partial update.
+pub fn show_activity_settings(show: bool) -> String {
+    let mut value = Vec::new();
+    if show {
+        put_varint_field(&mut value, 1, 1);
+    }
+    let mut settings = Vec::new();
+    put_bytes_field(&mut settings, 3, &value);
     let mut out = Vec::new();
     put_bytes_field(&mut out, STATUS_FIELD, &settings);
     base64::engine::general_purpose::STANDARD.encode(out)

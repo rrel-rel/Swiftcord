@@ -224,7 +224,7 @@ pub fn on_notice(app: &mut App, notice: Notice) {
                 crate::stream_glue::on_gateway(app, &name, &data);
             }
         }
-        Notice::MessageCreated { .. } | Notice::Ring(_) | Notice::RingStopped(_) | Notice::FrecencyChanged => {}
+        Notice::MessageCreated { .. } | Notice::Ring(_) | Notice::RingStopped(_) | Notice::FrecencyChanged | Notice::OwnStatusChanged => {}
     }
 }
 
