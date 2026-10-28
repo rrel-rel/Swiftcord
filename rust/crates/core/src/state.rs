@@ -426,6 +426,14 @@ impl State {
         self.typing.get(&channel).map_or_else(Vec::new, |t| t.iter().filter(|&(_, &until)| until > now).map(|(&u, _)| u).collect())
     }
 
+    /// What's going on in a server's voice channels: how many people are in them, and how many of those are
+    /// screensharing (Go Live).
+    pub fn voice_activity(&self, guild: Snowflake) -> (usize, usize) {
+        let Some(states) = self.voice_states.get(&guild) else { return (0, 0) };
+        let connected = states.values().filter(|s| s.channel_id.is_some());
+        connected.fold((0, 0), |(people, live), s| (people + 1, live + usize::from(s.self_stream)))
+    }
+
     /// Users in a voice channel.
     pub fn voice_members(&self, channel: &Channel) -> Vec<&VoiceState> {
         let mut v: Vec<&VoiceState> = self

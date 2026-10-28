@@ -95,13 +95,41 @@ fn guild_icon(ui: &mut Ui, state: &State, id: Snowflake, rect: Rect, rounding: C
     }
 }
 
+/// Marks an icon whose server has people in voice (a green speaker) or someone screensharing (a red screen),
+/// in its bottom-left corner (the mention badge has the bottom-right).
+fn voice_badge(ui: &Ui, rect: Rect, (people, live): (usize, usize)) {
+    if people == 0 {
+        return;
+    }
+    let (fill, glyph) = if live > 0 { (theme::RED(), theme::icon::SCREEN) } else { (theme::GREEN(), theme::icon::SPEAKER) };
+    let center = rect.left_bottom() + Vec2::new(7.0, -7.0);
+    ui.painter().circle_filled(center, 9.5, theme::RAIL());
+    ui.painter().circle_filled(center, 7.5, fill);
+    ui.painter().text(center, egui::Align2::CENTER_CENTER, glyph, theme::icon_font(8.5), Color32::WHITE);
+}
+
+/// "3 in voice · 1 live", under a server's name in its tooltip.
+fn voice_summary((people, live): (usize, usize)) -> Option<String> {
+    match (people, live) {
+        (0, _) => None,
+        (p, 0) => Some(format!("{p} in voice")),
+        (p, l) => Some(format!("{p} in voice · {l} live")),
+    }
+}
+
 fn guild(ui: &mut Ui, state: &State, uis: &UiState, badges: &HashMap<Snowflake, (bool, u32)>, id: Snowflake, actions: &mut Vec<Action>) {
     let Some(g) = state.guild(id) else { return };
     let selected = uis.guild == Some(id);
     let (unread, mentions) = badges.get(&id).copied().unwrap_or_default();
     let unread = unread && !state.is_guild_muted(id);
-    let r = item(ui, selected, unread, mentions, &g.name, |ui, rect, hovered| {
+    let activity = state.voice_activity(id);
+    let tooltip = match voice_summary(activity) {
+        Some(v) => format!("{}\n{v}", g.name),
+        None => g.name.clone(),
+    };
+    let r = item(ui, selected, unread, mentions, &tooltip, |ui, rect, hovered| {
         guild_icon(ui, state, id, rect, radius(selected || hovered), hovered);
+        voice_badge(ui, rect, activity);
     });
     if r.clicked() {
         actions.push(Action::SelectGuild(Some(id)));
@@ -167,6 +195,9 @@ fn folder(
                 let min = rect.min + Vec2::new(4.0 + (i % 2) as f32 * (cell + 4.0), 4.0 + (i / 2) as f32 * (cell + 4.0));
                 guild_icon(ui, state, g, Rect::from_min_size(min, Vec2::splat(cell)), CornerRadius::same(7), false);
             }
+            // Voice in any server inside shows on the closed folder.
+            let activity = guilds.iter().map(|g| state.voice_activity(*g)).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+            voice_badge(ui, rect, activity);
         });
         if r.clicked() {
             uis.open_folders.insert(id);
