@@ -2,6 +2,7 @@
 
 use eframe::egui::{self, Color32, RichText, Ui, Vec2};
 use swiftcord_core::gateway::ConnectionState;
+use swiftcord_core::permissions::perm;
 use swiftcord_core::rest::FileUpload;
 
 use crate::app::{Action, Session, UiState, MAX_UPLOAD_BYTES};
@@ -59,35 +60,44 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Ca
     crate::ui::share::picker(ui, uis, actions);
     crate::ui::threads::prompt(ui, uis, actions);
     crate::ui::call::incoming(ui, s, uis, actions);
-    dropped_files(ui, uis, actions);
+    dropped_files(ui, s, uis, actions);
     banner(ui, uis);
 }
 
-fn dropped_files(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
+fn dropped_files(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) {
+    // Files only go to an open channel; with none open there's no drop target.
     let Some(channel) = uis.channel() else { return };
+    let allowed = s.state.permissions(channel) & perm::ATTACH_FILES != 0;
     let dropped = ui.ctx().input(|i| i.raw.dropped_files.clone());
     if !dropped.is_empty() {
+        if !allowed {
+            actions.push(Action::Notice("You can't upload files in this channel".into()));
+            return;
+        }
         let mut files = Vec::new();
         for path in dropped.iter().map(|f| f.path().to_path_buf()) {
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             match std::fs::metadata(&path) {
+                Ok(m) if m.is_dir() => actions.push(Action::Notice(format!("{name} is a folder: drop the files inside it instead"))),
                 Ok(m) if m.len() as usize > MAX_UPLOAD_BYTES => actions.push(Action::Notice(format!("{name} is larger than 10 MB"))),
-                Ok(m) if m.is_file() => {
-                    if let Ok(bytes) = std::fs::read(&path) {
-                        files.push(FileUpload { name, bytes, content_type: None });
-                    }
-                }
-                _ => {}
+                Ok(_) => match std::fs::read(&path) {
+                    Ok(bytes) => files.push(FileUpload { name, bytes, content_type: None }),
+                    Err(e) => actions.push(Action::Notice(format!("Couldn't read {name}: {e}"))),
+                },
+                Err(e) => actions.push(Action::Notice(format!("Couldn't read {name}: {e}"))),
             }
         }
-        actions.push(Action::AddFiles { channel, files });
+        if !files.is_empty() {
+            actions.push(Action::AddFiles { channel, files });
+        }
     }
     // Show a drop target while files hover over the window.
     if ui.ctx().input(|i| !i.raw.hovered_files.is_empty()) {
         let rect = ui.ctx().content_rect();
         let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("drop")));
         painter.rect_filled(rect, 0, Color32::from_black_alpha(170));
-        painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Drop files to upload", theme::font_bold(24.0), Color32::WHITE);
+        let text = if allowed { "Drop files to upload" } else { "You can't upload files in this channel" };
+        painter.text(rect.center(), egui::Align2::CENTER_CENTER, text, theme::font_bold(24.0), Color32::WHITE);
     }
 }
 
