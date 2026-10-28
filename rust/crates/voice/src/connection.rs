@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::UdpSocket;
 use std::num::NonZeroU16;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -1083,7 +1083,7 @@ fn spawn_camera(
 }
 
 /// Decodes one person's camera on its own thread, publishing the newest picture under their user ID.
-fn spawn_camera_decoder(user: u64, shared: Arc<Shared>, events: Arc<dyn Fn(Event) + Send + Sync>) -> std::sync::mpsc::SyncSender<video::EncodedFrame> {
+fn spawn_camera_decoder(user: u64, rotation: Arc<AtomicU8>, shared: Arc<Shared>, events: Arc<dyn Fn(Event) + Send + Sync>) -> std::sync::mpsc::SyncSender<video::EncodedFrame> {
     let (tx, rx) = std::sync::mpsc::sync_channel::<video::EncodedFrame>(32);
     let spawned = std::thread::Builder::new().name("swiftcord-camera-decode".into()).spawn(move || {
         let mut decoder = match video::Decoder::new() {
@@ -1101,7 +1101,7 @@ fn spawn_camera_decoder(user: u64, shared: Arc<Shared>, events: Arc<dyn Fn(Event
                 match decoder.decode(&frame.data, i == last) {
                     Ok(pictures) => {
                         if let Some(p) = pictures.into_iter().last() {
-                            shared.cameras.lock().insert(user, p);
+                            shared.cameras.lock().insert(user, p.rotated(rotation.load(Ordering::Relaxed)));
                             events(Event::VideoFrame);
                         }
                     }
@@ -1284,6 +1284,8 @@ fn spawn_receiver(
             let mut receivers: HashMap<u32, video::VideoReceiver> = HashMap::new();
             // Calls: a decoder per camera, by SSRC.
             let mut cameras: HashMap<u32, std::sync::mpsc::SyncSender<video::EncodedFrame>> = HashMap::new();
+            // Each camera's orientation, as its packets last said: its decoder turns pictures upright.
+            let mut rotations: HashMap<u32, Arc<AtomicU8>> = HashMap::new();
             let mut last_video_ssrc = 0u32;
             let mut last_pli = Instant::now() - Duration::from_secs(10);
             let mut last_stats = Instant::now();
@@ -1344,6 +1346,12 @@ fn spawn_receiver(
                         }
                         Kind::Video => {
                             last_video_ssrc = p.ssrc;
+                            if let Some(turns) = p.rotation {
+                                let r = rotations.entry(p.ssrc).or_default();
+                                if r.swap(turns, Ordering::Relaxed) != turns {
+                                    tracing::info!("video {} is rotated {}°", p.ssrc, turns as u32 * 90);
+                                }
+                            }
                             receivers.entry(p.ssrc).or_default().push(p.seq, p.timestamp, p.marker, p.payload, false);
                             touched = Some(p.ssrc);
                         }
@@ -1383,7 +1391,10 @@ fn spawn_receiver(
                                 frame.data = data;
                                 let out = match (&video_out, sender) {
                                     (Some(out), _) => Some(out),
-                                    (None, Some(user)) => Some(&*cameras.entry(ssrc).or_insert_with(|| spawn_camera_decoder(user, shared.clone(), events.clone()))),
+                                    (None, Some(user)) => {
+                                        let rotation = rotations.entry(ssrc).or_default().clone();
+                                        Some(&*cameras.entry(ssrc).or_insert_with(|| spawn_camera_decoder(user, rotation, shared.clone(), events.clone())))
+                                    }
                                     (None, None) => None,
                                 };
                                 if let Some(out) = out {

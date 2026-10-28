@@ -251,6 +251,32 @@ pub struct Picture {
     pub rgba: Vec<u8>,
 }
 
+impl Picture {
+    /// Turned clockwise by `quarter_turns` × 90°, as a camera's orientation asks.
+    pub fn rotated(self, quarter_turns: u8) -> Picture {
+        let (w, h) = (self.width, self.height);
+        let turns = quarter_turns % 4;
+        if turns == 0 || self.rgba.len() < w * h * 4 {
+            return self;
+        }
+        let (nw, nh) = if turns == 2 { (w, h) } else { (h, w) };
+        let mut out = vec![0u8; w * h * 4];
+        let src = &self.rgba;
+        for y in 0..h {
+            for x in 0..w {
+                let (nx, ny) = match turns {
+                    1 => (h - 1 - y, x),
+                    2 => (w - 1 - x, h - 1 - y),
+                    _ => (y, w - 1 - x),
+                };
+                let (s, d) = ((y * w + x) * 4, (ny * nw + nx) * 4);
+                out[d..d + 4].copy_from_slice(&src[s..s + 4]);
+            }
+        }
+        Picture { width: nw, height: nh, rgba: out }
+    }
+}
+
 /// NV12 (Y plane, then interleaved UV at half resolution) in limited range → RGBA. `stride` is the row pitch
 /// of both planes; the UV plane starts `uv_offset` bytes in.
 pub fn nv12_to_rgba(src: &[u8], width: usize, height: usize, stride: usize, uv_offset: usize) -> Vec<u8> {
@@ -713,6 +739,24 @@ mod mf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rotates_pictures_clockwise() {
+        // 3×2, each pixel's red channel numbering it:  0 1 2
+        //                                              3 4 5
+        let p = || Picture { width: 3, height: 2, rgba: (0..6u8).flat_map(|i| [i, 0, 0, 255]).collect() };
+        let reds = |p: &Picture| p.rgba.chunks(4).map(|c| c[0]).collect::<Vec<_>>();
+        let quarter = p().rotated(1);
+        assert_eq!((quarter.width, quarter.height), (2, 3));
+        assert_eq!(reds(&quarter), [3, 0, 4, 1, 5, 2]);
+        let half = p().rotated(2);
+        assert_eq!((half.width, half.height), (3, 2));
+        assert_eq!(reds(&half), [5, 4, 3, 2, 1, 0]);
+        let three = p().rotated(3);
+        assert_eq!((three.width, three.height), (2, 3));
+        assert_eq!(reds(&three), [2, 5, 1, 4, 0, 3]);
+        assert_eq!(reds(&p().rotated(0)), [0, 1, 2, 3, 4, 5]);
+    }
 
     fn rx() -> VideoReceiver {
         VideoReceiver::default()

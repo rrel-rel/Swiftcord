@@ -209,6 +209,47 @@ pub struct Packet {
     pub timestamp: u32,
     pub ssrc: u32,
     pub payload: Vec<u8>,
+    /// From a camera: the clockwise quarter turns its picture needs to be upright (phones send their sensor's
+    /// landscape frames and say how they're held), when this packet says.
+    pub rotation: Option<u8>,
+}
+
+/// The video orientation header extension (urn:3gpp:video-orientation), at the ID Discord's clients use.
+const VIDEO_ORIENTATION_ID: u8 = 13;
+
+/// The value of header extension `wanted` in a decrypted extension body, in either the one-byte (0xBEDE) or
+/// the two-byte (0x100x) form.
+fn header_extension(profile: u16, mut ext: &[u8], wanted: u8) -> Option<&[u8]> {
+    if profile == 0xBEDE {
+        while let Some(&b) = ext.first() {
+            let (id, len) = (b >> 4, (b & 0x0f) as usize + 1);
+            match id {
+                0 => ext = &ext[1..],
+                15 => break,
+                _ => {
+                    let value = ext.get(1..1 + len)?;
+                    if id == wanted {
+                        return Some(value);
+                    }
+                    ext = &ext[1 + len..];
+                }
+            }
+        }
+    } else if profile & 0xfff0 == 0x1000 {
+        while ext.len() >= 2 {
+            let (id, len) = (ext[0], ext[1] as usize);
+            if id == 0 {
+                ext = &ext[1..];
+                continue;
+            }
+            let value = ext.get(2..2 + len)?;
+            if id == wanted {
+                return Some(value);
+            }
+            ext = &ext[2 + len..];
+        }
+    }
+    None
 }
 
 /// RTCP shares the socket; its second byte is a packet type in 200..=204.
@@ -224,8 +265,10 @@ pub fn open(cipher: &Cipher, data: &[u8]) -> Option<Packet> {
     let has_ext = data[0] & 0x10 != 0;
     let mut aad_len = 12 + csrc * 4;
     let mut ext_words = 0usize;
+    let mut profile = 0;
     if has_ext {
         let pre = data.get(aad_len..aad_len + 4)?;
+        profile = u16::from_be_bytes([pre[0], pre[1]]);
         ext_words = u16::from_be_bytes([pre[2], pre[3]]) as usize;
         aad_len += 4;
     }
@@ -242,6 +285,8 @@ pub fn open(cipher: &Cipher, data: &[u8]) -> Option<Packet> {
     if buf.len() < skip {
         return None;
     }
+    // CVO byte: camera, flip, then the rotation in the low two bits.
+    let rotation = header_extension(profile, &buf[..skip], VIDEO_ORIENTATION_ID).and_then(|v| v.first()).map(|b| b & 3);
     buf.drain(..skip);
     // With the padding bit set, the (decrypted) payload ends in filler whose last byte gives its length. Video
     // uses it a lot, including padding-only packets for bandwidth probing.
@@ -259,6 +304,7 @@ pub fn open(cipher: &Cipher, data: &[u8]) -> Option<Packet> {
         timestamp: u32::from_be_bytes([data[4], data[5], data[6], data[7]]),
         ssrc: u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
         payload: buf,
+        rotation,
     })
 }
 
@@ -319,6 +365,36 @@ mod tests {
         let p = open(&c, &header).unwrap();
         assert_eq!(p.payload, b"audio");
         assert_eq!(p.ssrc, 5);
+        assert_eq!(p.rotation, None);
+    }
+
+    #[test]
+    fn reads_a_cameras_orientation() {
+        // One-byte form: padding, transport-cc (id 3, 2 bytes), then orientation (id 13, 1 byte: front camera,
+        // rotated 270°).
+        let ext = [0x00, 0x31, 0xAB, 0xCD, 0xD0, 0b1011];
+        assert_eq!(header_extension(0xBEDE, &ext, VIDEO_ORIENTATION_ID), Some(&[0b1011][..]));
+        assert_eq!(header_extension(0xBEDE, &ext, 7), None);
+        // Two-byte form.
+        let ext = [3, 2, 0xAB, 0xCD, 13, 1, 0b01];
+        assert_eq!(header_extension(0x1000, &ext, VIDEO_ORIENTATION_ID), Some(&[0b01][..]));
+        // A truncated element isn't read past the end.
+        assert_eq!(header_extension(0xBEDE, &[0xD3, 1], VIDEO_ORIENTATION_ID), None);
+
+        // End to end: the rotation comes out of a sealed video packet.
+        let c = Cipher::new(Mode::Aes256Gcm, &[1u8; 32]).unwrap();
+        let mut header = vec![0x90, 101, 0, 1, 0, 0, 0, 0, 0, 0, 0, 5, 0xBE, 0xDE, 0, 1];
+        let mut body = vec![0xD0, 0b0001, 0, 0];
+        body.extend_from_slice(b"frame");
+        let mut nonce = [0u8; 12];
+        nonce[..4].copy_from_slice(&4u32.to_be_bytes());
+        let Cipher::Aes(aes) = &c else { unreachable!() };
+        aes.encrypt_in_place(&nonce.into(), &header, &mut body).unwrap();
+        header.extend_from_slice(&body);
+        header.extend_from_slice(&4u32.to_be_bytes());
+        let p = open(&c, &header).unwrap();
+        assert_eq!(p.payload, b"frame");
+        assert_eq!(p.rotation, Some(1));
     }
 
     #[test]
