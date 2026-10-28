@@ -18,6 +18,7 @@ use crate::app::{Action, UiState};
 use crate::theme::{self, icon};
 use crate::ui::emoji::PickerTarget;
 use crate::ui::markdown::{self as md, Cx};
+use crate::ui::viewer::Viewed;
 use crate::ui::widgets;
 
 pub const GUTTER: f32 = 72.0;
@@ -470,19 +471,31 @@ pub(crate) fn fit(w: Option<u32>, h: Option<u32>, max: Vec2) -> Vec2 {
     Vec2::new((w * scale).round(), (h * scale).round())
 }
 
-/// Shows an image (or a video's poster), opening `original` when clicked.
-fn media(ui: &mut Ui, proxy_url: &str, original: &str, size: Vec2, gif: bool, video: bool, alt: Option<&str>) {
-    if media_response(ui, proxy_url, size, gif, video, alt).clicked() {
-        crate::platform::open_url(original);
+/// Shows an image, opening it in the viewer when clicked; a video's poster opens `original` (a page) instead.
+#[allow(clippy::too_many_arguments)]
+fn media(ui: &mut Ui, proxy_url: &str, original: &str, size: Vec2, dims: (Option<u32>, Option<u32>), video: bool, alt: Option<&str>, cx: &mut Ctx) {
+    if media_response(ui, proxy_url, size, false, video, alt).clicked() {
+        if video {
+            crate::platform::open_url(original);
+        } else {
+            cx.uis.viewer = Some(viewed(proxy_url, original, dims, false));
+        }
     }
 }
 
-/// A GIF with a favourite star in its corner: clicking the star toggles the favourite, anywhere else opens
-/// `original`.
-fn gif_media(ui: &mut Ui, r: egui::Response, original: &str, gif: FavoriteGif, cx: &mut Ctx) {
+fn viewed(proxy_url: &str, original: &str, (width, height): (Option<u32>, Option<u32>), gif: bool) -> Viewed {
+    Viewed { proxy: proxy_url.to_owned(), original: original.to_owned(), width, height, gif }
+}
+
+/// A GIF with a favourite star in its corner: clicking the star toggles the favourite, anywhere else opens it
+/// in the viewer (`view`), or `original` in the browser for a GIF that's really a video clip.
+fn gif_media(ui: &mut Ui, r: egui::Response, original: &str, gif: FavoriteGif, view: Option<Viewed>, cx: &mut Ctx) {
     let over_star = favorite_star(ui, &r, gif, cx);
     if r.clicked() && !over_star {
-        crate::platform::open_url(original);
+        match view {
+            Some(v) => cx.uis.viewer = Some(v),
+            None => crate::platform::open_url(original),
+        }
     }
 }
 
@@ -557,11 +570,12 @@ pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
         let size = fit(a.width, a.height, within(ui, MAX_MEDIA));
         let gif = a.content_type.as_deref() == Some("image/gif");
         let r = media_response(ui, &a.proxy_url, size, gif, a.is_video(), a.description.as_deref());
+        let view = viewed(&a.proxy_url, &a.url, (a.width, a.height), gif);
         if gif {
             let fav = FavoriteGif { url: a.url.clone(), src: a.url.clone(), format: 1, width: a.width.unwrap_or(0), height: a.height.unwrap_or(0), order: 0 };
-            gif_media(ui, r, &a.url, fav, cx);
+            gif_media(ui, r, &a.url, fav, Some(view), cx);
         } else if r.clicked() {
-            crate::platform::open_url(&a.url);
+            cx.uis.viewer = Some(view);
         }
         return;
     }
@@ -768,7 +782,7 @@ pub(crate) fn gallery(ui: &mut Ui, items: &[GalleryMedia], msg_id: Snowflake, ke
             if m.video {
                 cx.uis.videos.play(ui.ctx(), m.url, rect.width());
             } else {
-                crate::platform::open_url(m.url);
+                cx.uis.viewer = Some(viewed(m.proxy_url.unwrap_or(m.url), m.url, (m.width, m.height), false));
             }
         }
     }
@@ -816,17 +830,18 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
             let r = cx.uis.clips.show(ui, &video.url, still.as_deref(), size).on_hover_cursor(egui::CursorIcon::PointingHand);
             let (width, height) = (video.width.or(m.width).unwrap_or(0), video.height.or(m.height).unwrap_or(0));
             let fav = FavoriteGif { url: target.clone(), src: video.url.clone(), format: 2, width, height, order: 0 };
-            gif_media(ui, r, &target, fav, cx);
+            gif_media(ui, r, &target, fav, None, cx);
             return;
         }
         let gif = animated_gif(e).or_else(|| is_gif_url(&m.url).then(|| m.proxy_url.clone().unwrap_or_else(|| m.url.clone())));
         match gif {
             Some(gif) => {
                 let r = media_response(ui, &gif, size, true, false, None);
+                let view = viewed(&gif, &target, (m.width, m.height), true);
                 let fav = FavoriteGif { url: target.clone(), src: gif, format: 1, width: m.width.unwrap_or(0), height: m.height.unwrap_or(0), order: 0 };
-                gif_media(ui, r, &target, fav, cx);
+                gif_media(ui, r, &target, fav, Some(view), cx);
             }
-            None => media(ui, m.proxy_url.as_deref().unwrap_or(&m.url), &target, size, false, kind == "gifv", None),
+            None => media(ui, m.proxy_url.as_deref().unwrap_or(&m.url), &target, size, (m.width, m.height), kind == "gifv", None, cx),
         }
         return;
     }
@@ -847,7 +862,7 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
             if let Some(t) = side_thumb {
                 ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                     let size = fit(t.width, t.height, Vec2::splat(80.0));
-                    media(ui, t.proxy_url.as_deref().unwrap_or(&t.url), &t.url, size, false, false, None);
+                    media(ui, t.proxy_url.as_deref().unwrap_or(&t.url), &t.url, size, (t.width, t.height), false, None, cx);
                 });
             }
         });
@@ -866,7 +881,7 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
         } else if let Some(img) = &e.image {
             if extra_images.is_empty() {
                 let size = fit(img.width, img.height, within(ui, Vec2::new(480.0, 300.0)));
-                media(ui, img.proxy_url.as_deref().unwrap_or(&img.url), &img.url, size, false, false, None);
+                media(ui, img.proxy_url.as_deref().unwrap_or(&img.url), &img.url, size, (img.width, img.height), false, None, cx);
             } else {
                 let images: Vec<GalleryMedia> = std::iter::once(img).chain(extra_images.iter().copied()).map(GalleryMedia::from).collect();
                 gallery(ui, &images, msg_id, GALLERY_SPOILERS, cx);

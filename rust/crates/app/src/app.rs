@@ -229,6 +229,8 @@ pub struct UiState {
     pub editing: Option<(Snowflake, String)>,
     /// A message waiting for "Delete Message" to be confirmed: (channel, message).
     pub confirm_delete: Option<(Snowflake, Snowflake)>,
+    /// The picture open in the image viewer.
+    pub viewer: Option<ui::viewer::Viewed>,
     /// Where we'd read up to when the open channel was opened with unread messages: the NEW line goes after
     /// it, until the channel is marked read.
     pub unread_marker: HashMap<Snowflake, Snowflake>,

@@ -62,6 +62,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Ca
     crate::ui::call::incoming(ui, s, uis, actions);
     dropped_files(ui, s, uis, actions);
     delete_prompt(ui, s, uis, actions);
+    crate::ui::viewer::show(ui, uis);
     banner(ui, uis);
 }
 
