@@ -165,7 +165,9 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
 
     let rect = Rect::from_min_max(egui::pos2(ui.max_rect().left(), top), egui::pos2(ui.max_rect().left() + width, ui.cursor().top()));
     ui.ctx().memory_mut(|m| m.data.insert_temp(row_id, rect));
-    let fill = if cx.highlight == Some(msg.id) {
+    // The message being replied to stays marked while the reply is written.
+    let replying = !cx.read_only && cx.uis.drafts.get(&cx.channel).and_then(|d| d.reply).is_some_and(|(id, _)| id == msg.id);
+    let fill = if cx.highlight == Some(msg.id) || replying {
         Some(theme::BLURPLE().gamma_multiply(0.18))
     } else if mentioned {
         Some(if hovered { theme::MENTIONED_ROW_HOVER() } else { theme::MENTIONED_ROW() })
@@ -177,7 +179,9 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
     if let Some(f) = fill {
         ui.painter().set(bg, egui::Shape::rect_filled(rect, 0, f));
     }
-    if mentioned {
+    if replying {
+        ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())), 0, theme::BLURPLE());
+    } else if mentioned {
         ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())), 0, theme::YELLOW());
     }
 
@@ -313,9 +317,11 @@ fn edit_box(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     let Some((_, text)) = &mut cx.uis.editing else { return };
     let id = egui::Id::unique(("edit", msg.id));
     let focused = ui.ctx().memory(|m| m.has_focus(id));
+    // egui drops focus as soon as Escape is pressed, before we look: it was ours if we had it last frame.
+    let had_focus = focused || ui.ctx().memory(|m| m.had_focus_last_frame(id));
     let (enter, esc) = ui.input_mut(|i| {
         let enter = focused && !i.modifiers.shift && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
-        (enter, focused && i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        (enter, had_focus && i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
     });
     egui::Frame::new().fill(theme::INPUT()).corner_radius(6).inner_margin(8).show(ui, |ui| {
         let r = ui.add(egui::TextEdit::multiline(text).id(id).desired_rows(1).frame(egui::Frame::NONE).desired_width(f32::INFINITY));
@@ -326,14 +332,26 @@ fn edit_box(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     ui.label(RichText::new("escape to cancel • enter to save").size(11.5).color(theme::MUTED()));
     if esc {
         cx.uis.editing = None;
+        cx.uis.focus_composer = true;
     } else if enter {
         let content = text.trim().to_owned();
         if content.is_empty() {
-            cx.actions.push(Action::Delete { channel: msg.channel_id, message: msg.id });
+            // Saving nothing deletes the message, after asking.
+            cx.uis.confirm_delete = Some((msg.channel_id, msg.id));
             cx.uis.editing = None;
         } else {
             cx.actions.push(Action::SaveEdit { channel: msg.channel_id, message: msg.id, content });
+            cx.uis.focus_composer = true;
         }
+    }
+}
+
+/// Deleting asks first, unless Shift is held, as in Discord.
+fn ask_delete(ui: &Ui, msg: &Message, cx: &mut Ctx) {
+    if ui.input(|i| i.modifiers.shift) {
+        cx.actions.push(Action::Delete { channel: msg.channel_id, message: msg.id });
+    } else {
+        cx.uis.confirm_delete = Some((msg.channel_id, msg.id));
     }
 }
 
@@ -876,6 +894,12 @@ fn reactions(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
         for r in &msg.reactions {
+            // A frame's width isn't known before it's drawn, so wrapping wouldn't happen until one had overflowed:
+            // measure the chip (margins, emoji, gap, count, stroke) and start a new row if it won't fit.
+            let count_w = ui.painter().layout_no_wrap(r.count.to_string(), theme::font_semibold(13.0), Color32::WHITE).size().x;
+            if ui.available_size_before_wrap().x < 6.0 + 18.0 + 4.0 + count_w + 6.0 + 2.0 {
+                ui.end_row();
+            }
             let (fill, stroke) = if r.me { (theme::BLURPLE().gamma_multiply(0.25), theme::BLURPLE()) } else { (theme::SIDEBAR(), theme::SIDEBAR()) };
             let resp = egui::Frame::new().fill(fill).stroke(egui::Stroke::new(1.0, stroke)).corner_radius(8).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -943,7 +967,7 @@ fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, cx: &mut Ctx) {
                 0 => cx.uis.emoji_picker = Some(PickerTarget::Reaction { channel: msg.channel_id, message: msg.id, at: r.rect.left_bottom() }),
                 1 => start_reply(msg, cx),
                 2 => cx.uis.editing = Some((msg.id, msg.content.clone())),
-                _ => cx.actions.push(Action::Delete { channel: msg.channel_id, message: msg.id }),
+                _ => ask_delete(ui, msg, cx),
             }
         }
     }
@@ -1035,7 +1059,7 @@ fn context_menu(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     if mine || (cx.guild.is_some() && cx.perms & perm::MANAGE_MESSAGES != 0) {
         ui.separator();
         if ui.button(RichText::new("Delete Message").color(theme::RED())).clicked() {
-            cx.actions.push(Action::Delete { channel: msg.channel_id, message: msg.id });
+            ask_delete(ui, msg, cx);
             ui.close();
         }
     }

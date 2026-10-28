@@ -55,6 +55,8 @@ struct Row<'a> {
     msg: Option<&'a Message>,
     compact: bool,
     divider: bool,
+    /// The first unread message: the red NEW line goes above it.
+    new_line: bool,
 }
 
 pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, actions: &mut Vec<Action>) {
@@ -211,13 +213,20 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
     }
 
     let msgs: Vec<&Message> = history.list.values().collect();
-    let read_up_to = None::<Snowflake>;
+    // The NEW line goes above the first message from someone else after where we'd read up to. If that's older
+    // than the loaded history, there's no place for it yet.
+    let me = state.me.as_ref().map(|u| u.id);
+    let read_up_to = uis.unread_marker.get(&channel.id).copied();
+    let unread: Vec<&Message> = read_up_to.map_or_else(Vec::new, |r| msgs.iter().copied().filter(|m| m.id > r && Some(m.author.id) != me).collect());
+    let placed = read_up_to.is_some_and(|r| history.reached_start || msgs.first().is_some_and(|m| m.id <= r));
+    let first_unread = unread.first().map(|m| m.id).filter(|_| placed);
     let mut rows = Vec::with_capacity(msgs.len() + 1);
-    rows.push(Row { id: TOP_ROW, msg: None, compact: false, divider: false });
+    rows.push(Row { id: TOP_ROW, msg: None, compact: false, divider: false, new_line: false });
     for (i, m) in msgs.iter().enumerate() {
         let prev = i.checked_sub(1).map(|p| msgs[p]);
         let divider = prev.is_none_or(|p| !message::same_day(p.timestamp(), m.timestamp()));
-        rows.push(Row { id: m.id, msg: Some(m), compact: !divider && message::is_compact(m, prev) && read_up_to != Some(m.id), divider });
+        let new_line = first_unread == Some(m.id);
+        rows.push(Row { id: m.id, msg: Some(m), compact: !divider && !new_line && message::is_compact(m, prev), divider, new_line });
     }
 
     let mut view = uis.chat.remove(&channel.id).unwrap_or_default();
@@ -230,7 +239,7 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
         }
         match r.msg {
             None => if history.reached_start { 150.0 } else { 120.0 },
-            Some(m) => message::estimate_height(m, r.compact) + if r.divider { 34.0 } else { 0.0 },
+            Some(m) => message::estimate_height(m, r.compact) + if r.divider || r.new_line { 34.0 } else { 0.0 },
         }
     };
     let mut tops = Vec::with_capacity(rows.len());
@@ -307,8 +316,8 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
                     match r.msg {
                         None => top_row(ui, s, channel, history.reached_start),
                         Some(m) => {
-                            if r.divider {
-                                day_divider(ui, m);
+                            if r.divider || r.new_line {
+                                day_divider(ui, m, r.divider, r.new_line);
                             }
                             message::show(ui, m, r.compact, &mut cx);
                         }
@@ -366,6 +375,40 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
             ui.ctx().request_repaint();
         }
     }
+
+    // While the NEW line is above what's shown (or not loaded yet): "N new messages since …" across the top.
+    // Clicking it goes to the line; Mark As Read drops it.
+    if let (Some(read), false) = (read_up_to, unread.is_empty()) {
+        let line_above = match first_unread.and_then(|id| rows.iter().position(|r| r.id == id)) {
+            Some(i) => tops[i] < viewport.min.y,
+            None => true,
+        };
+        if line_above {
+            let since = if placed { unread[0].timestamp() } else { read.created_at() };
+            let local = since.with_timezone(&chrono::Local);
+            let when = if local.date_naive() == chrono::Local::now().date_naive() {
+                local.format("%-I:%M %p").to_string()
+            } else {
+                local.format("%-I:%M %p on %B %-d, %Y").to_string()
+            };
+            let count = format!("{}{}", unread.len(), if placed { "" } else { "+" });
+            let noun = if unread.len() == 1 && placed { "message" } else { "messages" };
+            let rect = Rect::from_min_size(out.inner_rect.left_top() + Vec2::new(16.0, 0.0), Vec2::new(out.inner_rect.width() - 32.0, 26.0));
+            let bar = ui.interact(rect, ui.scope_id().with(("new-messages", channel.id)), Sense::click());
+            let p = ui.painter();
+            p.rect_filled(rect, egui::CornerRadius { nw: 0, ne: 0, sw: 8, se: 8 }, if bar.hovered() { theme::BLURPLE().gamma_multiply(0.85) } else { theme::BLURPLE() });
+            p.text(rect.left_center() + Vec2::new(12.0, 0.0), egui::Align2::LEFT_CENTER, format!("{count} new {noun} since {when}"), theme::font_semibold(13.0), Color32::WHITE);
+            let mark = Rect::from_min_max(egui::pos2(rect.right() - 130.0, rect.top()), rect.right_bottom());
+            let mark_r = ui.interact(mark, ui.scope_id().with(("mark-read", channel.id)), Sense::click());
+            let label = if mark_r.hovered() { RichText::new("Mark As Read").underline() } else { RichText::new("Mark As Read") };
+            ui.put(mark.shrink2(Vec2::new(10.0, 0.0)), egui::Label::new(label.font(theme::font_semibold(13.0)).color(Color32::WHITE)).selectable(false));
+            if mark_r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                uis.unread_marker.remove(&channel.id);
+            } else if bar.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                actions.push(Action::JumpTo { channel: channel.id, message: Some(first_unread.unwrap_or(read)) });
+            }
+        }
+    }
     uis.chat.insert(channel.id, view);
 }
 
@@ -411,17 +454,34 @@ fn top_row(ui: &mut Ui, s: &Session, c: &Channel, reached_start: bool) {
     ui.add_space(8.0);
 }
 
-fn day_divider(ui: &mut Ui, m: &Message) {
+/// The line above a message starting a new day (with the date) and/or the first unread one (red, with a NEW
+/// tag at the end), as Discord draws them.
+fn day_divider(ui: &mut Ui, m: &Message, date: bool, new: bool) {
     ui.add_space(14.0);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 16.0), Sense::hover());
-    let text = m.timestamp().with_timezone(&chrono::Local).format("%B %-d, %Y").to_string();
-    let galley = ui.painter().layout_no_wrap(text, theme::font_semibold(12.0), theme::FAINT());
+    let (line, text_color) = if new { (theme::RED(), theme::RED()) } else { (theme::SELECTED(), theme::FAINT()) };
+    let stroke = egui::Stroke::new(1.0, line);
     let c = rect.center();
-    let half = galley.size().x / 2.0 + 8.0;
-    let stroke = egui::Stroke::new(1.0, theme::SELECTED());
-    ui.painter().hline((rect.left() + 16.0)..=(c.x - half), c.y, stroke);
-    ui.painter().hline((c.x + half)..=(rect.right() - 16.0), c.y, stroke);
-    ui.painter().galley(c - galley.size() / 2.0, galley, theme::FAINT());
+    let mut right = rect.right() - 16.0;
+    if new {
+        // The NEW tag: a red label with a pointed left end, flush with the line's right end.
+        let galley = ui.painter().layout_no_wrap("NEW".into(), theme::font_bold(10.0), Color32::WHITE);
+        let tag = Rect::from_min_max(egui::pos2(right - galley.size().x - 8.0, c.y - 7.0), egui::pos2(right, c.y + 7.0));
+        let point = egui::pos2(tag.left() - 5.0, c.y);
+        ui.painter().add(egui::Shape::convex_polygon(vec![point, tag.left_top(), tag.right_top(), tag.right_bottom(), tag.left_bottom()], theme::RED(), egui::Stroke::NONE));
+        ui.painter().galley(egui::pos2(tag.left() + 4.0, c.y - galley.size().y / 2.0), galley, Color32::WHITE);
+        right = point.x;
+    }
+    if date {
+        let text = m.timestamp().with_timezone(&chrono::Local).format("%B %-d, %Y").to_string();
+        let galley = ui.painter().layout_no_wrap(text, theme::font_semibold(12.0), text_color);
+        let half = galley.size().x / 2.0 + 8.0;
+        ui.painter().hline((rect.left() + 16.0)..=(c.x - half), c.y, stroke);
+        ui.painter().hline((c.x + half)..=right, c.y, stroke);
+        ui.painter().galley(c - galley.size() / 2.0, galley, text_color);
+    } else {
+        ui.painter().hline((rect.left() + 16.0)..=right, c.y, stroke);
+    }
     ui.add_space(4.0);
 }
 
@@ -499,6 +559,8 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
     let edit_id = egui::Id::unique(("composer", c.id));
     // Clicking a suggestion takes focus from the text box first; the list stays while it's pointed at.
     let focused = ui.ctx().memory(|m| m.has_focus(edit_id)) || suggest::pointed_at(ui.ctx());
+    // egui drops focus as soon as Escape is pressed, before we look: it was ours if we had it last frame.
+    let had_focus = focused || ui.ctx().memory(|m| m.had_focus_last_frame(edit_id));
     let draft = uis.drafts.entry(c.id).or_default();
 
     // Autocomplete for the @/#/: token at the caret.
@@ -556,7 +618,7 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
     let suggesting = !items.is_empty();
     let (enter, esc, up, down, tab) = ui.input_mut(|i| {
         let enter = focused && !i.modifiers.shift && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
-        let esc = focused && i.key_pressed(egui::Key::Escape);
+        let esc = had_focus && i.key_pressed(egui::Key::Escape);
         let up = focused && (suggesting || draft.text.is_empty()) && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
         let down = focused && suggesting && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
         // Tab is always ours while typing (no tab characters in messages); it only completes suggestions.
@@ -583,7 +645,14 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
             draft.dismissed = token.as_ref().map(|t| t.start);
         }
     } else if esc {
-        draft.reply = None;
+        // Escape cancels a reply; with none, it marks the channel read (drops the NEW line), as in Discord.
+        if draft.reply.take().is_none() {
+            uis.unread_marker.remove(&c.id);
+        }
+    }
+    if esc {
+        // Typing carries on in the text box.
+        ui.ctx().memory_mut(|m| m.request_focus(edit_id));
     }
     let (enter, up) = if suggesting { (false, false) } else { (enter, up) };
 

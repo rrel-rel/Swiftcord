@@ -320,6 +320,11 @@ impl State {
         self.read_states.get(&channel).map_or(0, |r| r.mention_count)
     }
 
+    /// The last message we've read in a channel.
+    pub fn last_read(&self, channel: Snowflake) -> Option<Snowflake> {
+        self.read_states.get(&channel).and_then(|r| r.last_message_id)
+    }
+
     pub fn guild_unread(&self, guild: Snowflake) -> bool {
         self.channels.values().any(|c| {
             c.guild_id == Some(guild)

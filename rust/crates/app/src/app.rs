@@ -225,6 +225,11 @@ pub struct UiState {
     pub open_folders: HashSet<i64>,
     pub drafts: HashMap<Snowflake, Draft>,
     pub editing: Option<(Snowflake, String)>,
+    /// A message waiting for "Delete Message" to be confirmed: (channel, message).
+    pub confirm_delete: Option<(Snowflake, Snowflake)>,
+    /// Where we'd read up to when the open channel was opened with unread messages: the NEW line goes after
+    /// it, until the channel is marked read.
+    pub unread_marker: HashMap<Snowflake, Snowflake>,
     pub chat: HashMap<Snowflake, ui::chat::ChatView>,
     pub loading: HashSet<Snowflake>,
     pub revealed: HashSet<(Snowflake, u16)>,
@@ -933,6 +938,11 @@ impl App {
             return;
         }
         self.ensure_history(channel);
+        // Remember where we'd read up to before acknowledging, for the NEW line. Leaving a channel forgets it.
+        self.ui.unread_marker.retain(|c, _| *c == channel);
+        if let Some(read) = self.session.as_ref().filter(|s| s.state.is_unread(channel)).and_then(|s| s.state.last_read(channel)) {
+            self.ui.unread_marker.insert(channel, read);
+        }
         self.mark_viewed(channel);
     }
 
@@ -1182,7 +1192,11 @@ impl App {
                 let oldest = list.list.keys().find(|id| list.list[id].pending.is_none()).copied();
                 self.fetch_history(c, oldest);
             }
-            Action::Send(c) => self.send(c),
+            Action::Send(c) => {
+                // Talking in a channel means you've caught up with it.
+                self.ui.unread_marker.remove(&c);
+                self.send(c);
+            }
             Action::SaveEdit { channel, message, content } => {
                 self.ui.editing = None;
                 let Some(s) = &mut self.session else { return };
