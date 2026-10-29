@@ -630,6 +630,23 @@ impl State {
         entry.mention_count = 0;
     }
 
+    /// Marks a channel unread from `message` on, as Discord's Mark Unread does. Returns the message read up to
+    /// (the one before it) and how many of the messages from it on mention us, which Discord is told.
+    pub fn mark_unread(&mut self, channel: Snowflake, message: Snowflake) -> (Snowflake, u32) {
+        let me = self.me.as_ref().map(|m| m.id);
+        let private = self.channels.get(&channel).is_some_and(|c| c.is_private());
+        let list = self.messages.get(&channel).map(|m| &m.list);
+        // The message before it, or (with none loaded) the ID just below it, which reads the same.
+        let before = list.and_then(|l| l.range(..message).next_back().map(|(id, _)| *id)).unwrap_or(Snowflake(message.0.saturating_sub(1)));
+        let mentions = list.map_or(0, |l| {
+            l.range(message..).filter(|(_, m)| Some(m.author.id) != me && (private || self.mentions_me(m))).count() as u32
+        });
+        let entry = self.read_states.entry(channel).or_insert_with(|| ReadStateEntry { id: channel, ..Default::default() });
+        entry.last_message_id = Some(before);
+        entry.mention_count = mentions;
+        (before, mentions)
+    }
+
     pub fn add_channel(&mut self, mut channel: Channel) {
         for r in &channel.recipients {
             self.users.insert(r.id, r.clone());
@@ -1319,6 +1336,22 @@ mod tests {
 
     fn list_member(id: u64, status: &str) -> String {
         format!(r#"{{"member":{{"user":{{"id":"{id}","username":"u{id}"}},"roles":[],"presence":{{"user":{{"id":"{id}"}},"status":"{status}","activities":[{{"type":0,"name":"Chess"}}]}}}}}}"#)
+    }
+
+    #[test]
+    fn mark_unread_reads_up_to_the_message_before() {
+        let mut s = ready_state();
+        let dm = Snowflake(300);
+        let msg = |id: u64, author: u64| ev_message(&format!(r#"{{"id":"{id}","channel_id":"300","author":{{"id":"{author}","username":"u"}},"content":"x"}}"#));
+        s.add_history(dm, vec![msg(400, 2), msg(398, 1), msg(397, 2)], 50);
+        s.mark_read(dm, Snowflake(400));
+        assert!(!s.is_unread(dm));
+        // From 398 (ours) on: 400 is unread, and in a DM it counts as a mention; our own doesn't.
+        assert_eq!(s.mark_unread(dm, Snowflake(398)), (Snowflake(397), 1));
+        assert!(s.is_unread(dm));
+        assert_eq!((s.last_read(dm), s.mention_count(dm)), (Some(Snowflake(397)), 1));
+        // From the first message loaded, the ID just below it.
+        assert_eq!(s.mark_unread(dm, Snowflake(397)).0, Snowflake(396));
     }
 
     #[test]

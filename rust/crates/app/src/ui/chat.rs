@@ -229,11 +229,11 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
     }
 
     let msgs: Vec<&Message> = history.list.values().collect();
-    // The NEW line goes above the first message from someone else after where we'd read up to. If that's older
-    // than the loaded history, there's no place for it yet.
-    let me = state.me.as_ref().map(|u| u.id);
+    // The NEW line goes above the first message after where we'd read up to (ours too: sending one reads the
+    // channel, so one of ours is after it only when marked unread). If that's older than the loaded history,
+    // there's no place for it yet.
     let read_up_to = uis.unread_marker.get(&channel.id).copied();
-    let unread: Vec<&Message> = read_up_to.map_or_else(Vec::new, |r| msgs.iter().copied().filter(|m| m.id > r && Some(m.author.id) != me).collect());
+    let unread: Vec<&Message> = read_up_to.map_or_else(Vec::new, |r| msgs.iter().copied().filter(|m| m.id > r).collect());
     let placed = read_up_to.is_some_and(|r| history.reached_start || msgs.first().is_some_and(|m| m.id <= r));
     let first_unread = unread.first().map(|m| m.id).filter(|_| placed);
     let mut rows = Vec::with_capacity(msgs.len() + 1);
@@ -420,6 +420,8 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
             ui.put(mark.shrink2(Vec2::new(10.0, 0.0)), egui::Label::new(label.font(theme::font_semibold(13.0)).color(Color32::WHITE)).selectable(false));
             if mark_r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 uis.unread_marker.remove(&channel.id);
+                // Read already, unless it was marked unread while open.
+                actions.push(Action::Ack(channel.id));
             } else if bar.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 actions.push(Action::JumpTo { channel: channel.id, message: Some(first_unread.unwrap_or(read)) });
             }
@@ -664,6 +666,7 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
         // Escape cancels a reply; with none, it marks the channel read (drops the NEW line), as in Discord.
         if draft.reply.take().is_none() {
             uis.unread_marker.remove(&c.id);
+            actions.push(Action::Ack(c.id));
         }
     }
     if esc {

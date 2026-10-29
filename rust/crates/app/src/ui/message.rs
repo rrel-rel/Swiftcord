@@ -191,6 +191,10 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
             toolbar(ui, msg, rect, cx);
         }
         if let Some(r) = menu_resp {
+            // Alt-click marks it unread, as in Discord.
+            if r.clicked() && ui.input(|i| i.modifiers.alt) {
+                cx.actions.push(Action::MarkUnread { channel: msg.channel_id, message: msg.id });
+            }
             r.context_menu(|ui| context_menu(ui, msg, cx));
         }
     }
@@ -1096,6 +1100,10 @@ fn context_menu(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     ui.separator();
     if !msg.content.is_empty() && ui.button("Copy Text").clicked() {
         cx.actions.push(Action::Copy(msg.content.clone()));
+        ui.close();
+    }
+    if ui.button("Mark Unread").clicked() {
+        cx.actions.push(Action::MarkUnread { channel: msg.channel_id, message: msg.id });
         ui.close();
     }
     if ui.button("Copy Message Link").clicked() {

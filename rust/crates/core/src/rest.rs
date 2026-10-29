@@ -545,6 +545,13 @@ impl Rest {
             .await
     }
 
+    /// Marks a channel unread from the message after `before`, as Discord's Mark Unread does: a manual ack of
+    /// the message before it, carrying how many mentions are left unread.
+    pub async fn ack_manual(&self, channel: Snowflake, before: Snowflake, mention_count: u32) -> Result<()> {
+        let body = json!({ "manual": true, "mention_count": mention_count });
+        self.empty(Method::POST, &format!("channels/{channel}/messages/{before}/ack"), Body::Json(body)).await
+    }
+
     // MARK: GIFs (Tenor, through Discord)
 
     pub async fn gif_search(&self, query: &str) -> Result<Vec<Gif>> {

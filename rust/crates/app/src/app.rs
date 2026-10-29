@@ -138,6 +138,8 @@ pub enum Action {
     PlayWeb(Option<(String, Snowflake)>),
     /// Forwards a message to up to five DMs or channels, each followed by `note` if there is one.
     Forward { channel: Snowflake, message: Snowflake, to: Vec<Snowflake>, note: String },
+    /// Marks a channel unread from this message on.
+    MarkUnread { channel: Snowflake, message: Snowflake },
     /// A moderator's change to someone's voice state in a server.
     ModerateVoice { guild: Snowflake, user: Snowflake, change: VoiceMod },
     /// The member list beside `channel` shows rows `first..=last`; subscribes to the blocks covering them.
@@ -264,6 +266,9 @@ pub struct UiState {
     /// Where we'd read up to when the open channel was opened with unread messages: the NEW line goes after
     /// it, until the channel is marked read.
     pub unread_marker: HashMap<Snowflake, Snowflake>,
+    /// A channel marked unread while open: it isn't marked read again as messages come in, until it's left
+    /// or marked read.
+    pub kept_unread: Option<Snowflake>,
     pub chat: HashMap<Snowflake, ui::chat::ChatView>,
     pub loading: HashSet<Snowflake>,
     pub revealed: HashSet<(Snowflake, u16)>,
@@ -808,7 +813,7 @@ impl App {
         match notice {
             Notice::MessageCreated { message, notify } => {
                 let _ = s;
-                if current == Some(message.channel_id) && focused {
+                if current == Some(message.channel_id) && focused && self.ui.kept_unread != current {
                     self.queue_ack(message.channel_id, message.id);
                 } else if notify && !dnd {
                     if self.settings.notifications {
@@ -992,6 +997,7 @@ impl App {
             crate::threads_glue::load(self, channel, false);
             return;
         }
+        self.ui.kept_unread = None;
         self.ensure_history(channel);
         // Remember where we'd read up to before acknowledging, for the NEW line. Leaving a channel forgets it.
         self.ui.unread_marker.retain(|c, _| *c == channel);
@@ -1250,6 +1256,7 @@ impl App {
             Action::Send(c) => {
                 // Talking in a channel means you've caught up with it.
                 self.ui.unread_marker.remove(&c);
+                self.ui.kept_unread = self.ui.kept_unread.filter(|k| *k != c);
                 self.send(c);
             }
             Action::SaveEdit { channel, message, content } => {
@@ -1571,7 +1578,27 @@ impl App {
                     AppEvent::Pins { channel, result }
                 });
             }
-            Action::Ack(c) => self.mark_viewed(c),
+            Action::Ack(c) => {
+                if self.ui.kept_unread == Some(c) {
+                    self.ui.kept_unread = None;
+                }
+                self.mark_viewed(c);
+            }
+            Action::MarkUnread { channel, message } => {
+                let Some(s) = &mut self.session else { return };
+                let (before, mentions) = s.state.mark_unread(channel, message);
+                s.last_ack.insert(channel, before);
+                self.ui.unread_marker.insert(channel, before);
+                if self.ui.channel() == Some(channel) {
+                    self.ui.kept_unread = Some(channel);
+                }
+                let rest = s.rest.clone();
+                self.rt.spawn(async move {
+                    if let Err(e) = rest.ack_manual(channel, before, mentions).await {
+                        tracing::warn!("mark unread: {e}");
+                    }
+                });
+            }
             Action::JoinVoice { guild, channel } => crate::voice_glue::join(self, guild, channel),
             Action::AcceptCall(channel) => {
                 self.apply(Action::SelectChannel(channel));
