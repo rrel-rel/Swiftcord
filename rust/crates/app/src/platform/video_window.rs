@@ -22,7 +22,7 @@ pub fn player_url(embed: &str) -> String {
 }
 
 /// A page that's just the player, filling the window.
-fn player_page(url: &str) -> String {
+pub(crate) fn player_page(url: &str) -> String {
     let src = url.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;");
     format!(
         r#"<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="strict-origin-when-cross-origin">
@@ -32,7 +32,7 @@ fn player_page(url: &str) -> String {
 }
 
 /// The site a URL is on, without `www.`.
-fn site(url: &str) -> Option<&str> {
+pub(crate) fn site(url: &str) -> Option<&str> {
     let host = url.split("://").nth(1)?.split(['/', '?', '#']).next()?;
     Some(host.strip_prefix("www.").unwrap_or(host))
 }

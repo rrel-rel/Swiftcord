@@ -801,15 +801,27 @@ fn playable(v: &EmbedMedia) -> bool {
 }
 
 /// A video that's a web player (YouTube and the like): its poster (or a blank tile) with a play button, which
-/// plays it in the video window.
-fn video_poster(ui: &mut Ui, poster: Option<&EmbedMedia>, video: &EmbedMedia, title: Option<&str>) {
-    let r = match poster {
-        Some(p) => {
-            let size = fit(p.width.or(video.width), p.height.or(video.height), within(ui, Vec2::new(480.0, 270.0)));
-            media_response(ui, p.proxy_url.as_deref().unwrap_or(&p.url), size, false, true, None)
+/// plays it right there, as Discord does (in lists like pins and search, in the video window instead).
+fn video_poster(ui: &mut Ui, poster: Option<&EmbedMedia>, video: &EmbedMedia, title: Option<&str>, cx: &mut Ctx) {
+    let size = match poster {
+        Some(p) => fit(p.width.or(video.width), p.height.or(video.height), within(ui, Vec2::new(480.0, 270.0))),
+        None => fit(video.width.or(Some(480)), video.height.or(Some(270)), within(ui, Vec2::new(480.0, 270.0))),
+    };
+    let playing = !cx.read_only && cx.uis.web_player.as_ref().is_some_and(|(u, c)| *u == video.url && *c == cx.channel);
+    if playing {
+        // The player (a window of its own) goes over this spot; black shows while it loads or is hidden.
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        ui.painter().rect_filled(rect, 6, Color32::BLACK);
+        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "Loading…", theme::font(13.0), theme::FAINT());
+        cx.uis.web_player_slot = Some((rect, ui.clip_rect()));
+        if ui.add(egui::Label::new(RichText::new("Stop video").size(12.0).color(theme::LINK())).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            cx.actions.push(Action::PlayWeb(None));
         }
+        return;
+    }
+    let r = match poster {
+        Some(p) => media_response(ui, p.proxy_url.as_deref().unwrap_or(&p.url), size, false, true, None),
         None => {
-            let size = fit(video.width.or(Some(480)), video.height.or(Some(270)), within(ui, Vec2::new(480.0, 270.0)));
             let (rect, r) = ui.allocate_exact_size(size, Sense::click());
             ui.painter().rect_filled(rect, 6, Color32::BLACK);
             ui.painter().circle_filled(rect.center(), 24.0, Color32::from_white_alpha(40));
@@ -817,9 +829,24 @@ fn video_poster(ui: &mut Ui, poster: Option<&EmbedMedia>, video: &EmbedMedia, ti
             r.on_hover_cursor(egui::CursorIcon::PointingHand)
         }
     };
-    if r.on_hover_text("Play").clicked() {
-        crate::platform::video_window::open(&video.url, title.unwrap_or("Video"));
+    let r = r.on_hover_text("Play");
+    if r.clicked() {
+        if cx.read_only {
+            crate::platform::video_window::open(&video.url, title.unwrap_or("Video"));
+        } else {
+            cx.actions.push(Action::PlayWeb(Some((video.url.clone(), cx.channel))));
+        }
     }
+    r.context_menu(|ui| {
+        if ui.button("Open in Window").clicked() {
+            crate::platform::video_window::open(&video.url, title.unwrap_or("Video"));
+            ui.close();
+        }
+        if ui.button("Open in Browser").clicked() {
+            crate::platform::open_url(&video.url);
+            ui.close();
+        }
+    });
 }
 
 fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake, cx: &mut Ctx) {
@@ -881,7 +908,7 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
                 let video = crate::player::Video { url: &v.url, link: target, poster: still, width: v.width, height: v.height };
                 cx.uis.videos.show(ui, &video, size);
             } else {
-                video_poster(ui, poster, v, e.title.as_deref());
+                video_poster(ui, poster, v, e.title.as_deref(), cx);
             }
         } else if let Some(img) = &e.image {
             if extra_images.is_empty() {

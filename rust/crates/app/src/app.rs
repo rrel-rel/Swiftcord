@@ -134,6 +134,8 @@ pub enum Action {
     ToggleLocalMute(Snowflake),
     /// Opens a DM with someone and starts a call there.
     CallUser(Snowflake),
+    /// Plays a web player embed (YouTube) inline in its message; `None` stops it.
+    PlayWeb(Option<(String, Snowflake)>),
     /// Forwards a message to up to five DMs or channels, each followed by `note` if there is one.
     Forward { channel: Snowflake, message: Snowflake, to: Vec<Snowflake>, note: String },
     /// A moderator's change to someone's voice state in a server.
@@ -255,6 +257,10 @@ pub struct UiState {
     pub voice_room_chat: bool,
     /// The "Forward To" picker, while open.
     pub forward: Option<ui::forward::Forward>,
+    /// The web player (YouTube) playing inline: its embed URL and channel.
+    pub web_player: Option<(String, Snowflake)>,
+    /// Where that player's embed was drawn this frame, and the visible part of the list around it.
+    pub web_player_slot: Option<(egui::Rect, egui::Rect)>,
     /// Where we'd read up to when the open channel was opened with unread messages: the NEW line goes after
     /// it, until the channel is marked read.
     pub unread_marker: HashMap<Snowflake, Snowflake>,
@@ -353,6 +359,8 @@ pub struct App {
     history_failed: HashMap<Snowflake, Instant>,
     /// Someone we asked to call before their DM existed: the call starts once it's open.
     pending_call: Option<Snowflake>,
+    /// The inline web player, while one is playing.
+    web_player: Option<crate::platform::inline_player::InlinePlayer>,
     /// Members already asked for (by server), so each is asked for once per connection.
     members_requested: HashSet<(Snowflake, Snowflake)>,
     /// The frecency settings as last read or written, so favourites can be edited without touching the rest.
@@ -385,6 +393,7 @@ impl App {
             settings,
             history_failed: HashMap::new(),
             pending_call: None,
+            web_player: None,
             members_requested: HashSet::new(),
             frecency: None,
             sounds: Default::default(),
@@ -1453,6 +1462,7 @@ impl App {
                     }
                 }
             }
+            Action::PlayWeb(player) => self.ui.web_player = player,
             Action::Forward { channel, message, to, note } => {
                 let Some(s) = &self.session else { return };
                 let guild = s.state.channel(channel).and_then(|c| c.guild_id);
@@ -1742,7 +1752,8 @@ impl eframe::App for App {
         crate::search_glue::tick(self);
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.ui.web_player_slot = None;
         let mut actions = Vec::new();
         if let Some(s) = &self.session {
             let key = (self.ui.guild, self.emoji.version, s.state.revision);
@@ -1761,9 +1772,51 @@ impl eframe::App for App {
         for a in actions {
             self.apply(a);
         }
+        self.place_web_player(ui.ctx(), frame);
         // The visible channel's history may need fetching after a reconnect reset the cache.
         if let Some(c) = self.ui.channel() {
             self.ensure_history(c);
+        }
+    }
+}
+
+impl App {
+    /// Starts, moves, hides or stops the inline web player to match the embed it's playing in.
+    fn place_web_player(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        // Leaving its channel stops it, as does being out of sight a while; another video replaces it.
+        if self.ui.web_player.as_ref().is_some_and(|(_, c)| self.ui.channel() != Some(*c)) || self.web_player.as_ref().is_some_and(|p| p.stale()) {
+            self.ui.web_player = None;
+        }
+        let wanted = self.ui.web_player.clone();
+        if self.web_player.as_ref().is_some_and(|p| wanted.as_ref().is_none_or(|(u, _)| *u != p.url)) {
+            self.web_player = None;
+        }
+        if self.web_player.is_none() {
+            let Some((url, _)) = wanted else { return };
+            match crate::platform::inline_player::InlinePlayer::new(frame, &url) {
+                Ok(p) => self.web_player = Some(p),
+                Err(e) => {
+                    // No WebView2 here: the video still plays in its own window.
+                    tracing::warn!("inline player unavailable ({e}); using the video window");
+                    crate::platform::video_window::open(&url, "Video");
+                    self.ui.web_player = None;
+                    return;
+                }
+            }
+        }
+        let Some(player) = &mut self.web_player else { return };
+        // Shown only where it's drawn whole, with nothing (a menu, a dialog) on top: a native window can't be
+        // clipped to the list or drawn under egui.
+        let rect = self.ui.web_player_slot.filter(|(rect, visible)| visible.contains_rect(*rect)).map(|(rect, _)| rect).filter(|rect| {
+            [rect.center(), rect.left_top(), rect.right_top(), rect.left_bottom(), rect.right_bottom()]
+                .iter()
+                .all(|p| ctx.layer_id_at(*p).is_none_or(|l| l.order == egui::Order::Background))
+        });
+        let ppp = ctx.pixels_per_point();
+        player.place(rect.map(|r| [(r.min.x * ppp).round() as i32, (r.min.y * ppp).round() as i32, (r.width() * ppp).round() as i32, (r.height() * ppp).round() as i32]));
+        // Keep checking while it's out of sight, so it stops in time.
+        if rect.is_none() {
+            ctx.request_repaint_after(Duration::from_secs(1));
         }
     }
 }

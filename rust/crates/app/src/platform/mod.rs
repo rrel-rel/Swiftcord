@@ -1,4 +1,5 @@
 pub mod credentials;
+pub mod inline_player;
 pub mod login_webview;
 pub mod video_window;
 
