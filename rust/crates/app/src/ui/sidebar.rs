@@ -41,9 +41,58 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Actio
     });
 }
 
+/// The channels listed for a server, and the DM list's channels, worked out again only when channels or
+/// permissions change (finding them means going through every channel of every server).
+#[derive(Default)]
+pub struct Lists {
+    key: Option<(Snowflake, u64)>,
+    /// Each category (none for the channels above them) with its channels, and each channel's joined threads.
+    tree: Vec<(Option<Snowflake>, Vec<(Snowflake, Vec<Snowflake>)>)>,
+    dms_key: Option<u64>,
+    dms: Vec<Snowflake>,
+}
+
+impl Lists {
+    fn tree(&mut self, state: &State, guild: Snowflake) -> &[(Option<Snowflake>, Vec<(Snowflake, Vec<Snowflake>)>)] {
+        let key = (guild, state.revision);
+        if self.key != Some(key) {
+            self.key = Some(key);
+            self.tree = state
+                .channel_tree(guild)
+                .into_iter()
+                .map(|(cat, channels)| {
+                    let channels = channels
+                        .into_iter()
+                        .map(|c| (c.id, if c.has_threads() { state.joined_threads(c.id).iter().map(|t| t.id).collect() } else { Vec::new() }))
+                        .collect();
+                    (cat.map(|c| c.id), channels)
+                })
+                .collect();
+        }
+        &self.tree
+    }
+
+    /// DMs, most recently active first.
+    fn dms<'a>(&mut self, state: &'a State) -> Vec<&'a Channel> {
+        if self.dms_key != Some(state.revision) {
+            self.dms_key = Some(state.revision);
+            self.dms = state.private_channels().iter().map(|c| c.id).collect();
+        }
+        let mut list: Vec<&Channel> = self.dms.iter().filter_map(|id| state.channel(*id)).collect();
+        // New messages reorder the list without changing the set of channels.
+        list.sort_by_key(|c| std::cmp::Reverse(c.last_message_id.unwrap_or(c.id)));
+        list
+    }
+}
+
 fn row(ui: &mut Ui, selected: bool, height: f32, add: impl FnOnce(&mut Ui, bool)) -> egui::Response {
     let width = ui.available_width() - 8.0;
     let (rect, r) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    // Rows scrolled out of view keep their place but aren't built (nor their avatars fetched).
+    if !ui.is_rect_visible(rect) {
+        ui.add_space(2.0);
+        return r;
+    }
     let rect = rect.translate(Vec2::new(4.0, 0.0));
     // contains_pointer, not hovered: buttons inside the row would otherwise un-hover it and hide themselves.
     let hovered = r.contains_pointer();
@@ -59,7 +108,9 @@ fn row(ui: &mut Ui, selected: bool, height: f32, add: impl FnOnce(&mut Ui, bool)
 fn guild_channels(ui: &mut Ui, state: &State, uis: &mut UiState, guild: Snowflake, actions: &mut Vec<Action>) {
     let selected = uis.channel();
     let my_voice = state.my_voice_state().and_then(|v| v.channel_id);
-    for (category, channels) in state.channel_tree(guild) {
+    let mut lists = std::mem::take(&mut uis.sidebar);
+    for (category, channels) in lists.tree(state, guild) {
+        let category = category.and_then(|id| state.channel(id));
         let collapsed = category.is_some_and(|c| uis.collapsed.contains(&c.id));
         if let Some(cat) = category {
             ui.add_space(12.0);
@@ -76,7 +127,8 @@ fn guild_channels(ui: &mut Ui, state: &State, uis: &mut UiState, guild: Snowflak
                 }
             }
         }
-        for c in channels {
+        for (id, threads) in channels {
+            let Some(c) = state.channel(*id) else { continue };
             let is_selected = selected == Some(c.id);
             let unread = state.is_unread(c.id) && !state.is_channel_muted(c);
             // Collapsed categories still show the open channel, unread channels and the voice channel you're in.
@@ -88,15 +140,16 @@ fn guild_channels(ui: &mut Ui, state: &State, uis: &mut UiState, guild: Snowflak
                 voice_members(ui, state, uis, c, actions);
             }
             if c.has_threads() {
-                thread_rows(ui, state, c, selected, collapsed, actions);
+                thread_rows(ui, state, c, threads, selected, collapsed, actions);
             }
         }
     }
+    uis.sidebar = lists;
 }
 
 /// Joined threads under their channel, and the open thread even if not joined, joined to it by a line.
-fn thread_rows(ui: &mut Ui, state: &State, parent: &Channel, selected: Option<Snowflake>, collapsed: bool, actions: &mut Vec<Action>) {
-    let mut threads = state.joined_threads(parent.id);
+fn thread_rows(ui: &mut Ui, state: &State, parent: &Channel, joined: &[Snowflake], selected: Option<Snowflake>, collapsed: bool, actions: &mut Vec<Action>) {
+    let mut threads: Vec<&Channel> = joined.iter().filter_map(|id| state.channel(*id)).collect();
     if let Some(open) = selected.and_then(|id| state.channel(id)).filter(|t| t.is_thread() && t.parent_id == Some(parent.id)) {
         if !threads.iter().any(|t| t.id == open.id) {
             threads.push(open);
@@ -182,7 +235,10 @@ fn channel_row(ui: &mut Ui, state: &State, c: &Channel, selected: bool, unread: 
         let y = r.rect.center().y;
         ui.painter().rect_filled(egui::Rect::from_min_size(egui::pos2(x - 4.0, y - 4.0), Vec2::new(8.0, 8.0)), 4, theme::HEADER());
     }
-    let r = r.on_hover_text(c.topic.clone().unwrap_or_default());
+    let r = match c.topic.as_deref().filter(|t| !t.is_empty()) {
+        Some(topic) => r.on_hover_text(topic),
+        None => r,
+    };
     if open_chat {
         actions.push(Action::OpenVoiceChat(c.id));
     } else if r.clicked() {
@@ -263,7 +319,7 @@ fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Acti
     });
     ui.add_space(4.0);
     let selected = uis.channel();
-    for c in state.private_channels() {
+    for c in uis.sidebar.dms(state) {
         let is_selected = selected == Some(c.id);
         let unread = state.is_unread(c.id);
         let mentions = state.mention_count(c.id);

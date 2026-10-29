@@ -17,6 +17,11 @@ use crate::ui;
 
 const HISTORY_PAGE: u8 = 50;
 const TYPING_INTERVAL: Duration = Duration::from_secs(8);
+/// Windows' own: the text cursor blinks for this long after the last input.
+const CARET_TIMEOUT: Duration = Duration::from_secs(5);
+/// Gateway events that change nothing on screen right away (presences, member lists) are shown within this
+/// long, so a busy server's stream of them doesn't redraw the window for each one.
+const BACKGROUND_REDRAW: Duration = Duration::from_millis(1000);
 /// One-click reactions offered (the hover bar shows three of them; the right-click menu all).
 pub const QUICK_REACTIONS: usize = 4;
 
@@ -248,6 +253,7 @@ pub struct UiState {
     /// Last channel per guild (`Snowflake::NONE` for Home).
     pub channel_for: HashMap<Snowflake, Snowflake>,
     pub collapsed: HashSet<Snowflake>,
+    pub sidebar: ui::sidebar::Lists,
     pub open_folders: HashSet<i64>,
     pub drafts: HashMap<Snowflake, Draft>,
     pub editing: Option<(Snowflake, String)>,
@@ -371,6 +377,12 @@ pub struct App {
     /// The frecency settings as last read or written, so favourites can be edited without touching the rest.
     frecency: Option<String>,
     pub sounds: crate::sounds::Sounds,
+    perf: crate::perf::Perf,
+    /// Images shown lately, so those that haven't been can be forgotten.
+    images: std::sync::Arc<crate::image_cache::ImageCache>,
+    images_checked: Instant,
+    /// When the user last typed, clicked or moved the mouse.
+    last_input: Instant,
 }
 
 impl App {
@@ -379,6 +391,7 @@ impl App {
         crate::theme::set(settings.palette, settings.accent);
         crate::theme::install(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
+        let images = crate::image_cache::install(&cc.egui_ctx);
         let cache = platform::data_dir().join("cache").join("media");
         cc.egui_ctx.add_bytes_loader(std::sync::Arc::new(crate::media::MediaLoader::new(rt.clone(), cache)));
 
@@ -402,6 +415,10 @@ impl App {
             members_requested: HashSet::new(),
             frecency: None,
             sounds: Default::default(),
+            perf: Default::default(),
+            images,
+            images_checked: Instant::now(),
+            last_input: Instant::now(),
         };
         app.ui.hide_members = app.settings.hide_members;
         app.ui.stream_audio = (app.settings.stream_volume, app.settings.stream_audio_when_deafened);
@@ -448,7 +465,14 @@ impl App {
         let _guard = self.rt.enter();
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         let gateway = Gateway::spawn(GatewayConfig::new(token.clone()), move |out| {
-            Self::send_event(&tx, &ctx, AppEvent::Gateway(out));
+            use swiftcord_core::events::Event;
+            let background = matches!(&out, GatewayOutput::Event(Event::PresenceUpdate(_) | Event::MemberListUpdate(_)));
+            let _ = tx.send(AppEvent::Gateway(out));
+            if background {
+                ctx.request_repaint_after(BACKGROUND_REDRAW);
+            } else {
+                ctx.request_repaint();
+            }
         });
         self.session = Some(Session {
             rest: Rest::new(&token),
@@ -718,6 +742,7 @@ impl App {
                 self.start_qr_login();
             }
             GatewayOutput::Event(event) => {
+                self.perf.event(&event);
                 let is_ready = matches!(event, swiftcord_core::events::Event::Ready(_));
                 let members_chunk = matches!(event, swiftcord_core::events::Event::GuildMembersChunk(_));
                 // A message pinned or unpinned in the channel whose pins are open: load them again.
@@ -1756,7 +1781,7 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Bounded so a flood of events can't starve a frame.
         for _ in 0..512 {
             match self.rx.try_recv() {
@@ -1777,9 +1802,12 @@ impl eframe::App for App {
         self.ui.audio.tick(output, volume);
         self.ui.stickers.tick();
         crate::search_glue::tick(self);
+        crate::image_cache::tick(ctx, &self.images, &mut self.images_checked);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let started = Instant::now();
+        self.caret_timeout(ui.ctx());
         self.ui.web_player_slot = None;
         let mut actions = Vec::new();
         if let Some(s) = &self.session {
@@ -1804,10 +1832,25 @@ impl eframe::App for App {
         if let Some(c) = self.ui.channel() {
             self.ensure_history(c);
         }
+        self.perf.frame(ui.ctx(), started.elapsed());
     }
 }
 
 impl App {
+    /// As in Windows, the text cursor stops blinking a few seconds after the last input and stays lit: a
+    /// blinking cursor redraws the window twice a second, which with the message box focused is all the time.
+    fn caret_timeout(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| !i.events.is_empty() || i.pointer.is_moving()) {
+            self.last_input = Instant::now();
+        }
+        let blink = self.last_input.elapsed() < CARET_TIMEOUT;
+        if ctx.style_of(egui::Theme::Dark).visuals.text_cursor.blink != blink {
+            ctx.style_mut_of(egui::Theme::Dark, |s| s.visuals.text_cursor.blink = blink);
+            // The style takes effect from the next frame.
+            ctx.request_repaint();
+        }
+    }
+
     /// Starts, moves, hides or stops the inline web player to match the embed it's playing in.
     fn place_web_player(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
         // Leaving its channel stops it, as does being out of sight a while; another video replaces it.

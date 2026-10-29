@@ -60,6 +60,8 @@ pub struct Catalog {
     frequent: Vec<String>,
     /// Bumped when the recent or frequent lists change, so derived lists know to refresh.
     pub version: u64,
+    /// The picker's rows as last laid out, and what for (search, server, lists, skin tone, server emoji).
+    rows: Option<(RowsKey, std::rc::Rc<Vec<Vec<Item>>>)>,
 }
 
 #[derive(Deserialize)]
@@ -114,7 +116,7 @@ impl Catalog {
             .map(|(id, name, animated)| Emoji { id, name, animated })
             .collect();
         let skin_tone = std::fs::read_to_string(skin_tone_path()).ok().and_then(|s| s.trim().parse().ok()).filter(|t| *t <= 5).unwrap_or(0);
-        Catalog { unicode, groups: file.groups, recent, by_name, by_char, skin_tone, frequent: Vec::new(), version: 0 }
+        Catalog { unicode, groups: file.groups, recent, by_name, by_char, skin_tone, frequent: Vec::new(), version: 0, rows: None }
     }
 
     /// The reactions Discord says are used most (from the synced frecency settings).
@@ -281,6 +283,8 @@ pub fn expand_shortcodes(text: &str, catalog: &Catalog, custom: impl Fn(&str) ->
     out
 }
 
+type RowsKey = (String, Option<Snowflake>, u64, usize, u64);
+
 enum Item {
     Header(String),
     Emoji(Emoji),
@@ -398,7 +402,15 @@ pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog
                 tone_open = skin_tone_button(ui, catalog);
             });
             ui.add_space(4.0);
-            let rows = rows(catalog, state, guild, &uis.emoji_search);
+            let key = (uis.emoji_search.clone(), guild, catalog.version, catalog.skin_tone, state.revision);
+            let rows = match &catalog.rows {
+                Some((k, rows)) if *k == key => rows.clone(),
+                _ => {
+                    let rows = std::rc::Rc::new(rows(catalog, state, guild, &uis.emoji_search));
+                    catalog.rows = Some((key, rows.clone()));
+                    rows
+                }
+            };
             let mut hovered: Option<String> = None;
             egui::ScrollArea::vertical().auto_shrink(false).max_height(size.y - 90.0).show_rows(ui, CELL, rows.len(), |ui, range| {
                 for row in &rows[range] {

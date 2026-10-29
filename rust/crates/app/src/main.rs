@@ -22,6 +22,8 @@ mod theme;
 mod ui;
 mod voice_glue;
 mod audio;
+mod perf;
+mod image_cache;
 
 use std::fs::{self, File};
 use std::sync::Mutex;

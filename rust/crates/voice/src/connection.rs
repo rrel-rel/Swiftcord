@@ -608,6 +608,7 @@ async fn session(
             }
             c = cmd.recv() => match c {
                 Some(Cmd::Speaking(on)) => {
+                    events(Event::Speaking);
                     send!(json_msg(op::SPEAKING, json!({ "speaking": if on { 1 } else { 0 }, "delay": 0, "ssrc": ssrc })));
                 }
                 Some(Cmd::Camera(camera)) => {
@@ -1349,7 +1350,12 @@ fn spawn_receiver(
                             // their decoder settles to quiet instead of guessing at more speech, but they don't
                             // count as talking.
                             if let (Some(u), false) = (user, opus == codec::SILENCE) {
-                                shared.last_heard.lock().insert(u, Instant::now());
+                                let before = shared.last_heard.lock().insert(u, Instant::now());
+                                // They've just started: the speaking ring needs drawing (stopping is noticed by
+                                // the UI, which looks again while anyone is speaking).
+                                if before.is_none_or(|t| t.elapsed() >= crate::SPEAKING_HOLD) {
+                                    events(Event::Speaking);
+                                }
                             }
                             // Decoding happens at playback, in the jitter buffer.
                             shared.mixer.push(p.ssrc, p.seq, opus);

@@ -407,9 +407,9 @@ fn reply_preview(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         p.line_segment([rect.left_top() + Vec2::new(4.0, 7.0), rect.right_top() + Vec2::new(-4.0, 7.0)], stroke);
         let reference = msg.message_reference.as_ref().and_then(|r| Some((r.channel_id.unwrap_or(msg.channel_id), r.message_id?)));
         // Lists from elsewhere (recent mentions) leave the replied-to message out: use ours if it's loaded.
-        let cached = || reference.and_then(|(c, id)| cx.state.message(c, id)).cloned();
-        let referenced = msg.referenced_message.as_deref().cloned().or_else(cached);
-        match referenced.as_ref() {
+        let state = cx.state;
+        let referenced = msg.referenced_message.as_deref().or_else(|| reference.and_then(|(c, id)| state.message(c, id)));
+        match referenced {
             Some(r) => {
                 widgets::member_avatar(ui, cx.state, &r.author, cx.guild, 16.0);
                 let color = cx.guild.and_then(|g| cx.state.role_color(g, r.author.id));

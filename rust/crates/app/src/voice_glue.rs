@@ -280,7 +280,7 @@ pub fn on_event(app: &mut App, generation: u64, event: Event) {
             crate::stream_glue::request_if_ready(app);
         }
         Event::Error(e) => app.banner(e),
-        Event::VideoFrame => {}
+        Event::VideoFrame | Event::Speaking => {}
         Event::CameraStopped => {
             app.ui.self_video = false;
             update_self_state(app);
@@ -334,8 +334,11 @@ pub fn tick(app: &mut App) {
         ping_ms: call.voice.as_ref().map_or(0, |v| v.ping_ms()),
         privacy_code: call.voice.as_ref().and_then(|v| v.privacy_code()),
     });
-    // Poll speaking state a few times a second while in a call.
-    app.ctx().request_repaint_after(Duration::from_millis(150));
+    // The voice engine says when someone starts speaking; while anyone is, look again a few times a second
+    // to notice them stop. (The ping is shown too, and is fine updated with whatever redraws next.)
+    if !app.ui.speaking.is_empty() {
+        app.ctx().request_repaint_after(Duration::from_millis(150));
+    }
 }
 
 pub fn status_panel(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) {

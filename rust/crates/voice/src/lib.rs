@@ -76,6 +76,9 @@ impl Default for Settings {
     }
 }
 
+/// How long after someone's last sound they still count as speaking.
+pub const SPEAKING_HOLD: Duration = Duration::from_millis(250);
+
 #[derive(Debug, Clone)]
 pub enum Event {
     Connecting,
@@ -85,6 +88,8 @@ pub enum Event {
     Error(String),
     /// A new video picture is ready (see [`Voice::take_picture`]).
     VideoFrame,
+    /// Someone (or we) started or stopped speaking: speaking indicators need redrawing.
+    Speaking,
     /// Our camera stopped by itself (it failed or was unplugged); the reason has been sent as an `Error`.
     CameraStopped,
     Disconnected(String),
@@ -142,11 +147,11 @@ impl Voice {
 
     /// Whether we heard this user in the last quarter second.
     pub fn is_speaking(&self, user: u64) -> bool {
-        self.shared.last_heard.lock().get(&user).is_some_and(|t| t.elapsed() < Duration::from_millis(250))
+        self.shared.last_heard.lock().get(&user).is_some_and(|t| t.elapsed() < SPEAKING_HOLD)
     }
 
     pub fn speaking_users(&self) -> Vec<u64> {
-        let cutoff = Instant::now() - Duration::from_millis(250);
+        let cutoff = Instant::now() - SPEAKING_HOLD;
         self.shared.last_heard.lock().iter().filter(|(_, t)| **t > cutoff).map(|(u, _)| *u).collect()
     }
 

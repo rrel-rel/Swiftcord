@@ -205,7 +205,7 @@ pub fn on_event(app: &mut App, generation: u64, event: Event) {
             }
         }
         // Stream connections have no camera.
-        Event::Connecting | Event::CameraStopped => {}
+        Event::Connecting | Event::CameraStopped | Event::Speaking => {}
         Event::Error(e) => app.banner(e),
         Event::Disconnected(reason) => {
             tracing::info!("stream connection closed: {reason}");
