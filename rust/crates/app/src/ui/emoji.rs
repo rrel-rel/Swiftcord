@@ -290,17 +290,8 @@ enum Item {
 fn rows(catalog: &Catalog, state: &State, guild: Option<Snowflake>, query: &str) -> Vec<Vec<Item>> {
     let q = query.trim().to_lowercase();
     let mut sections: Vec<(String, Vec<Emoji>)> = Vec::new();
-    if q.is_empty() && !catalog.recent.is_empty() {
-        sections.push(("Frequently Used".into(), catalog.recent.clone()));
-    }
-    // Custom emoji: this server's first, then the rest.
-    let mut guild_ids: Vec<Snowflake> = guild.into_iter().collect();
-    guild_ids.extend(state.rail().into_iter().flat_map(|r| match r {
-        swiftcord_core::state::RailItem::Guild(g) => vec![g],
-        swiftcord_core::state::RailItem::Folder { guilds, .. } => guilds,
-    }).filter(|g| Some(*g) != guild));
-    for g in guild_ids {
-        let Some(gd) = state.guild(g) else { continue };
+    let add_guild = |sections: &mut Vec<(String, Vec<Emoji>)>, g: Snowflake| {
+        let Some(gd) = state.guild(g) else { return };
         let list: Vec<Emoji> = gd
             .emojis
             .iter()
@@ -310,6 +301,20 @@ fn rows(catalog: &Catalog, state: &State, guild: Option<Snowflake>, query: &str)
         if !list.is_empty() {
             sections.push((gd.name.clone(), list));
         }
+    };
+    // This server's emoji come first, above even the frequently used ones; then the other servers'.
+    if let Some(g) = guild {
+        add_guild(&mut sections, g);
+    }
+    if q.is_empty() && !catalog.recent.is_empty() {
+        sections.push(("Frequently Used".into(), catalog.recent.clone()));
+    }
+    let others = state.rail().into_iter().flat_map(|r| match r {
+        swiftcord_core::state::RailItem::Guild(g) => vec![g],
+        swiftcord_core::state::RailItem::Folder { guilds, .. } => guilds,
+    });
+    for g in others.filter(|g| Some(*g) != guild) {
+        add_guild(&mut sections, g);
     }
     for (gi, group) in catalog.groups.iter().enumerate() {
         let list: Vec<Emoji> = catalog
