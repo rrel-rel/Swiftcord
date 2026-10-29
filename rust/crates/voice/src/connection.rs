@@ -1290,6 +1290,8 @@ fn spawn_receiver(
             let mut last_pli = Instant::now() - Duration::from_secs(10);
             let mut last_stats = Instant::now();
             let mut decrypt_failures = 0u64;
+            // Audio packets that couldn't be decrypted (end-to-end), logged now and then for bug reports.
+            let (mut audio_packets, mut audio_undecryptable, mut last_audio_log) = (0u64, 0u64, Instant::now());
             let mut dropped_frames = 0u64;
             let mut unknown: HashMap<u8, u64> = HashMap::new();
             // RTCP shares the key; start its nonce counter far from the (unused) RTP one.
@@ -1334,7 +1336,15 @@ fn spawn_receiver(
                             if shared.deafened.load(Ordering::Relaxed) || p.payload.is_empty() {
                                 continue;
                             }
-                            let Some(opus) = e2ee_decrypt(&shared, user, MediaType::AUDIO, p.payload) else { continue };
+                            audio_packets += 1;
+                            let Some(opus) = e2ee_decrypt(&shared, user, MediaType::AUDIO, p.payload) else {
+                                audio_undecryptable += 1;
+                                if last_audio_log.elapsed() > Duration::from_secs(10) {
+                                    last_audio_log = Instant::now();
+                                    tracing::info!("audio: {audio_undecryptable} of {audio_packets} packets couldn't be decrypted (dropped)");
+                                }
+                                continue;
+                            };
                             // Silence frames (sent as someone stops talking) still go to the jitter buffer, so
                             // their decoder settles to quiet instead of guessing at more speech, but they don't
                             // count as talking.
@@ -1469,11 +1479,10 @@ fn e2ee_decrypt(shared: &Shared, user: Option<u64>, kind: MediaType, payload: Ve
         return Some(payload);
     }
     let (user, session) = (user?, dave.session.as_mut()?);
-    match session.decrypt(user, kind, &payload) {
-        Ok(f) => Some(f),
-        Err(_) if session.can_passthrough(user) => Some(payload),
-        Err(_) => None,
-    }
+    // Unencrypted frames are already passed through by `decrypt` while that's allowed (during a transition).
+    // A frame that is encrypted but can't be decrypted (its key isn't here yet) is dropped, and the jitter
+    // buffer covers the gap: passed on, it would decode as noise and throw the decoder off for what follows.
+    session.decrypt(user, kind, &payload).ok()
 }
 
 #[cfg(all(test, windows))]

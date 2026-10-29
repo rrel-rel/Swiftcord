@@ -73,7 +73,10 @@ impl Decoder {
     /// (in-band forward error correction), into interleaved stereo. Only call it when [`carries_fec`] says
     /// the packet has one: otherwise libopus falls back to its own concealment.
     pub fn decode_fec(&mut self, next_packet: &[u8], out: &mut [f32]) -> usize {
-        let frames = (out.len() / 2).min(FRAME) as i32;
+        // The copy is of a frame as long as the packet carrying it; asked for more, libopus would make up the
+        // difference by concealment, stretching time.
+        let duration = unsafe { opus::opus_packet_get_nb_samples(next_packet.as_ptr(), next_packet.len() as i32, SAMPLE_RATE as i32) };
+        let frames = (out.len() / 2).min(if duration > 0 { duration as usize } else { FRAME }) as i32;
         let n = unsafe { opus::opus_decode_float(self.0, next_packet.as_ptr(), next_packet.len() as i32, out.as_mut_ptr(), frames, 1) };
         if n > 0 { n as usize * 2 } else { 0 }
     }

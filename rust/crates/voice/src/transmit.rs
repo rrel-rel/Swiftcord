@@ -221,6 +221,59 @@ mod tests {
         assert!(!opened, "noise alone doesn't open the gate");
     }
 
+    /// Two talk spurts through the transmitter, decoded as listeners do (one decoder throughout, the silence
+    /// frames included): the level of each 20 ms of the second spurt's start against what went in.
+    fn second_spurt_levels(t: &mut Transmitter) -> Vec<f32> {
+        let tau = std::f32::consts::TAU;
+        let voice = |f: usize| -> Vec<f32> {
+            (0..FRAME)
+                .map(|i| {
+                    let t = (f * FRAME + i) as f32 / 48_000.0;
+                    (1..=6).map(|h| (tau * 150.0 * h as f32 * t).sin() / h as f32).sum::<f32>() * 0.2
+                })
+                .collect()
+        };
+        let mut dec = crate::codec::Decoder::new().unwrap();
+        let mut out = vec![0f32; FRAME * 2];
+        let mut levels = Vec::new();
+        let mut frame = 0;
+        for spurt in 0..2 {
+            for k in 0..40 {
+                let input = voice(frame);
+                frame += 1;
+                if let (Output::Audio(packets), _) = t.process(input.clone(), false, -40.0) {
+                    for p in packets {
+                        let n = dec.decode(Some(&p), &mut out);
+                        if spurt == 1 && k < 8 {
+                            levels.push(level_db(&out[..n]) - level_db(&input));
+                        }
+                    }
+                }
+            }
+            for _ in 0..HANGOVER + TRAILING_SILENCE + 25 {
+                match t.process(vec![0.0; FRAME], false, -40.0).0 {
+                    Output::Audio(packets) => packets.iter().for_each(|p| {
+                        dec.decode(Some(p), &mut out);
+                    }),
+                    Output::Silence => {
+                        dec.decode(Some(&crate::codec::SILENCE), &mut out);
+                    }
+                    Output::Nothing => {}
+                }
+            }
+        }
+        levels
+    }
+
+    #[test]
+    #[ignore = "diagnostic: prints how a listener hears the start of a talk spurt"]
+    fn spurt_start_levels() {
+        for bitrate in [24_000, 64_000] {
+            let levels = second_spurt_levels(&mut Transmitter::new(bitrate).unwrap());
+            println!("{bitrate} bps: {:?}", levels.iter().map(|l| (l * 10.0).round() / 10.0).collect::<Vec<_>>());
+        }
+    }
+
     #[test]
     fn muting_closes_immediately() {
         let mut t = Transmitter::new(64_000).unwrap();

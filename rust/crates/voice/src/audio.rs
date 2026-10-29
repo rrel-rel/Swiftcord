@@ -16,46 +16,93 @@ use parking_lot::Mutex;
 
 use crate::codec::{Decoder, FRAME, SAMPLE_RATE, SILENCE};
 
-/// Linear resampling: plenty for voice, and nearly free.
+/// Sample-rate conversion by windowed-sinc interpolation: each output sample is a weighted sum of the input
+/// around it, and the weights also filter out what the lower of the two rates can't carry. (Plain
+/// interpolation doesn't, so a 16 kHz headset or a 96 kHz microphone got high frequencies folded back down
+/// as harsh, metallic noise.)
 struct Resampler {
+    /// Input frames per output frame.
     step: f64,
-    pos: f64,
-    prev: Vec<f32>,
     channels: usize,
+    /// Interleaved input not used up yet.
+    buf: Vec<f32>,
+    /// Where the next output frame falls, in input frames from the start of `buf`.
+    pos: f64,
+    /// How far the filter reaches either side, in input frames.
+    half: usize,
+    /// The filter at offsets of `1 / TABLE_STEPS` input frames from 0 to `half`.
+    table: Vec<f32>,
 }
+
+/// The filter's length, in zero crossings either side (longer is sharper: this keeps up to about 18 kHz of
+/// 44.1 kHz audio while stopping what would fold back).
+const ZERO_CROSSINGS: f64 = 24.0;
+const TABLE_STEPS: usize = 256;
 
 impl Resampler {
     fn new(from: u32, to: u32, channels: usize) -> Self {
-        Self { step: from as f64 / to as f64, pos: 0.0, prev: vec![0.0; channels], channels }
+        debug_assert!((1..=2).contains(&channels));
+        let step = from as f64 / to as f64;
+        // Cut off a little below the lower rate's limit (half of it), in cycles per input frame.
+        let cutoff = 0.5 * (to as f64 / from as f64).min(1.0) * 0.94;
+        let half = (ZERO_CROSSINGS / (2.0 * cutoff)).ceil() as usize;
+        let table = (0..=half * TABLE_STEPS + 1)
+            .map(|i| {
+                let t = i as f64 / TABLE_STEPS as f64;
+                let x = std::f64::consts::PI * 2.0 * cutoff * t;
+                let sinc = if x == 0.0 { 1.0 } else { x.sin() / x };
+                // Blackman window: 1 in the middle, 0 at the ends.
+                let w = std::f64::consts::PI * (t / half as f64).min(1.0);
+                (sinc * (0.42 + 0.5 * w.cos() + 0.08 * (2.0 * w).cos())) as f32
+            })
+            .collect();
+        // Silence before the first sample, so it's centred like every other.
+        Self { step, channels, buf: vec![0.0; half * channels], pos: half as f64, half, table }
     }
 
     fn is_identity(&self) -> bool {
         (self.step - 1.0).abs() < f64::EPSILON
     }
 
-    /// Resamples interleaved frames from `input`, appending to `out`.
+    fn weight(&self, distance: f64) -> f32 {
+        let at = distance.abs() * TABLE_STEPS as f64;
+        let i = at as usize;
+        match (self.table.get(i), self.table.get(i + 1)) {
+            (Some(&a), Some(&b)) => a + (b - a) * (at - i as f64) as f32,
+            _ => 0.0,
+        }
+    }
+
+    /// Resamples interleaved frames from `input`, appending to `out`. Output runs `half` input frames behind
+    /// what's been given, as each sample needs that much after it.
     fn process(&mut self, input: &[f32], out: &mut Vec<f32>) {
-        let ch = self.channels;
-        let frames = input.len() / ch;
         if self.is_identity() {
             out.extend_from_slice(input);
             return;
         }
-        let at = |i: isize, c: usize, prev: &[f32]| if i < 0 { prev[c] } else { input[i as usize * ch + c] };
-        while self.pos < frames as f64 {
-            let i = self.pos.floor() as isize - 1;
-            let t = self.pos.fract() as f32;
-            for c in 0..ch {
-                let a = at(i, c, &self.prev);
-                let b = at(i + 1, c, &self.prev);
-                out.push(a + (b - a) * t);
+        let ch = self.channels;
+        self.buf.extend_from_slice(input);
+        let frames = self.buf.len() / ch;
+        let half = self.half as f64;
+        while self.pos + half < frames as f64 {
+            let first = (self.pos - half).ceil().max(0.0) as usize;
+            let last = ((self.pos + half) as usize).min(frames - 1);
+            let (mut acc, mut total) = ([0f32; 2], 0f32);
+            for k in first..=last {
+                let w = self.weight(self.pos - k as f64);
+                total += w;
+                for (c, a) in acc.iter_mut().enumerate().take(ch) {
+                    *a += self.buf[k * ch + c] * w;
+                }
             }
+            // Normalised, so a steady level comes out exactly as it went in.
+            out.extend(acc[..ch].iter().map(|a| a / total));
             self.pos += self.step;
         }
-        self.pos -= frames as f64;
-        if frames > 0 {
-            self.prev.copy_from_slice(&input[(frames - 1) * ch..frames * ch]);
-        }
+        // Input no later output reaches is done with.
+        let done = ((self.pos - half).floor().max(0.0) as usize).min(frames);
+        self.buf.drain(..done * ch);
+        self.pos -= done as f64;
     }
 }
 
@@ -63,13 +110,14 @@ impl Resampler {
 ///
 /// Packets wait until `target` frames are buffered, then play in sequence order. A packet missing while later
 /// ones have arrived is recovered from the next packet's error-correction copy when it has one, and otherwise
-/// covered by repeating the last frame more and more quietly (Opus's own concealment can burst to several
-/// times the real level, which pops). The seams this leaves are smoothed. When the speaker stops (silence
-/// frames, or nothing more arrives), the last few milliseconds of real sound fade out, and the next talk
-/// spurt fades in. The decoder is never started afresh mid-stream: Opus codes each frame relative to the
-/// one before, so silence frames are still decoded (just not played). If the buffer runs dry while the speaker is still sending, `target`
-/// grows so the next run has more cushion, and shrinks again after a stretch without trouble. If it keeps
-/// filling up (the sender's clock runs fast), two frames are now and then blended into one to catch up.
+/// covered by carrying on the last sound's pitch period, more and more quietly (Opus's own concealment can
+/// burst to several times the real level, which pops). The seams this leaves are smoothed. When the speaker
+/// stops (silence frames, or nothing more arrives), the last few milliseconds of real sound fade out, and
+/// the next talk spurt fades in. The decoder is never started afresh mid-stream: Opus codes each frame
+/// relative to the one before, so silence frames are still decoded (just not played). If the buffer runs dry
+/// while the speaker is still sending, `target` grows so the next run has more cushion, and shrinks again
+/// after a stretch without trouble. If it keeps filling up (the sender's clock runs fast, or a burst came
+/// in), a frame now and then plays a pitch period or two shorter to catch up.
 struct Stream {
     decoder: Decoder,
     packets: BTreeMap<u64, Vec<u8>>,
@@ -89,18 +137,25 @@ struct Stream {
     tail: [f32; 2],
     /// The next frame doesn't continue the last one (after a covered loss): smooth the join.
     seam: bool,
-    /// The last real decoded frame, repeated (quieter) to cover a lost packet.
+    /// The last real decoded frame, whose sound covers a lost packet.
     last_frame: Vec<f32>,
-    /// Frames played since two were last blended into one.
+    /// While covering lost packets: the pitch period being repeated, and where in it the next frame starts.
+    cover: Option<(Vec<f32>, usize)>,
+    /// Frames played since one was last shortened to catch up.
     since_merge: u32,
 }
 
 /// How long a seam is smoothed over (2.5 ms).
 const DECLICK: usize = SAMPLE_RATE as usize / 400;
-/// Catch up (blend two frames into one) when this many frames beyond the target are waiting…
+/// Catch up (shorten a frame) when this many frames beyond the target are waiting…
 const CATCH_UP_AT: usize = 2;
-/// …at most once in this many frames played (twice a second).
-const MERGE_EVERY: u32 = 25;
+/// …at most once in this many frames played (five times a second).
+const MERGE_EVERY: u32 = 10;
+/// What catching up cuts out of a frame: a stretch of 5–10 ms (one or two pitch periods of a voice) after
+/// which the sound repeats itself.
+const CUT: std::ops::RangeInclusive<usize> = SAMPLE_RATE as usize / 200..=SAMPLE_RATE as usize / 100;
+/// The pitch periods looked for when covering a loss: 2.5–15 ms (voices from about 65 to 400 Hz).
+const PERIOD: std::ops::RangeInclusive<usize> = SAMPLE_RATE as usize / 400..=SAMPLE_RATE as usize * 3 / 200;
 
 // Internet jitter of a few tens of ms is normal, so keep at least 60 ms of cushion.
 const MIN_TARGET: usize = 3;
@@ -127,6 +182,7 @@ impl Stream {
             tail: [0.0; 2],
             seam: false,
             last_frame: Vec::new(),
+            cover: None,
             since_merge: 0,
         })
     }
@@ -193,9 +249,6 @@ impl Stream {
             self.next = *self.packets.keys().next().unwrap();
             self.concealed = 0;
         }
-        if self.catch_up(scratch) {
-            return true;
-        }
         let n = match self.packets.remove(&self.next) {
             // The silence frames sent as someone stops talking: end with our own fade rather than decoding
             // them, which makes the decoder switch modes abruptly (a click).
@@ -213,6 +266,7 @@ impl Stream {
             }
             Some(p) => {
                 self.concealed = 0;
+                self.cover = None;
                 // A new talk spurt: ramp up from silence over 5 ms, so it doesn't start with a jump. (The decoder
                 // carries on rather than starting afresh, for the reason above.)
                 let fade_in = std::mem::take(&mut self.quiet);
@@ -256,40 +310,12 @@ impl Stream {
             self.last_underrun = Instant::now();
         }
         let mut frame = scratch[..n].to_vec();
+        // Packets keep piling up beyond the target (the sender's clock runs a little fast, or a burst came in):
+        // play this frame a pitch period or two shorter, which keeps the delay steady without a jump.
+        if self.packets.len() > self.target + CATCH_UP_AT && self.since_merge >= MERGE_EVERY && shorten(&mut frame) {
+            self.since_merge = 0;
+        }
         self.emit(&mut frame);
-        true
-    }
-
-    /// When packets keep piling up beyond the target (the sender's clock runs a little fast, so we'd drift
-    /// further and further behind), plays two frames as one, blending the first into the second, at most
-    /// twice a second. That keeps the delay steady without a jump. True when it did.
-    fn catch_up(&mut self, scratch: &mut [f32]) -> bool {
-        if self.quiet || self.packets.len() <= self.target + CATCH_UP_AT || self.since_merge < MERGE_EVERY {
-            return false;
-        }
-        let (Some(a), Some(b)) = (self.packets.get(&self.next), self.packets.get(&(self.next + 1))) else { return false };
-        if *a == SILENCE || *b == SILENCE {
-            return false;
-        }
-        let (a, b) = (self.packets.remove(&self.next).unwrap(), self.packets.remove(&(self.next + 1)).unwrap());
-        let (first, second) = scratch.split_at_mut(scratch.len() / 2);
-        let na = self.decoder.decode(Some(&a), first);
-        let nb = self.decoder.decode(Some(&b), second);
-        let n = na.min(nb);
-        // The first frame's start continues what's playing and the second's end leads into the next frame,
-        // so blending across the frame keeps both joins seamless.
-        let frames = (n / 2).max(1) as f32;
-        let mut blended: Vec<f32> = (0..n).map(|i| {
-            let w = (i / 2) as f32 / frames;
-            first[i] * (1.0 - w) + second[i] * w
-        })
-        .collect();
-        self.next += 2;
-        self.concealed = 0;
-        self.since_merge = 0;
-        self.last_frame.clear();
-        self.last_frame.extend_from_slice(&second[..nb]);
-        self.emit(&mut blended);
         true
     }
 
@@ -307,7 +333,7 @@ impl Stream {
     }
 
     /// A packet is missing but later ones have arrived. If the next one carries an error-correction copy of
-    /// it, that's decoded; otherwise the last real frame is repeated, quieter each time (Opus's own
+    /// it, that's decoded; otherwise the last real sound carries on, quieter each time (Opus's own
     /// concealment can burst to several times the real level, which pops). After three in a row the sound
     /// has faded away and playback skips ahead to what's there. Returns the samples produced, or
     /// `usize::MAX` after skipping.
@@ -342,16 +368,22 @@ impl Stream {
             self.concealed = 0;
             return usize::MAX;
         }
-        // The last real frame again, ramping down a third of the way to silence each time.
+        // The last real sound's pitch period, repeated (carrying on from where the last stand-in stopped), ramping
+        // down a third of the way to silence each time: a voice holds its note rather than stuttering.
+        let (cycle, phase) = self.cover.get_or_insert_with(|| (pitch_cycle(&self.last_frame), 0));
+        let period = cycle.len() / 2;
         let n = self.last_frame.len();
         let frames = (n / 2) as f32;
         let (from, to) = (1.0 - (self.concealed - 1) as f32 / 3.0, 1.0 - self.concealed as f32 / 3.0);
-        for (i, (o, s)) in scratch[..n].iter_mut().zip(&self.last_frame).enumerate() {
-            let t = (i / 2) as f32 / frames;
-            *o = s * (from + (to - from) * t);
+        for f in 0..n / 2 {
+            let gain = from + (to - from) * f as f32 / frames;
+            let at = (*phase + f) % period;
+            scratch[f * 2] = cycle[at * 2] * gain;
+            scratch[f * 2 + 1] = cycle[at * 2 + 1] * gain;
         }
-        // Where the repeat begins doesn't follow where the frame ended, and the next real frame won't follow
-        // the repeat either: both joins get smoothed.
+        *phase = (*phase + n / 2) % period;
+        // Where the stand-in begins doesn't quite follow where the frame ended, and the next real frame won't
+        // follow it either: both joins get smoothed.
         self.seam = true;
         let mut frame = scratch[..n].to_vec();
         self.emit(&mut frame);
@@ -365,6 +397,79 @@ impl Stream {
         self.next += 1;
         usize::MAX
     }
+}
+
+/// How well interleaved stereo `x` repeats itself after `lag` frames, over `len` frames from frame `at`: the
+/// normalised correlation of the two stretches (1 for an exact repeat; 0 for silence).
+fn similarity(x: &[f32], at: usize, len: usize, lag: usize) -> f32 {
+    let (mut xy, mut xx, mut yy) = (0f32, 0f32, 0f32);
+    for i in at..at + len {
+        let a = x[i * 2] + x[i * 2 + 1];
+        let b = x[(i + lag) * 2] + x[(i + lag) * 2 + 1];
+        xy += a * b;
+        xx += a * a;
+        yy += b * b;
+    }
+    if xx * yy <= 1e-12 { 0.0 } else { xy / (xx * yy).sqrt() }
+}
+
+/// The lag in `lags` after which `x` best repeats itself (comparing `len(lag)` frames from `at(lag)`), and
+/// how well.
+fn best_lag(x: &[f32], lags: std::ops::RangeInclusive<usize>, at: impl Fn(usize) -> usize) -> Option<(usize, f32)> {
+    lags.map(|lag| (lag, similarity(x, at(lag), lag, lag))).max_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+/// How long the end of a repeated pitch period is blended into what led into its start (1 ms).
+const BLEND: usize = SAMPLE_RATE as usize / 1000;
+
+/// The last pitch period of `frame` (interleaved stereo), to repeat in place of lost sound: the stretch after
+/// which the frame's end best repeats itself. Its own end is blended towards what led into its start, so the
+/// repeats join smoothly. Sound that doesn't repeat (hiss, consonants) gives the whole frame.
+fn pitch_cycle(frame: &[f32]) -> Vec<f32> {
+    let n = frame.len() / 2;
+    let lags = *PERIOD.start()..=(*PERIOD.end()).min(n.saturating_sub(BLEND) / 2);
+    let Some((period, _)) = best_lag(frame, lags, |lag| n - 2 * lag).filter(|&(_, score)| score > 0.5) else { return frame.to_vec() };
+    let start = n - period;
+    let mut cycle = frame[start * 2..].to_vec();
+    let blend = BLEND.min(period / 4);
+    for j in 0..blend {
+        let w = (j + 1) as f32 / (blend + 1) as f32;
+        let (at, from) = (period - blend + j, start - blend + j);
+        for c in 0..2 {
+            cycle[at * 2 + c] = cycle[at * 2 + c] * (1.0 - w) + frame[from * 2 + c] * w;
+        }
+    }
+    cycle
+}
+
+/// Shortens a frame (interleaved stereo) by a stretch of [`CUT`] after which it repeats itself (a pitch period
+/// or two of a voice), fading across the cut so it can't be heard: how the jitter buffer catches up. Blending
+/// two unrelated stretches instead (as this once did) warbles, as they partly cancel out. A quiet frame can
+/// lose any stretch. False, leaving the frame as it was, when nothing repeats well enough.
+fn shorten(frame: &mut Vec<f32>) -> bool {
+    let n = frame.len() / 2;
+    let lags = *CUT.start()..=(*CUT.end()).min(n / 2);
+    if lags.is_empty() {
+        return false;
+    }
+    let quiet = frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32 <= 1e-4;
+    let lag = if quiet {
+        *lags.end()
+    } else {
+        match best_lag(frame, lags, |_| 0) {
+            Some((lag, score)) if score > 0.7 => lag,
+            _ => return false,
+        }
+    };
+    // The first `lag` frames fade into the `lag` after them, and the rest follows on from there.
+    for i in 0..lag {
+        let w = i as f32 / lag as f32;
+        for c in 0..2 {
+            frame[i * 2 + c] = frame[i * 2 + c] * (1.0 - w) + frame[(i + lag) * 2 + c] * w;
+        }
+    }
+    frame.drain(lag * 2..lag * 4);
+    true
 }
 
 /// Mixes every remote speaker into the output.
@@ -615,69 +720,78 @@ pub fn play(output: Option<String>, fill: impl FnMut(&mut [f32]) + Send + 'stati
     Ok(io)
 }
 
-/// Turns `fill` (48 kHz stereo) into a function giving `frames` device frames as interleaved stereo at `rate`.
+/// Turns `fill` (48 kHz stereo) into one filling interleaved stereo at `rate`, any amount at a time.
 ///
 /// Sound is pulled in small fixed chunks and whatever the device doesn't take yet is kept for the next
-/// callback, so no sample is ever dropped or repeated (that used to click every callback).
-fn renderer(rate: u32, mut fill: impl FnMut(&mut [f32]) + Send + 'static) -> impl FnMut(usize) -> Vec<f32> + Send + 'static {
+/// callback, so no sample is ever dropped or repeated (that used to click every callback). Nothing is
+/// allocated once it's running: the device's thread mustn't wait on the allocator.
+fn renderer(rate: u32, mut fill: impl FnMut(&mut [f32]) + Send + 'static) -> impl FnMut(&mut [f32]) + Send + 'static {
     const CHUNK: usize = SAMPLE_RATE as usize / 200;
     let mut resampler = Resampler::new(SAMPLE_RATE, rate, 2);
     let mut mixed = vec![0f32; CHUNK * 2];
     let mut pending: Vec<f32> = Vec::new();
-    move |frames| {
-        while pending.len() < frames * 2 {
+    move |out| {
+        while pending.len() < out.len() {
             fill(&mut mixed);
             resampler.process(&mixed, &mut pending);
         }
-        let rest = pending.split_off(frames * 2);
-        std::mem::replace(&mut pending, rest)
+        out.copy_from_slice(&pending[..out.len()]);
+        pending.drain(..out.len());
     }
 }
 
-fn build_output(device: &cpal::Device, fill: impl FnMut(&mut [f32]) + Send + 'static, errors: SyncSender<String>) -> Result<cpal::Stream, String> {
-    let supported = device.default_output_config().map_err(|e| e.to_string())?;
-    let format = supported.sample_format();
-    let config: StreamConfig = supported.config();
-    let channels = config.channels as usize;
-    let rate = config.sample_rate;
-    tracing::info!("speakers: {} ch @ {rate} Hz ({format:?})", channels);
-    let mut render = renderer(rate, fill);
-    let write = move |out: &mut dyn FnMut(usize, f32), frames: usize, render: &mut dyn FnMut(usize) -> Vec<f32>| {
-        let st = render(frames);
-        for f in 0..frames {
-            let (l, r) = (st[f * 2], st[f * 2 + 1]);
+/// Puts stereo from `render` on a device with `channels` channels: both mixed for mono, and silence on
+/// any beyond the first two.
+fn mapper(channels: usize, mut render: impl FnMut(&mut [f32]) + Send + 'static) -> impl FnMut(usize, &mut dyn FnMut(usize, f32)) + Send + 'static {
+    let mut stereo = Vec::new();
+    move |frames, put| {
+        stereo.resize(frames * 2, 0.0);
+        render(&mut stereo);
+        for (f, s) in stereo.chunks_exact(2).enumerate() {
             match channels {
-                1 => out(f, (l + r) / 2.0),
+                1 => put(f, (s[0] + s[1]) / 2.0),
                 _ => {
-                    out(f * channels, l);
-                    out(f * channels + 1, r);
+                    put(f * channels, s[0]);
+                    put(f * channels + 1, s[1]);
                     for c in 2..channels {
-                        out(f * channels + c, 0.0);
+                        put(f * channels + c, 0.0);
                     }
                 }
             }
         }
-    };
+    }
+}
+
+fn build_output(device: &cpal::Device, fill: impl FnMut(&mut [f32]) + Send + 'static, errors: SyncSender<String>) -> Result<cpal::Stream, String> {
+    // What the mixer makes (48 kHz stereo floats) is asked for first, and Windows converts it for the device
+    // with its own resampler. Should the device refuse, its own format is used and converted here.
+    let fill = Arc::new(Mutex::new(fill));
+    let ours = StreamConfig { channels: 2, sample_rate: SAMPLE_RATE, buffer_size: cpal::BufferSize::Default };
+    let first = fill.clone();
+    match open_output(device, ours, SampleFormat::F32, move |out| (*first.lock())(out), errors.clone()) {
+        Ok(stream) => return Ok(stream),
+        Err(e) => tracing::info!("speakers: 48 kHz stereo refused ({e}); using the device's own format"),
+    }
+    let supported = device.default_output_config().map_err(|e| e.to_string())?;
+    open_output(device, supported.config(), supported.sample_format(), move |out| (*fill.lock())(out), errors)
+}
+
+fn open_output(device: &cpal::Device, config: StreamConfig, format: SampleFormat, fill: impl FnMut(&mut [f32]) + Send + 'static, errors: SyncSender<String>) -> Result<cpal::Stream, String> {
+    let channels = config.channels as usize;
+    tracing::info!("speakers: {channels} ch @ {} Hz ({format:?})", config.sample_rate);
+    let mut render = renderer(config.sample_rate, fill);
     let err = device_errors("Speaker", errors);
     let stream = match format {
-        SampleFormat::F32 => device.build_output_stream(
-            config,
-            move |d: &mut [f32], _: &_| {
-                let frames = d.len() / channels;
-                write(&mut |i, v| d[i] = v, frames, &mut render);
-            },
-            err,
-            None,
-        ),
-        SampleFormat::I16 => device.build_output_stream(
-            config,
-            move |d: &mut [i16], _: &_| {
-                let frames = d.len() / channels;
-                write(&mut |i, v| d[i] = (v * 32767.0) as i16, frames, &mut render);
-            },
-            err,
-            None,
-        ),
+        // The mix goes straight into the device's buffer.
+        SampleFormat::F32 if channels == 2 => device.build_output_stream(config, move |d: &mut [f32], _: &_| render(d), err, None),
+        SampleFormat::F32 => {
+            let mut map = mapper(channels, render);
+            device.build_output_stream(config, move |d: &mut [f32], _: &_| map(d.len() / channels, &mut |i, v| d[i] = v), err, None)
+        }
+        SampleFormat::I16 => {
+            let mut map = mapper(channels, render);
+            device.build_output_stream(config, move |d: &mut [i16], _: &_| map(d.len() / channels, &mut |i, v| d[i] = (v.clamp(-1.0, 1.0) * 32767.0) as i16), err, None)
+        }
         other => return Err(format!("unsupported sample format {other:?}")),
     };
     stream.map_err(|e| e.to_string())
@@ -690,15 +804,48 @@ mod tests {
     #[test]
     fn resampler_preserves_duration() {
         let mut r = Resampler::new(44_100, 48_000, 1);
+        let half = r.half;
         let mut out = Vec::new();
         for _ in 0..100 {
             r.process(&vec![0.5; 441], &mut out);
         }
-        // One second in, one second (±1 sample) out.
-        assert!((out.len() as i64 - 48_000).abs() <= 1, "{}", out.len());
-        // Interpolation runs one input sample behind (from the previous block's last sample), so only the first
-        // couple of outputs ramp up from silence.
-        assert!(out.iter().skip(2).all(|&s| (s - 0.5).abs() < 1e-6));
+        // One second in, one second out, less what waits for the filter's reach of input after it.
+        let held = (half as f64 * 48_000.0 / 44_100.0).ceil() as i64 + 1;
+        assert!((48_000 - out.len() as i64) <= held && out.len() <= 48_000, "{} (holding back up to {held})", out.len());
+        // Only the start ramps up from the silence before it; then a steady level comes out exactly.
+        assert!(out.iter().skip(2 * held as usize).all(|&s| (s - 0.5).abs() < 1e-5));
+    }
+
+    fn rms(s: &[f32]) -> f32 {
+        (s.iter().map(|v| v * v).sum::<f32>() / s.len().max(1) as f32).sqrt()
+    }
+
+    fn tone(rate: u32, hz: f32, seconds: f32) -> Vec<f32> {
+        (0..(rate as f32 * seconds) as usize).map(|i| (i as f32 * hz * std::f32::consts::TAU / rate as f32).sin() * 0.5).collect()
+    }
+
+    fn resample(from: u32, to: u32, input: &[f32]) -> Vec<f32> {
+        let mut r = Resampler::new(from, to, 1);
+        let mut out = Vec::new();
+        for block in input.chunks(480) {
+            r.process(block, &mut out);
+        }
+        out
+    }
+
+    #[test]
+    fn resampling_down_filters_out_what_would_fold_back() {
+        // A 12 kHz tone can't be carried at 16 kHz (up to 8 kHz): it must go, not come out as a 4 kHz tone.
+        let out = resample(48_000, 16_000, &tone(48_000, 12_000.0, 0.5));
+        assert!(rms(&out[1000..]) < 0.005, "{}", rms(&out[1000..]));
+        // A voice's range passes: 1 kHz at 48 kHz to 16 kHz, and 3 kHz from 44.1 kHz up to 48 kHz.
+        let out = resample(48_000, 16_000, &tone(48_000, 1_000.0, 0.5));
+        assert!((rms(&out[1000..]) - 0.354).abs() < 0.01, "{}", rms(&out[1000..]));
+        let out = resample(44_100, 48_000, &tone(44_100, 3_000.0, 0.5));
+        assert!((rms(&out[1000..]) - 0.354).abs() < 0.01, "{}", rms(&out[1000..]));
+        // And 96 kHz microphones lose what's above 24 kHz (30 kHz here).
+        let out = resample(96_000, 48_000, &tone(96_000, 30_000.0, 0.5));
+        assert!(rms(&out[1000..]) < 0.005, "{}", rms(&out[1000..]));
     }
 
     fn packets(n: usize) -> Vec<Vec<u8>> {
@@ -994,6 +1141,26 @@ mod tests {
         let (step, _) = worst_step(&left[FRAME * 10..]);
         assert!(step < 0.015, "worst step {step}");
         assert!(most <= 4 + CATCH_UP_AT + 2, "fell {most} packets behind");
+        // Nor does the level waver as it catches up (blending unrelated stretches cancelled the tone out to a
+        // third of its level halfway through, many times a second): every 5 ms is about as loud as the tone.
+        let level = rms(&left[FRAME * 10..FRAME * 20]);
+        let quietest = left[FRAME * 10..].chunks(240).map(rms).fold(f32::MAX, f32::min);
+        assert!(quietest > level * 0.9, "dipped to {:.2} of the level", quietest / level);
+    }
+
+    #[test]
+    fn a_lost_packet_is_covered_by_holding_the_note() {
+        // A steady tone in music mode (no error-correction copies), one packet lost. The stand-in should carry
+        // the waveform on, close to what was lost; replaying the last frame (as this once did) puts it out of
+        // step, which is heard as a stutter.
+        let p = steady(200);
+        let clean: Vec<_> = (0..200).map(|i| vec![(i as u16, p[i].clone())]).collect();
+        let mut lossy = clean.clone();
+        lossy[100].clear();
+        let (a, b) = (play(&clean, 200, FRAME), play(&lossy, 200, FRAME));
+        let error: f32 = a.iter().zip(&b).map(|(x, y)| (x - y) * (x - y)).sum();
+        let frame: f32 = a[FRAME * 50..FRAME * 51].iter().map(|x| x * x).sum();
+        assert!(error / frame < 0.3, "off by {:.2} of a frame's energy", error / frame);
     }
 
     #[test]
@@ -1082,12 +1249,14 @@ mod tests {
             });
             let mut all = Vec::new();
             for frames in [441, 480, 7, 1024, 333, 480, 480] {
-                let st = render(frames);
-                assert_eq!(st.len(), frames * 2);
+                let mut st = vec![0.0; frames * 2];
+                render(&mut st);
                 all.extend(st.chunks(2).map(|f| f[0]));
             }
+            // A dropped or repeated sample would make a step of 0 or twice the usual (the filter's start-up,
+            // ramping from the silence before the first sample, is skipped).
             let step = SAMPLE_RATE as f32 / rate as f32;
-            assert!(all.windows(2).skip(2).all(|w| (w[1] - w[0] - step).abs() < 1e-3), "{rate} Hz: {:?}", &all[..8]);
+            assert!(all.windows(2).skip(100).all(|w| (w[1] - w[0] - step).abs() < 0.01), "{rate} Hz: {:?}", &all[100..108]);
         }
     }
 
