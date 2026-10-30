@@ -1,6 +1,6 @@
 //! Composer autocomplete: @people/roles, #channels and :emoji:, shown above the text box.
 
-use eframe::egui::{self, RichText, Sense, Ui, Vec2};
+use egui::{self, RichText, Sense, Ui, Vec2};
 use swiftcord_core::mentions::Token;
 use swiftcord_core::models::{Channel, ChannelType};
 use swiftcord_core::permissions::perm;

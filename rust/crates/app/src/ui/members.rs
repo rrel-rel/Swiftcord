@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use eframe::egui::{self, Align2, Color32, FontId, Galley, Rect, Sense, Ui, Vec2};
+use egui::{self, Align2, Color32, FontId, Galley, Rect, Sense, Ui, Vec2};
 use swiftcord_core::models::{Channel, PresenceStatus};
 use swiftcord_core::state::{ListRow, State};
 use swiftcord_core::Snowflake;

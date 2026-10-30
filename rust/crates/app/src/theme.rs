@@ -5,7 +5,7 @@
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
 
-use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
+use egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
 use serde::{Deserialize, Serialize};
 
 /// The background shades: how dark the app is.

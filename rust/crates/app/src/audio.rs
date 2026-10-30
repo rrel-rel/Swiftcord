@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use eframe::egui::{self, Align, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
+use egui::{self, Align, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
 use parking_lot::Mutex;
 use swiftcord_core::models::Attachment;
 
@@ -419,7 +419,7 @@ mod decode {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
-    use eframe::egui;
+    use egui;
     use windows::core::{GUID, HSTRING};
     use windows::Win32::Media::MediaFoundation::*;
     use windows::Win32::System::Com::StructuredStorage::{PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0};
@@ -495,7 +495,7 @@ mod decode {
 
 #[cfg(not(windows))]
 mod decode {
-    pub fn run(_: &str, _: &super::Stream, _: &std::sync::atomic::AtomicUsize, _: &std::sync::atomic::AtomicUsize, _: &eframe::egui::Context) -> Result<(), String> {
+    pub fn run(_: &str, _: &super::Stream, _: &std::sync::atomic::AtomicUsize, _: &std::sync::atomic::AtomicUsize, _: &egui::Context) -> Result<(), String> {
         Err("Playing audio files needs Windows.".into())
     }
 }

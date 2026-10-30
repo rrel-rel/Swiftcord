@@ -1,6 +1,6 @@
 //! The signed-in window: server rail, channel sidebar and chat, plus overlays.
 
-use eframe::egui::{self, Color32, RichText, Ui, Vec2};
+use egui::{self, Color32, RichText, Ui, Vec2};
 use swiftcord_core::gateway::ConnectionState;
 use swiftcord_core::permissions::perm;
 use swiftcord_core::rest::FileUpload;

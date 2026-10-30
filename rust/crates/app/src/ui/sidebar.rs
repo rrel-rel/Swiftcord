@@ -1,6 +1,6 @@
 //! The channel sidebar: a guild's channel tree or the DM list, then voice status and the user panel.
 
-use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Ui, Vec2};
+use egui::{self, Align, Color32, Layout, RichText, Sense, Ui, Vec2};
 use swiftcord_core::models::{Channel, ChannelType, PresenceStatus};
 use swiftcord_core::state::State;
 use swiftcord_core::Snowflake;

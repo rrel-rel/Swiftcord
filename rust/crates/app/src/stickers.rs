@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, ColorImage, Rect, Response, Sense, TextureHandle, TextureOptions, Ui, Vec2};
+use egui::{self, ColorImage, Rect, Response, Sense, TextureHandle, TextureOptions, Ui, Vec2};
 use parking_lot::Mutex;
 use swiftcord_core::models::StickerItem;
 use swiftcord_core::Snowflake;

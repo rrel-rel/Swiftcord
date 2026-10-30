@@ -2,7 +2,7 @@
 //! a message that started a thread.
 
 use chrono::Utc;
-use eframe::egui::{self, Align, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
+use egui::{self, Align, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
 use swiftcord_core::models::Channel;
 use swiftcord_core::permissions::perm;
 use swiftcord_core::state::State;

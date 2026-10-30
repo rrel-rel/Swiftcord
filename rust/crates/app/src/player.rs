@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Color32, ColorImage, Rect, Response, Sense, TextureHandle, TextureOptions, Ui, Vec2};
+use egui::{self, Color32, ColorImage, Rect, Response, Sense, TextureHandle, TextureOptions, Ui, Vec2};
 use parking_lot::Mutex;
 
 use crate::theme::{self, icon};
@@ -639,7 +639,7 @@ pub(crate) mod decode {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use eframe::egui;
+    use egui;
     use windows::core::HSTRING;
     use windows::Win32::System::Com::StructuredStorage::{PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0};
     use windows::Win32::System::Variant::VT_I8;
@@ -811,7 +811,7 @@ pub(crate) mod decode {
 
 #[cfg(not(windows))]
 mod decode {
-    pub fn run(_: &str, _: Option<String>, _: &std::sync::Arc<super::Shared>, _: &eframe::egui::Context) -> Result<(), String> {
+    pub fn run(_: &str, _: Option<String>, _: &std::sync::Arc<super::Shared>, _: &egui::Context) -> Result<(), String> {
         Err("Videos need Windows.".into())
     }
 }

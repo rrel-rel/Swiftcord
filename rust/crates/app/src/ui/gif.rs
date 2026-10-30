@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Ui, Vec2};
+use egui::{self, Color32, Pos2, Rect, RichText, Sense, Ui, Vec2};
 use swiftcord_core::proto::FavoriteGif;
 use swiftcord_core::rest::Gif;
 use swiftcord_core::Snowflake;

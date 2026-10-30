@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use chrono::{Local, TimeZone};
-use eframe::egui::{self, Color32, RichText, Sense, Ui, Vec2};
+use egui::{self, Color32, RichText, Sense, Ui, Vec2};
 use swiftcord_core::markdown::{Block, Span, Style};
 use swiftcord_core::state::State;
 use swiftcord_core::Snowflake;

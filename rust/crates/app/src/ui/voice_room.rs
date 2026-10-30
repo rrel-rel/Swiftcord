@@ -2,7 +2,7 @@
 //! camera, their stream's preview, or their avatar) with who's talking, muted or live, the call controls
 //! below, and the channel's text chat alongside when wanted.
 
-use eframe::egui::{self, Align, Align2, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
+use egui::{self, Align, Align2, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
 use swiftcord_core::models::{Channel, VoiceState};
 
 use crate::app::{Action, Session, UiState};

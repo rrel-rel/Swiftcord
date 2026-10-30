@@ -11,6 +11,7 @@ mod lottie;
 mod stickers;
 mod media;
 mod settings;
+mod window;
 mod sounds;
 mod search_glue;
 mod share_glue;
@@ -28,9 +29,8 @@ mod image_cache;
 use std::fs::{self, File};
 use std::sync::Mutex;
 
-use eframe::egui;
 
-/// The window and taskbar icon (otherwise eframe shows its own).
+/// The window and taskbar icon (otherwise winit shows a generic one).
 fn window_icon() -> std::sync::Arc<egui::IconData> {
     let icon = image::load_from_memory(include_bytes!("../assets/icon.png")).map(|i| i.to_rgba8()).ok();
     std::sync::Arc::new(icon.map_or_else(egui::IconData::default, |i| egui::IconData { width: i.width(), height: i.height(), rgba: i.into_raw() }))
@@ -43,7 +43,7 @@ fn init_logging() {
     // Keep the previous run's log for bug reports.
     let _ = fs::rename(&path, dir.join("swiftcord.old.log"));
     let filter = tracing_subscriber::EnvFilter::try_from_env("SWIFTCORD_LOG")
-        .unwrap_or_else(|_| "info,wgpu_core=warn,wgpu_hal=warn,naga=warn".into());
+        .unwrap_or_else(|_| "info".into());
     let builder = tracing_subscriber::fmt().with_env_filter(filter).with_ansi(false).with_target(false);
     match File::create(&path) {
         Ok(f) => builder.with_writer(Mutex::new(f)).init(),
@@ -54,24 +54,7 @@ fn init_logging() {
     }));
 }
 
-/// Renders through Direct3D 12 only: by default wgpu also starts the Vulkan and OpenGL drivers just to list
-/// their adapters. And it asks for small GPU memory blocks: the default reserves them 64 MB (system RAM)
-/// and 128 MB (video memory) at a time, far more than a chat client draws with.
-fn wgpu_options() -> eframe::WgpuConfiguration {
-    use eframe::egui_wgpu::{WgpuSetup, wgpu};
-    let mut options = eframe::WgpuConfiguration::default();
-    if let WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
-        setup.instance_descriptor.backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::DX12);
-        let device_descriptor = setup.device_descriptor.clone();
-        setup.device_descriptor = std::sync::Arc::new(move |adapter| wgpu::DeviceDescriptor {
-            memory_hints: wgpu::MemoryHints::MemoryUsage,
-            ..device_descriptor(adapter)
-        });
-    }
-    options
-}
-
-fn main() -> eframe::Result {
+fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == platform::login_webview::ARG) {
         platform::login_webview::run_child();
     }
@@ -94,22 +77,15 @@ fn main() -> eframe::Result {
         .build()
         .expect("Tokio runtime");
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Swiftcord")
-            .with_app_id("Swiftcord")
-            .with_inner_size([1100.0, 680.0])
-            .with_min_inner_size([760.0, 460.0])
-            .with_icon(window_icon()),
-        renderer: eframe::Renderer::Wgpu,
-        wgpu_options: wgpu_options(),
-        centered: true,
-        ..Default::default()
-    };
+    let viewport = egui::ViewportBuilder::default()
+        .with_title("Swiftcord")
+        .with_inner_size([1100.0, 680.0])
+        .with_min_inner_size([760.0, 460.0])
+        .with_icon(window_icon());
     let handle = rt.handle().clone();
     let _ = clip::RUNTIME.set(handle.clone());
-    let result = eframe::run_native("Swiftcord", options, Box::new(move |cc| Ok(Box::new(app::App::new(cc, handle)))));
+    let result = window::run(viewport, move |ctx| Box::new(app::App::new(ctx, handle)));
     tracing::info!("exiting");
     rt.shutdown_timeout(std::time::Duration::from_millis(500));
-    result
+    Ok(result?)
 }

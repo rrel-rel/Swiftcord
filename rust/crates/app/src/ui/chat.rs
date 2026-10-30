@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use eframe::egui::{self, Align, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
+use egui::{self, Align, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
 use swiftcord_core::mentions::{self, Token};
 use swiftcord_core::models::{Channel, ChannelType, Message};
 use swiftcord_core::permissions::perm;

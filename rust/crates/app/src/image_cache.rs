@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use eframe::egui::load::{DefaultTextureLoader, SizeHint, TextureLoadResult, TextureLoader};
-use eframe::egui::mutex::Mutex;
-use eframe::egui::{self, TextureOptions};
+use egui::load::{DefaultTextureLoader, SizeHint, TextureLoadResult, TextureLoader};
+use egui::mutex::Mutex;
+use egui::{self, TextureOptions};
 
 /// Images not shown for this long are forgotten (they load again, from the disk cache where there is one,
 /// if they come back into view).

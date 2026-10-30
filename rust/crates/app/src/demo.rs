@@ -41,7 +41,7 @@ pub fn install(state: &mut State) {
 }
 
 /// A 640×360 test picture standing in for the demo bot's camera.
-pub fn camera_picture() -> eframe::egui::ColorImage {
+pub fn camera_picture() -> egui::ColorImage {
     let (w, h) = (640usize, 360usize);
     let mut rgba = Vec::with_capacity(w * h * 4);
     for y in 0..h {
@@ -54,7 +54,7 @@ pub fn camera_picture() -> eframe::egui::ColorImage {
             rgba.extend_from_slice(&px);
         }
     }
-    eframe::egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba)
+    egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba)
 }
 
 const SAMPLES: &str = r##"[

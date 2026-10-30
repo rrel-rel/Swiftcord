@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use eframe::egui;
 
 const EVERY: Duration = Duration::from_secs(5);
 

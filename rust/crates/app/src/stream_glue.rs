@@ -4,7 +4,7 @@
 //! STREAM_CREATE (which RTC server carries the stream) and STREAM_SERVER_UPDATE (its endpoint and token), and a
 //! second, receive-only voice connection to that server brings the video and the stream's audio.
 
-use eframe::egui::{self, ColorImage, TextureOptions};
+use egui::{self, ColorImage, TextureOptions};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use swiftcord_core::Snowflake;

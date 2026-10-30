@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use chrono::{DateTime, Local, Utc};
-use eframe::egui::{self, Align, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
+use egui::{self, Align, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
 use swiftcord_core::markdown::{self, Block};
 use swiftcord_core::models::{message_type, Attachment, Embed, EmbedMedia, Message, PendingState};
 use swiftcord_core::permissions::perm;

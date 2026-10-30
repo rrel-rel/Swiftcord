@@ -1,7 +1,7 @@
 //! The mentions inbox panel: recent messages that mention us, newest first, each under the server and
 //! channel it was said in, with Jump and a button to take it off the list.
 
-use eframe::egui::{self, Align, Layout, RichText, Ui};
+use egui::{self, Align, Layout, RichText, Ui};
 
 use crate::app::{Action, Session, UiState};
 use crate::theme::{self, icon};

@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use eframe::egui::{self, Color32, ColorImage, Rect, TextureHandle, TextureOptions, Vec2};
+use egui::{self, Color32, ColorImage, Rect, TextureHandle, TextureOptions, Vec2};
 use parking_lot::Mutex;
 use serde::Deserialize;
 

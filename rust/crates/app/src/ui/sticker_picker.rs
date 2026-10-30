@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Pos2, RichText, Sense, Ui, Vec2};
+use egui::{self, Pos2, RichText, Sense, Ui, Vec2};
 use swiftcord_core::models::Sticker;
 use swiftcord_core::Snowflake;
 

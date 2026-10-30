@@ -1,7 +1,7 @@
 //! The message search results panel: newest first, each with the channel it's in and a Jump button, a page
 //! at a time.
 
-use eframe::egui::{self, Align, Layout, RichText, Ui, Vec2};
+use egui::{self, Align, Layout, RichText, Ui, Vec2};
 
 use crate::app::{Action, Session, UiState};
 use crate::theme::{self, icon};

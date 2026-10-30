@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, ColorImage, Response, Sense, TextureHandle, TextureOptions, Ui, Vec2};
+use egui::{self, ColorImage, Response, Sense, TextureHandle, TextureOptions, Ui, Vec2};
 use parking_lot::Mutex;
 
 /// The app's Tokio runtime, for downloads.
@@ -155,7 +155,7 @@ pub(crate) mod decode {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
-    use eframe::egui::{self, ColorImage};
+    use egui::{self, ColorImage};
     use parking_lot::Mutex;
     use windows::core::Interface;
     use windows::Win32::Media::MediaFoundation::*;
@@ -414,7 +414,7 @@ pub(crate) mod decode {
 
 #[cfg(not(windows))]
 mod decode {
-    pub fn play(_: &[u8], _: u32, _: &parking_lot::Mutex<Option<eframe::egui::ColorImage>>, _: &std::sync::atomic::AtomicBool, _: &eframe::egui::Context) -> Result<(), String> {
+    pub fn play(_: &[u8], _: u32, _: &parking_lot::Mutex<Option<egui::ColorImage>>, _: &std::sync::atomic::AtomicBool, _: &egui::Context) -> Result<(), String> {
         Err("video clips need Windows".into())
     }
 }
@@ -445,7 +445,7 @@ mod tests {
     fn decodes_a_local_clip() {
         let Ok(path) = std::env::var("SWIFTCORD_TEST_CLIP") else { return };
         let bytes = std::fs::read(&path).unwrap();
-        let frame = parking_lot::Mutex::new(None::<eframe::egui::ColorImage>);
+        let frame = parking_lot::Mutex::new(None::<egui::ColorImage>);
         let stop = std::sync::atomic::AtomicBool::new(false);
         let img = first_frame(&bytes, 400).expect("decode");
         let rgba: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();

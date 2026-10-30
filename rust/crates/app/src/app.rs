@@ -3,7 +3,6 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use eframe::egui;
 use swiftcord_core::gateway::{ConnectionState, Gateway, GatewayConfig, GatewayOutput};
 use swiftcord_core::models::{Emoji, Message, PendingState};
 use swiftcord_core::remote_auth::RemoteAuthEvent;
@@ -386,21 +385,21 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, rt: tokio::runtime::Handle) -> App {
+    pub fn new(ctx: &egui::Context, rt: tokio::runtime::Handle) -> App {
         let settings = crate::settings::Settings::load();
         crate::theme::set(settings.palette, settings.accent);
-        crate::theme::install(&cc.egui_ctx);
-        egui_extras::install_image_loaders(&cc.egui_ctx);
-        let images = crate::image_cache::install(&cc.egui_ctx);
+        crate::theme::install(&ctx);
+        egui_extras::install_image_loaders(&ctx);
+        let images = crate::image_cache::install(&ctx);
         let cache = platform::data_dir().join("cache").join("media");
-        cc.egui_ctx.add_bytes_loader(std::sync::Arc::new(crate::media::MediaLoader::new(rt.clone(), cache)));
+        ctx.add_bytes_loader(std::sync::Arc::new(crate::media::MediaLoader::new(rt.clone(), cache)));
 
         let (tx, rx) = unbounded_channel();
         let mut app = App {
             rt,
             tx,
             rx,
-            ctx: cc.egui_ctx.clone(),
+            ctx: ctx.clone(),
             session: None,
             ui: UiState::default(),
             outgoing: HashMap::new(),
@@ -1790,8 +1789,8 @@ impl App {
     }
 }
 
-impl eframe::App for App {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+impl crate::window::App for App {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut crate::window::Frame) {
         // Bounded so a flood of events can't starve a frame.
         for _ in 0..512 {
             match self.rx.try_recv() {
@@ -1815,7 +1814,7 @@ impl eframe::App for App {
         crate::image_cache::tick(ctx, &self.images, &mut self.images_checked);
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut crate::window::Frame) {
         let started = Instant::now();
         self.caret_timeout(ui.ctx());
         self.ui.web_player_slot = None;
@@ -1862,7 +1861,7 @@ impl App {
     }
 
     /// Starts, moves, hides or stops the inline web player to match the embed it's playing in.
-    fn place_web_player(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+    fn place_web_player(&mut self, ctx: &egui::Context, frame: &crate::window::Frame) {
         // Leaving its channel stops it, as does being out of sight a while; another video replaces it.
         if self.ui.web_player.as_ref().is_some_and(|(_, c)| self.ui.channel() != Some(*c)) || self.web_player.as_ref().is_some_and(|p| p.stale()) {
             self.ui.web_player = None;

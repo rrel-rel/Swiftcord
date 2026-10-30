@@ -1,7 +1,7 @@
 //! The menu on someone in a voice channel (right-click their name in the sidebar or their tile), as in
 //! Discord: their profile, a DM or a call, how loud they are for us, and a moderator's voice controls.
 
-use eframe::egui::{self, RichText, Ui};
+use egui::{self, RichText, Ui};
 use swiftcord_core::models::Channel;
 use swiftcord_core::permissions::perm;
 use swiftcord_core::state::State;

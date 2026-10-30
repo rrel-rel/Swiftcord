@@ -1,6 +1,6 @@
 //! Going live: the "share your screen" picker and the panel shown while we stream.
 
-use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Ui, Vec2};
+use egui::{self, Align, Color32, Layout, RichText, Sense, Ui, Vec2};
 use swiftcord_voice::capture::Source;
 
 use crate::app::{Action, UiState};

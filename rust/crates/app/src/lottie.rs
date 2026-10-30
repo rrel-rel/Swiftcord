@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use eframe::egui::ColorImage;
+use egui::ColorImage;
 use velato::model::{ImageAsset, fixed};
 use vello_cpu::kurbo::{Affine, BezPath, Shape};
 use vello_cpu::peniko::{BlendMode, Brush, Fill};

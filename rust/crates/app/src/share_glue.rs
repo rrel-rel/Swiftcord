@@ -4,7 +4,7 @@
 //! STREAM_CREATE (which RTC server carries it) and STREAM_SERVER_UPDATE (endpoint and token) for our own stream
 //! key, and a second voice connection to that server carries the video. Stopping sends STREAM_DELETE.
 
-use eframe::egui::{self, ColorImage, TextureOptions};
+use egui::{self, ColorImage, TextureOptions};
 use swiftcord_core::Snowflake;
 use swiftcord_voice::capture::{self, SourceInfo};
 use swiftcord_voice::{ConnectInfo, Event, Share, ShareStats, Voice};

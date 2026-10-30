@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use eframe::egui::{self, Pos2, RichText, Ui, Vec2};
+use egui::{self, Pos2, RichText, Ui, Vec2};
 use serde::Deserialize;
 use swiftcord_core::models::Emoji;
 use swiftcord_core::state::State;

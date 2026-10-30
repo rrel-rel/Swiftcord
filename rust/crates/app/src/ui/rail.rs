@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use eframe::egui::{self, Color32, CornerRadius, Rect, Sense, Ui, Vec2};
+use egui::{self, Color32, CornerRadius, Rect, Sense, Ui, Vec2};
 use swiftcord_core::state::{RailItem, State};
 use swiftcord_core::Snowflake;
 

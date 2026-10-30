@@ -1,6 +1,6 @@
 //! Sign-in: QR code (scan with the Discord phone app), the real login page in a browser window, or a token.
 
-use eframe::egui::{self, Align, Color32, ColorImage, Layout, RichText, TextureHandle, TextureOptions, Vec2};
+use egui::{self, Align, Color32, ColorImage, Layout, RichText, TextureHandle, TextureOptions, Vec2};
 use swiftcord_core::remote_auth::RemoteAuthEvent;
 
 use crate::app::Action;

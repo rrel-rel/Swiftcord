@@ -2,7 +2,7 @@
 //! bots especially) build the whole message from containers, sections, text, thumbnails, galleries, files and
 //! separators instead of content and embeds.
 
-use eframe::egui::{self, Align, Color32, Layout, Rect, RichText, Ui, Vec2};
+use egui::{self, Align, Color32, Layout, Rect, RichText, Ui, Vec2};
 use swiftcord_core::models::{component_type as kind, Component, Message};
 
 use crate::app::Action;

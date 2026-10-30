@@ -1,7 +1,7 @@
 //! The image viewer: a picture clicked in chat, large over a dark backdrop, as Discord shows it. A click
 //! outside it or Escape closes it; "Open in Browser" is still there underneath.
 
-use eframe::egui::{self, Color32, RichText, Ui, Vec2};
+use egui::{self, Color32, RichText, Ui, Vec2};
 
 use crate::app::UiState;
 use crate::ui::message::fit;

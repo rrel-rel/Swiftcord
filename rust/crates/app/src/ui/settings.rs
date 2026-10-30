@@ -1,6 +1,6 @@
 //! The settings window: voice devices and sensitivity, notifications, account.
 
-use eframe::egui::{self, RichText, Ui};
+use egui::{self, RichText, Ui};
 
 use crate::app::{Action, UiState};
 use crate::settings::Settings;

@@ -1,7 +1,7 @@
 //! "Forward To": picking up to five DMs or channels to forward a message to, with an optional note, as in
 //! Discord. DMs come first (most recent first), then the open server's channels; typing searches them all.
 
-use eframe::egui::{self, Color32, RichText, Sense, Ui, Vec2};
+use egui::{self, Color32, RichText, Sense, Ui, Vec2};
 use swiftcord_core::models::Channel;
 use swiftcord_core::permissions::perm;
 use swiftcord_core::state::State;

@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use eframe::egui::{self, Align, Color32, Layout, RichText, Ui};
+use egui::{self, Align, Color32, Layout, RichText, Ui};
 use swiftcord_core::events::VoiceServerUpdate;
 use swiftcord_core::state::Notice;
 use swiftcord_core::Snowflake;

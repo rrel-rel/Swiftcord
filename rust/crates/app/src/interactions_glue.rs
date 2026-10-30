@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Align, Color32, Layout, RichText, Vec2};
+use egui::{self, Align, Color32, Layout, RichText, Vec2};
 use serde_json::value::RawValue;
 use swiftcord_core::interactions::{self, Field, Modal, Outcome};
 use swiftcord_core::models::{component_type as kind, Component, Message};

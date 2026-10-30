@@ -1,6 +1,6 @@
 //! Small shared widgets.
 
-use eframe::egui::{self, Color32, CornerRadius, Response, Sense, Ui, Vec2};
+use egui::{self, Color32, CornerRadius, Response, Sense, Ui, Vec2};
 use swiftcord_core::models::{PresenceStatus, User};
 
 use crate::theme;

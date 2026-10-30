@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use eframe::egui::{self, Align, Color32, Layout, RichText, Ui};
+use egui::{self, Align, Color32, Layout, RichText, Ui};
 use serde_json::{json, Value};
 use swiftcord_core::commands::{option_type as ty, option_value, Command, CommandOption, Index};
 use swiftcord_core::models::{Channel, ChannelType};

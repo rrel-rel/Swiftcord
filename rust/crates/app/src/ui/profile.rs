@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Local, Utc};
-use eframe::egui::{self, Color32, CornerRadius, Margin, Rect, RichText, Sense, Vec2};
+use egui::{self, Color32, CornerRadius, Margin, Rect, RichText, Sense, Vec2};
 use swiftcord_core::cdn;
 use swiftcord_core::models::Profile;
 use swiftcord_core::Snowflake;

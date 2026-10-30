@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::task::Poll;
 
-use eframe::egui::load::{Bytes, BytesLoadResult, BytesLoader, BytesPoll, LoadError};
-use eframe::egui::{self, mutex::Mutex};
+use egui::load::{Bytes, BytesLoadResult, BytesLoader, BytesPoll, LoadError};
+use egui::{self, mutex::Mutex};
 use tokio::sync::Semaphore;
 
 #[derive(Clone)]

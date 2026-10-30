@@ -1,6 +1,6 @@
 //! DM calls: the call screen above a DM's messages, and the incoming-call popup.
 
-use eframe::egui::{self, Align2, Color32, RichText, Sense, Ui, Vec2};
+use egui::{self, Align2, Color32, RichText, Sense, Ui, Vec2};
 use swiftcord_core::models::{Channel, User};
 use swiftcord_core::Snowflake;
 

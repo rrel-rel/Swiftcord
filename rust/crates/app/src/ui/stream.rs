@@ -1,6 +1,6 @@
 //! The Go Live viewer: the stream fitted to the main area, with controls.
 
-use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Ui, Vec2};
+use egui::{self, Align, Color32, Layout, RichText, Sense, Ui, Vec2};
 
 use crate::app::{Action, Session, UiState};
 use crate::stream_glue::WatchStatus;

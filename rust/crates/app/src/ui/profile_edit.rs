@@ -2,7 +2,7 @@
 //! your profile in one server (nickname, avatar, banner, theme, pronouns, bio). Banners, theme colours, server
 //! avatars and server bios are Nitro perks; a nickname needs the server's Change Nickname permission.
 
-use eframe::egui::{self, Align, Color32, ColorImage, Layout, RichText, TextureHandle, Ui, Vec2};
+use egui::{self, Align, Color32, ColorImage, Layout, RichText, TextureHandle, Ui, Vec2};
 use serde_json::{json, Map, Value};
 use swiftcord_core::cdn;
 use swiftcord_core::permissions::perm;
