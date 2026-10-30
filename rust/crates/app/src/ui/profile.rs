@@ -113,6 +113,7 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
         ui.add_space(AVATAR / 2.0 + 10.0);
 
         egui::Frame::new().inner_margin(Margin { left: 16, right: 16, top: 0, bottom: 16 }).show(ui, |ui| {
+            ui.style_mut().interaction.selectable_labels = true;
             ui.set_width(WIDTH - 32.0);
             ui.label(RichText::new(user.display_name()).font(theme::font_bold(20.0)).color(theme::HEADER()));
             let nick = guild.map(|g| state.display_name(user_id, Some(g))).filter(|n| n != user.display_name());

@@ -324,6 +324,7 @@ impl Videos {
         }
         let id = egui::Id::unique(("video", url, inline));
         let surface = ui.interact(rect, id, Sense::click());
+        crate::ui::widgets::plain_cursor(&surface);
         let hovered = ui.rect_contains_pointer(rect);
         if let Some(e) = &p.error {
             painter.rect_filled(rect, 6, Color32::from_black_alpha(190));
@@ -403,7 +404,7 @@ impl Videos {
         let toggle_mute = button(ui, &mut mute_at, mute_glyph, "mute", mute_tip);
         if wide {
             let track = Rect::from_min_size(egui::pos2(rx - slider_w + 30.0, cy - 2.0), Vec2::new(slider_w - 6.0, 4.0));
-            let hit = ui.interact(track.expand2(Vec2::new(4.0, 8.0)), egui::Id::unique(("video-vol", url, inline)), Sense::click_and_drag());
+            let hit = ui.interact(track.expand2(Vec2::new(4.0, 8.0)), egui::Id::unique(("video-vol", url, inline)), Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::PointingHand);
             if let Some(pt) = hit.interact_pointer_pos().filter(|_| hit.dragged() || hit.clicked()) {
                 self.volume = Some(((pt.x - track.left()) / track.width()).clamp(0.0, 1.0));
                 self.muted = false;
@@ -433,7 +434,7 @@ impl Videos {
         x += tw + 14.0;
         if let Some(d) = p.duration.filter(|d| *d > 0 && right_edge - x > 30.0) {
             let track = Rect::from_min_max(egui::pos2(x, cy - 2.0), egui::pos2(right_edge, cy + 2.0));
-            let hit = ui.interact(track.expand2(Vec2::new(4.0, 9.0)), egui::Id::unique(("video-seek", url, inline)), Sense::click_and_drag());
+            let hit = ui.interact(track.expand2(Vec2::new(4.0, 9.0)), egui::Id::unique(("video-seek", url, inline)), Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::PointingHand);
             let at = |pt: egui::Pos2| ((pt.x - track.left()) / track.width()).clamp(0.0, 1.0);
             if hit.dragged() {
                 p.dragging = hit.interact_pointer_pos().map(at);
@@ -482,6 +483,7 @@ impl Videos {
         let screen = ctx.content_rect();
         egui::Area::new(egui::Id::unique("video-viewer")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
             let backdrop = ui.interact(screen, egui::Id::unique("video-viewer-backdrop"), Sense::click());
+            crate::ui::widgets::plain_cursor(&backdrop);
             ui.painter().rect_filled(screen, 0, Color32::from_black_alpha(220));
             let max = screen.size() - Vec2::new(80.0, 80.0);
             let scale = (max.x / size.x.max(1.0)).min(max.y / size.y.max(1.0));

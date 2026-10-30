@@ -18,6 +18,23 @@ pub fn jump_button(ui: &Ui, rect: egui::Rect, id: impl std::hash::Hash + std::fm
     r.clicked()
 }
 
+/// Lines of text (a name, then maybe a subtitle) as a block centred on the row's height, truncated to fit,
+/// leaving `reserve` on the right (for a badge laid out after it).
+pub fn centered_lines(ui: &mut Ui, reserve: f32, lines: &[(String, egui::FontId, Color32)]) {
+    let avail = ui.available_rect_before_wrap();
+    let width = (avail.width() - reserve).max(0.0);
+    let gap = ui.spacing().item_spacing.y;
+    let heights: Vec<f32> = lines.iter().map(|(_, font, _)| ui.ctx().fonts_mut(|f| f.row_height(font))).collect();
+    let height = heights.iter().sum::<f32>() + gap * lines.len().saturating_sub(1) as f32;
+    let top = avail.center().y - height / 2.0;
+    let block = egui::Rect::from_min_size(egui::pos2(avail.left(), top), Vec2::new(width, height));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(block).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
+        for (text, font, color) in lines {
+            ui.add(egui::Label::new(egui::RichText::new(text).font(font.clone()).color(*color)).truncate().selectable(false));
+        }
+    });
+}
+
 pub fn avatar(ui: &mut Ui, url: &str, size: f32) -> Response {
     ui.add(
         egui::Image::from_uri(url.to_owned())
@@ -121,7 +138,7 @@ pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str) -> Response {
     let r = ui.add(
         egui::Button::new(egui::RichText::new(icon).font(theme::icon_font(16.0)).color(theme::MUTED()))
             .frame(false)
-            .min_size(Vec2::splat(28.0)),
+            .min_size(Vec2::splat(30.0)),
     );
     if r.hovered() {
         ui.painter().rect_filled(r.rect, 4, theme::HOVER().gamma_multiply(0.6));
@@ -133,6 +150,9 @@ pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str) -> Response {
 pub fn toggle_icon(ui: &mut Ui, icon: &str, active: bool, tooltip: &str) -> Response {
     let color = if active { theme::RED() } else { theme::MUTED() };
     let r = ui.add(egui::Button::new(egui::RichText::new(icon).font(theme::icon_font(16.0)).color(color)).frame(false).min_size(Vec2::splat(30.0)));
+    if r.hovered() {
+        ui.painter().rect_filled(r.rect, 4, theme::HOVER().gamma_multiply(0.6));
+    }
     r.on_hover_text(tooltip)
 }
 
@@ -145,4 +165,31 @@ pub fn human_size(bytes: u64) -> String {
         i += 1;
     }
     if i == 0 { format!("{bytes} B") } else { format!("{v:.1} {}", UNITS[i]) }
+}
+
+/// Marks a response as clickable only for a context menu (or a backdrop that closes something), so it keeps
+/// the arrow cursor; see [`pointer_cursor`].
+pub fn plain_cursor(r: &Response) {
+    r.ctx.data_mut(|d| d.get_temp_mut_or_default::<PlainCursor>(egui::Id::NULL).0.insert(r.id));
+}
+
+#[derive(Clone, Default)]
+struct PlainCursor(std::collections::HashSet<egui::Id>);
+
+/// Run after the frame's UI: shows the pointing hand over whatever a click would hit, unless the widget
+/// chose a cursor of its own or was marked with [`plain_cursor`]. Widgets that can also be dragged (text,
+/// sliders, modal backdrops) aren't buttons, so they're left alone; give them a cursor where it fits.
+pub fn pointer_cursor(ctx: &egui::Context) {
+    let plain = ctx.data_mut(|d| std::mem::take(&mut d.get_temp_mut_or_default::<PlainCursor>(egui::Id::NULL).0));
+    if ctx.output(|o| o.cursor_icon) != egui::CursorIcon::Default {
+        return;
+    }
+    let Some(pos) = ctx.pointer_hover_pos() else { return };
+    let Some(hit) = ctx.viewport(|vp| vp.hits.click) else { return };
+    // An area's own background (popups and menus take clicks to come to the front) isn't a control.
+    let background = hit.id == hit.layer_id.id.with("move");
+    let button = hit.sense.senses_click() && !hit.sense.senses_drag();
+    if hit.enabled && button && hit.interact_rect.contains(pos) && !background && !plain.contains(&hit.id) {
+        ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
 }

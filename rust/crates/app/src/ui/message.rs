@@ -110,6 +110,9 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
 
     // Context menu target registered before the content, so links and buttons inside still get clicks.
     let menu_resp = hover_rect_prev.map(|r| ui.interact(r, row_id.with("ctx"), Sense::click()));
+    if let Some(r) = &menu_resp {
+        widgets::plain_cursor(r);
+    }
 
     ui.add_space(if compact { 1.0 } else { 14.0 });
     let alpha = match msg.pending {
@@ -139,8 +142,10 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
                     cx.actions.push(crate::ui::profile::open(msg.author.id, cx.guild, &r));
                 }
             }
-            ui.add_space(16.0);
+            // The avatar's item spacing counts towards the 16 pt, so the text starts at GUTTER exactly.
+            ui.add_space(16.0 - ui.spacing().item_spacing.x);
             ui.vertical(|ui| {
+                ui.style_mut().interaction.selectable_labels = true;
                 ui.set_max_width(width - GUTTER - 24.0);
                 ui.multiply_opacity(alpha);
                 if !compact {
@@ -211,7 +216,7 @@ fn header(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
             _ => cx.state.display_name(msg.author.id, cx.guild),
         };
         let color = cx.guild.and_then(|g| cx.state.role_color(g, msg.author.id));
-        let r = ui.add(egui::Label::new(RichText::new(name).font(theme::font_semibold(15.5)).color(theme::role_color(color))).sense(Sense::click()));
+        let r = ui.add(egui::Label::new(RichText::new(name).font(theme::font_semibold(15.5)).color(theme::role_color(color))).selectable(false).sense(Sense::click()));
         if r.clicked() && msg.webhook_id.is_none() {
             cx.actions.push(crate::ui::profile::open(msg.author.id, cx.guild, &r));
         }
@@ -398,9 +403,9 @@ fn plain_preview(content: &str, cx: &Ctx) -> String {
 
 fn reply_preview(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     ui.horizontal(|ui| {
-        ui.add_space(GUTTER - 36.0);
+        ui.add_space(GUTTER - 40.0);
         // The elbow connecting the reply to its parent.
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(32.0, 14.0), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(40.0 - ui.spacing().item_spacing.x, 14.0), Sense::hover());
         let stroke = egui::Stroke::new(2.0, theme::FAINT());
         let p = ui.painter();
         p.line_segment([rect.left_bottom() + Vec2::new(4.0, 2.0), rect.left_top() + Vec2::new(4.0, 7.0)], stroke);
@@ -415,14 +420,14 @@ fn reply_preview(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
                 let color = cx.guild.and_then(|g| cx.state.role_color(g, r.author.id));
                 ui.label(RichText::new(cx.state.display_name(r.author.id, cx.guild)).font(theme::font_semibold(13.0)).color(theme::role_color(color)));
                 let preview: String = if r.content.is_empty() { "Click to see attachment".into() } else { plain_preview(&r.content, cx) };
-                let resp = ui.add(egui::Label::new(RichText::new(preview).size(13.0).color(theme::MUTED())).truncate().sense(Sense::click()));
+                let resp = ui.add(egui::Label::new(RichText::new(preview).size(13.0).color(theme::MUTED())).truncate().selectable(false).sense(Sense::click()));
                 if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     cx.actions.push(Action::JumpTo { channel: cx.channel, message: Some(r.id) });
                 }
             }
             // In those lists it's only missing, not necessarily deleted, so offer to go and see it.
             None if cx.read_only && reference.is_some() => {
-                let resp = ui.add(egui::Label::new(RichText::new("Click to see original message").italics().size(13.0).color(theme::MUTED())).sense(Sense::click()));
+                let resp = ui.add(egui::Label::new(RichText::new("Click to see original message").italics().size(13.0).color(theme::MUTED())).selectable(false).sense(Sense::click()));
                 if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     let (channel, id) = reference.unwrap_or_default();
                     cx.actions.push(Action::JumpTo { channel, message: Some(id) });
@@ -451,9 +456,9 @@ fn system_line(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     // "Started a thread" points at the thread; clicking opens it.
     let thread = (msg.kind == message_type::THREAD_CREATED).then(|| msg.message_reference.as_ref().and_then(|r| r.channel_id)).flatten();
     ui.horizontal(|ui| {
-        ui.add_space(GUTTER - 40.0);
+        ui.add_space(24.0);
         ui.add_sized(Vec2::new(24.0, 18.0), egui::Label::new(RichText::new(glyph).color(theme::GREEN())));
-        ui.add_space(12.0);
+        ui.add_space(GUTTER - 48.0 - 2.0 * ui.spacing().item_spacing.x);
         ui.label(RichText::new(text).color(theme::MUTED()));
         if let Some(t) = thread {
             if ui.link(RichText::new("See Thread ›").size(13.0)).clicked() {
@@ -612,7 +617,7 @@ fn embed_text(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
                 widgets::avatar(ui, icon, 20.0);
             }
             // Wrapped: a long author line in a narrow column mustn't widen it.
-            let r = ui.add(egui::Label::new(RichText::new(&a.name).font(theme::font_semibold(13.5)).color(theme::HEADER())).wrap().sense(Sense::click()));
+            let r = ui.add(egui::Label::new(RichText::new(&a.name).font(theme::font_semibold(13.5)).color(theme::HEADER())).wrap().selectable(false).sense(Sense::click()));
             if let Some(u) = &a.url {
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     cx.actions.push(Action::OpenLink(u.clone()));
@@ -624,7 +629,7 @@ fn embed_text(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
         let rt = RichText::new(t).font(theme::font_semibold(15.5));
         match &e.url {
             Some(u) => {
-                if ui.add(egui::Label::new(rt.color(theme::LINK())).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                if ui.add(egui::Label::new(rt.color(theme::LINK())).selectable(false).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     cx.actions.push(Action::OpenLink(u.clone()));
                 }
             }
@@ -818,7 +823,7 @@ fn video_poster(ui: &mut Ui, poster: Option<&EmbedMedia>, video: &EmbedMedia, ti
         ui.painter().rect_filled(rect, 6, Color32::BLACK);
         ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "Loading…", theme::font(13.0), theme::FAINT());
         cx.uis.web_player_slot = Some((rect, ui.clip_rect()));
-        if ui.add(egui::Label::new(RichText::new("Stop video").size(12.0).color(theme::LINK())).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        if ui.add(egui::Label::new(RichText::new("Stop video").size(12.0).color(theme::LINK())).selectable(false).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             cx.actions.push(Action::PlayWeb(None));
         }
         return;

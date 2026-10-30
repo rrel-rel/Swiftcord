@@ -313,7 +313,8 @@ pub fn apply_visuals(ctx: &egui::Context) {
         style.spacing.button_padding = egui::vec2(10.0, 5.0);
         style.spacing.scroll.bar_width = 8.0;
         style.spacing.scroll.floating = true;
-        style.interaction.selectable_labels = true;
+        // Interface text keeps the arrow cursor, as in Discord; messages and profiles turn selection back on.
+        style.interaction.selectable_labels = false;
 
         let v = &mut style.visuals;
         *v = egui::Visuals::dark();

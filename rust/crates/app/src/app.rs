@@ -1837,6 +1837,7 @@ impl crate::window::App for App {
             self.apply(a);
         }
         self.place_web_player(ui.ctx(), frame);
+        ui::widgets::pointer_cursor(ui.ctx());
         // The visible channel's history may need fetching after a reconnect reset the cache.
         if let Some(c) = self.ui.channel() {
             self.ensure_history(c);

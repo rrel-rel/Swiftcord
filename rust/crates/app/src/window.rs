@@ -190,7 +190,7 @@ impl AppWindow {
             return Ok(());
         }
 
-        let output = ctx.run_ui(input, |ui| {
+        let mut output = ctx.run_ui(input, |ui| {
             app.logic(ui.ctx(), &mut frame);
             app.ui(ui, &mut frame);
         });
@@ -198,7 +198,10 @@ impl AppWindow {
         let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
         let clear = ctx.global_style().visuals.panel_fill.to_normalized_gamma_f32();
         self.painter.resize([size.width, size.height])?;
-        self.painter.paint(output.pixels_per_point, clear, &primitives, &output.textures_delta)?;
+        let painted = self.painter.paint(output.pixels_per_point, clear, &primitives, &output.textures_delta);
+        // Applied (or lost with the device); egui checks, in debug builds, that none were forgotten.
+        output.textures_delta.clear();
+        painted?;
         if !self.shown {
             // Shown only once there's something in it, so it doesn't flash white.
             self.shown = true;

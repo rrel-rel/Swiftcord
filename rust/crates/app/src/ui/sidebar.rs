@@ -17,16 +17,16 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Actio
     };
 
     // Header.
-    egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 0)).show(ui, |ui| {
+    let header = egui::Frame::new().inner_margin(egui::Margin::symmetric(INSET as i8, 0)).show(ui, |ui| {
         ui.set_height(48.0);
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             ui.add(egui::Label::new(RichText::new(title).font(theme::font_semibold(15.0)).color(theme::HEADER())).truncate());
         });
     });
-    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), egui::Stroke::new(1.0, theme::RAIL()));
+    ui.painter().hline(ui.max_rect().x_range(), header.response.rect.bottom(), egui::Stroke::new(1.0, theme::RAIL()));
 
     // Bottom panels first so the list takes the remaining space.
-    egui::Panel::bottom("user-panel").frame(egui::Frame::new().fill(Color32::from_rgb(0x23, 0x24, 0x28))).show(ui, |ui| {
+    egui::Panel::bottom("user-panel").show_separator_line(false).frame(egui::Frame::new().fill(Color32::from_rgb(0x23, 0x24, 0x28))).show(ui, |ui| {
         crate::voice_glue::status_panel(ui, s, uis, actions);
         user_panel(ui, state, uis, actions);
     });
@@ -85,21 +85,26 @@ impl Lists {
     }
 }
 
+/// The sidebar's left edge for text and icons: the header, section labels, and row content.
+const INSET: f32 = 16.0;
+/// Rows' highlight is inset this much from the sidebar's sides; their content as much again.
+const ROW_MARGIN: f32 = 8.0;
+
 fn row(ui: &mut Ui, selected: bool, height: f32, add: impl FnOnce(&mut Ui, bool)) -> egui::Response {
-    let width = ui.available_width() - 8.0;
+    let width = ui.available_width() - 2.0 * ROW_MARGIN;
     let (rect, r) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
     // Rows scrolled out of view keep their place but aren't built (nor their avatars fetched).
     if !ui.is_rect_visible(rect) {
         ui.add_space(2.0);
         return r;
     }
-    let rect = rect.translate(Vec2::new(4.0, 0.0));
+    let rect = rect.translate(Vec2::new(ROW_MARGIN, 0.0));
     // contains_pointer, not hovered: buttons inside the row would otherwise un-hover it and hide themselves.
     let hovered = r.contains_pointer();
     if selected || hovered {
         ui.painter().rect_filled(rect, 4, if selected { theme::SELECTED() } else { theme::HOVER() });
     }
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(8.0, 0.0))).layout(Layout::left_to_right(Align::Center)));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(INSET - ROW_MARGIN, 0.0))).layout(Layout::left_to_right(Align::Center)));
     add(&mut child, hovered);
     ui.add_space(2.0);
     r
@@ -176,7 +181,7 @@ fn thread_rows(ui: &mut Ui, state: &State, parent: &Channel, joined: &[Snowflake
             }
         });
         // The connector: down from the channel, then across to this thread.
-        let x = r.rect.left() + 18.0;
+        let x = r.rect.left() + INSET + 10.0;
         let y = r.rect.center().y;
         let stroke = egui::Stroke::new(1.5, Color32::from_rgb(0x4e, 0x50, 0x58));
         ui.painter().line_segment([egui::pos2(x, top), egui::pos2(x, y - 6.0)], stroke);
@@ -314,7 +319,7 @@ fn person_clicks(state: &State, uis: &UiState, c: &Channel, user: swiftcord_core
 
 fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
-        ui.add_space(16.0);
+        ui.add_space(INSET);
         ui.label(RichText::new("DIRECT MESSAGES").font(theme::font_semibold(12.0)).color(theme::MUTED()));
     });
     ui.add_space(4.0);
@@ -341,12 +346,11 @@ fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Acti
                 }
             }
             let color = if is_selected || unread { theme::HEADER() } else if hovered { theme::TEXT() } else { theme::MUTED() };
-            ui.vertical(|ui| {
-                ui.add(egui::Label::new(RichText::new(c.label()).size(15.0).color(color)).truncate().selectable(false));
-                if c.kind == ChannelType::GroupDm {
-                    ui.label(RichText::new(format!("{} Members", c.recipients.len() + 1)).small().color(theme::FAINT()));
-                }
-            });
+            let badge_room = if mentions > 0 { 28.0 } else { 0.0 };
+            let subtitle = (c.kind == ChannelType::GroupDm).then(|| format!("{} Members", c.recipients.len() + 1));
+            let mut lines = vec![(c.label().to_string(), theme::font(15.0), color)];
+            lines.extend(subtitle.map(|s| (s, theme::font(12.0), theme::FAINT())));
+            widgets::centered_lines(ui, badge_room, &lines);
             if mentions > 0 {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(22.0, 16.0), Sense::hover());
@@ -400,9 +404,9 @@ fn status_menu(ui: &mut Ui, actions: &mut Vec<Action>) {
 
 fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Action>) {
     let Some(me) = &state.me else { return };
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
-        ui.add_space(8.0);
+        ui.add_space(INSET);
         let avatar = widgets::avatar_with_status(ui, me, 32.0, state.own_status(), false, Color32::from_rgb(0x23, 0x24, 0x28));
         egui::Popup::menu(&avatar).show(|ui| status_menu(ui, actions));
         avatar.on_hover_text("Set Status");
@@ -413,7 +417,8 @@ fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Actio
             ui.add(egui::Label::new(RichText::new(subtitle).size(12.0).color(theme::MUTED())).truncate());
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.add_space(4.0);
+            // Icon buttons have 7 pt around their glyph; this leaves the glyph INSET from the edge too.
+            ui.add_space(INSET - 7.0);
             let settings = widgets::icon_button(ui, icon::SETTINGS, "Settings");
             egui::Popup::menu(&settings).show(|ui| {
                 ui.set_min_width(160.0);
@@ -440,5 +445,5 @@ fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Actio
             }
         });
     });
-    ui.add_space(6.0);
+    ui.add_space(8.0);
 }

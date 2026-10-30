@@ -71,6 +71,7 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) 
     egui::CentralPanel::default().frame(egui::Frame::new().fill(Color32::BLACK)).show(ui, |ui| {
         let area = ui.max_rect();
         let r = ui.allocate_rect(area, Sense::click());
+        crate::ui::widgets::plain_cursor(&r);
         match &view.texture {
             Some(tex) => {
                 // Fit to the area, keeping the aspect ratio.

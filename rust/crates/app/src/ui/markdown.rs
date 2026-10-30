@@ -114,7 +114,7 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
         Span::Text(t, st) => {
             if let Some(i) = hidden(cx, st) {
                 // Unrevealed spoilers are blocks of the background colour until clicked.
-                let r = ui.add(egui::Label::new(styled(t, st, size, theme::RAIL()).background_color(theme::RAIL())).sense(Sense::click()));
+                let r = ui.add(egui::Label::new(styled(t, st, size, theme::RAIL()).background_color(theme::RAIL())).selectable(false).sense(Sense::click()));
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     cx.revealed.insert((cx.message, i));
                 }
@@ -137,7 +137,7 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
         }
         Span::Link { text, url, style, title } => {
             if let Some(i) = hidden(cx, style) {
-                if ui.add(egui::Label::new(styled(text, style, size, theme::RAIL()).background_color(theme::RAIL())).sense(Sense::click())).clicked() {
+                if ui.add(egui::Label::new(styled(text, style, size, theme::RAIL()).background_color(theme::RAIL())).selectable(false).sense(Sense::click())).clicked() {
                     cx.revealed.insert((cx.message, i));
                 }
                 return;
@@ -151,7 +151,7 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
                     mention(ui, &label, size).on_hover_text(url)
                 }
                 None => {
-                    let r = ui.add(egui::Label::new(styled(text, style, size, theme::LINK())).sense(Sense::click()));
+                    let r = ui.add(egui::Label::new(styled(text, style, size, theme::LINK())).selectable(false).sense(Sense::click()));
                     let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
                     // The hover shows a masked link's title if it has one (as Discord does), else where it goes.
                     let r = match title {
@@ -225,8 +225,7 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
 
 fn mention(ui: &mut Ui, text: &str, size: f32) -> egui::Response {
     ui.add(
-        egui::Label::new(RichText::new(text).font(theme::font_semibold(size)).color(theme::MENTION_TEXT()).background_color(theme::MENTION_BG()))
-            .sense(Sense::click()),
+        egui::Label::new(RichText::new(text).font(theme::font_semibold(size)).color(theme::MENTION_TEXT()).background_color(theme::MENTION_BG())).selectable(false).sense(Sense::click()),
     )
     .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
