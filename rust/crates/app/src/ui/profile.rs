@@ -177,7 +177,7 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
 
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if !me && ui.add(egui::Button::new(RichText::new("Message").color(Color32::WHITE)).fill(theme::BLURPLE())).clicked() {
+                if !me && ui.add(egui::Button::new(RichText::new("Message").color(Color32::WHITE)).fill(theme::ACCENT())).clicked() {
                     actions.push(Action::OpenDm(user_id));
                     actions.push(Action::CloseProfile);
                 }

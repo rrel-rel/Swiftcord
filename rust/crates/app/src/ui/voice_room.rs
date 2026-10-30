@@ -11,14 +11,12 @@ use crate::ui::call::{camera_tile, round};
 use crate::ui::emoji::Catalog;
 use crate::ui::widgets;
 
-const BG: Color32 = Color32::from_rgb(0x11, 0x12, 0x14);
-const TILE: Color32 = Color32::from_rgb(0x2b, 0x2d, 0x31);
 const GAP: f32 = 8.0;
 
 pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, channel: &Channel, actions: &mut Vec<Action>) {
     let joined = uis.voice.as_ref().is_some_and(|v| v.channel == channel.id);
 
-    egui::Panel::top(("room-header", channel.id)).frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::symmetric(16, 10))).show(ui, |ui| {
+    egui::Panel::top(("room-header", channel.id)).frame(egui::Frame::new().fill(theme::RAIL()).inner_margin(egui::Margin::symmetric(16, 10))).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new(icon::SPEAKER).font(theme::icon_font(18.0)).color(theme::MUTED()));
             ui.label(RichText::new(channel.label()).font(theme::font_semibold(16.0)).color(theme::HEADER()));
@@ -37,11 +35,11 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, chan
         });
     }
 
-    egui::Panel::bottom(("room-controls", channel.id)).frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::symmetric(16, 14))).show(ui, |ui| {
+    egui::Panel::bottom(("room-controls", channel.id)).frame(egui::Frame::new().fill(theme::RAIL()).inner_margin(egui::Margin::symmetric(16, 14))).show(ui, |ui| {
         controls(ui, uis, channel, joined, actions);
     });
 
-    egui::CentralPanel::default().frame(egui::Frame::new().fill(BG).inner_margin(16)).show(ui, |ui| {
+    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::RAIL()).inner_margin(16)).show(ui, |ui| {
         let members = s.state.voice_members(channel);
         if members.is_empty() {
             ui.vertical_centered(|ui| {
@@ -135,7 +133,7 @@ fn tile(ui: &Ui, s: &Session, uis: &UiState, channel: &Channel, vs: &VoiceState,
     if joined && uis.cameras.contains_key(&user) {
         camera_tile(ui, s, uis, channel.guild_id, user, rect);
     } else {
-        painter.rect_filled(rect, 8, TILE);
+        painter.rect_filled(rect, 8, theme::SIDEBAR());
         // A live stream shows its preview behind the avatar, as Discord's tiles do.
         let key = crate::stream_glue::stream_key(channel.guild_id, channel.id, user);
         let preview = live.then(|| uis.stream_previews.get(&key)).flatten();

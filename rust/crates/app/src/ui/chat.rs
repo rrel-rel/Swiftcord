@@ -386,7 +386,7 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
     // A "jump to present" pill when scrolled far up or viewing older history.
     if history.has_newer || (!view.at_bottom && max_scroll - out.state.clamped_offset().y > 1500.0) {
         let rect = Rect::from_center_size(out.inner_rect.center_bottom() - Vec2::new(0.0, 24.0), Vec2::new(150.0, 30.0));
-        let r = ui.put(rect, egui::Button::new(RichText::new("Jump to present").color(Color32::WHITE)).fill(theme::BLURPLE()).corner_radius(15));
+        let r = ui.put(rect, egui::Button::new(RichText::new("Jump to present").color(Color32::WHITE)).fill(theme::ACCENT()).corner_radius(15));
         if r.clicked() {
             actions.push(Action::JumpToPresent(channel.id));
             ui.ctx().request_repaint();
@@ -413,7 +413,7 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
             let rect = Rect::from_min_size(out.inner_rect.left_top() + Vec2::new(16.0, 0.0), Vec2::new(out.inner_rect.width() - 32.0, 26.0));
             let bar = ui.interact(rect, ui.scope_id().with(("new-messages", channel.id)), Sense::click());
             let p = ui.painter();
-            p.rect_filled(rect, egui::CornerRadius { nw: 0, ne: 0, sw: 8, se: 8 }, if bar.hovered() { theme::BLURPLE().gamma_multiply(0.85) } else { theme::BLURPLE() });
+            p.rect_filled(rect, egui::CornerRadius { nw: 0, ne: 0, sw: 8, se: 8 }, if bar.hovered() { theme::ACCENT().gamma_multiply(0.85) } else { theme::ACCENT() });
             p.text(rect.left_center() + Vec2::new(12.0, 0.0), egui::Align2::LEFT_CENTER, format!("{count} new {noun} since {when}"), theme::font_semibold(13.0), Color32::WHITE);
             let mark = Rect::from_min_max(egui::pos2(rect.right() - 130.0, rect.top()), rect.right_bottom());
             let mark_r = ui.interact(mark, ui.scope_id().with(("mark-read", channel.id)), Sense::click());
@@ -569,7 +569,7 @@ fn accept(ctx: &egui::Context, edit_id: egui::Id, draft: &mut crate::app::Draft,
 fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &Channel, perms: u64, actions: &mut Vec<Action>) {
     let state = &s.state;
     if perms & perm::SEND_MESSAGES == 0 {
-        egui::Frame::new().fill(theme::INPUT()).corner_radius(8).inner_margin(egui::Margin::symmetric(14, 12)).show(ui, |ui| {
+        egui::Frame::new().fill(theme::INPUT()).stroke(theme::field_stroke()).corner_radius(8).inner_margin(egui::Margin::symmetric(14, 12)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(RichText::new("You do not have permission to send messages in this channel.").color(theme::FAINT()));
         });
@@ -679,7 +679,7 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
     let reply = draft.reply;
     let files: Vec<(String, usize)> = draft.files.iter().map(|f| (f.name.clone(), f.bytes.len())).collect();
 
-    let frame = egui::Frame::new().fill(theme::INPUT()).corner_radius(8).show(ui, |ui| {
+    let frame = egui::Frame::new().fill(theme::INPUT()).stroke(theme::field_stroke()).corner_radius(8).show(ui, |ui| {
         ui.set_width(ui.available_width());
         if let Some((rid, ping)) = reply {
             egui::Frame::new().fill(theme::SIDEBAR()).corner_radius(egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }).inner_margin(egui::Margin::symmetric(14, 6)).show(ui, |ui| {
@@ -692,7 +692,7 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
                         if widgets::icon_button(ui, icon::CLOSE, "Cancel reply").clicked() {
                             uis.drafts.entry(c.id).or_default().reply = None;
                         }
-                        let label = RichText::new(if ping { "@ ON" } else { "@ OFF" }).font(theme::font_bold(12.0)).color(if ping { theme::BLURPLE() } else { theme::MUTED() });
+                        let label = RichText::new(if ping { "@ ON" } else { "@ OFF" }).font(theme::font_bold(12.0)).color(if ping { theme::ACCENT() } else { theme::MUTED() });
                         if ui.add(egui::Button::new(label).frame(false)).on_hover_text("Mention the author").clicked() {
                             if let Some(r) = &mut uis.drafts.entry(c.id).or_default().reply {
                                 r.1 = !r.1;
@@ -708,7 +708,7 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
                 for (i, (name, size)) in files.iter().enumerate() {
                     egui::Frame::new().fill(theme::SIDEBAR()).corner_radius(6).inner_margin(8).show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(icon::FILE).font(theme::icon_font(18.0)).color(theme::BLURPLE()));
+                            ui.label(RichText::new(icon::FILE).font(theme::icon_font(18.0)).color(theme::ACCENT()));
                             ui.vertical(|ui| {
                                 ui.add(egui::Label::new(RichText::new(name).size(13.0)).truncate());
                                 ui.label(RichText::new(widgets::human_size(*size as u64)).size(11.0).color(theme::MUTED()));
@@ -843,7 +843,7 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
 /// The header's search box: Enter searches the whole server (or this DM); filters like `from:` and `in:`
 /// narrow it.
 fn search_field(ui: &mut Ui, c: &Channel, text: &mut String, actions: &mut Vec<Action>) {
-    egui::Frame::new().fill(theme::RAIL()).corner_radius(4).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
+    egui::Frame::new().fill(theme::INPUT()).stroke(theme::field_stroke()).corner_radius(4).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new(icon::SEARCH).font(theme::icon_font(12.0)).color(theme::MUTED()));
             let hint = if c.guild_id.is_some() { "Search" } else { "Search this chat" };

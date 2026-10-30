@@ -24,10 +24,6 @@ pub struct Settings {
     pub message_sounds: bool,
     /// Sounds for calls: ringing, and people joining or leaving yours.
     pub call_sounds: bool,
-    /// How dark the app is.
-    pub palette: crate::theme::Palette,
-    /// The accent colour (RGB).
-    pub accent: u32,
     /// How loud people are in calls, by user (1.0 as sent; 0–2), as set from their voice menu.
     pub user_volumes: std::collections::HashMap<u64, f32>,
     /// People muted for us alone in calls.
@@ -48,8 +44,6 @@ impl Default for Settings {
             noise_suppression: true,
             message_sounds: true,
             call_sounds: true,
-            palette: crate::theme::Palette::Dark,
-            accent: crate::theme::ACCENTS[0].1,
             user_volumes: Default::default(),
             muted_users: Default::default(),
         }

@@ -21,7 +21,7 @@ pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Act
         ui.vertical_centered(|ui| {
             let home = uis.guild.is_none();
             let r = item(ui, home, false, state.dm_mentions(), "Direct Messages", |ui, rect, hovered| {
-                let fill = if home || hovered { theme::BLURPLE() } else { theme::SELECTED() };
+                let fill = if home || hovered { theme::ACCENT() } else { theme::SELECTED() };
                 ui.painter().rect_filled(rect, radius(home || hovered), fill);
                 ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, theme::icon::HOME, theme::icon_font(22.0), Color32::WHITE);
             });
@@ -87,7 +87,7 @@ fn guild_icon(ui: &mut Ui, state: &State, id: Snowflake, rect: Rect, rounding: C
             egui::Image::from_uri(url).corner_radius(rounding).show_loading_spinner(false).paint_at(ui, rect);
         }
         None => {
-            let fill = if hovered { theme::BLURPLE() } else { theme::SELECTED() };
+            let fill = if hovered { theme::ACCENT() } else { theme::SELECTED() };
             ui.painter().rect_filled(rect, rounding, fill);
             let size = (rect.width() * 0.33).clamp(9.0, 16.0);
             ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, acronym(&g.name), theme::font_semibold(size), theme::HEADER());
@@ -159,7 +159,7 @@ fn folder(
     actions: &mut Vec<Action>,
 ) {
     let open = uis.open_folders.contains(&id);
-    let tint = color.map_or(theme::BLURPLE(), |c| Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8));
+    let tint = color.map_or(theme::ACCENT(), |c| Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8));
     let unread = guilds.iter().any(|g| badges.get(g).is_some_and(|b| b.0) && !state.is_guild_muted(*g));
     let mentions = if open { 0 } else { guilds.iter().map(|g| badges.get(g).map_or(0, |b| b.1)).sum() };
     let selected = !open && uis.guild.is_some_and(|g| guilds.contains(&g));

@@ -156,6 +156,7 @@ impl AppWindow {
         };
         let hwnd = windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _);
         let size = window.inner_size();
+        title_bar(hwnd);
         let painter = Painter::new(hwnd, [size.width, size.height])?;
         let egui_winit = egui_winit::State::new(
             ctx.clone(),
@@ -195,6 +196,7 @@ impl AppWindow {
             app.ui(ui, &mut frame);
         });
         self.handle_platform_output(output.platform_output);
+        crate::theme::square_corners(&mut output.shapes);
         let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
         let clear = ctx.global_style().visuals.panel_fill.to_normalized_gamma_f32();
         self.painter.resize([size.width, size.height])?;
@@ -264,6 +266,22 @@ fn is_paste(key: &KeyEvent, modifiers: ModifiersState) -> bool {
     };
     let insert = key.logical_key == Key::Named(NamedKey::Insert);
     key.logical_key == Key::Named(NamedKey::Paste) || (ctrl_only && v) || (modifiers == ModifiersState::SHIFT && insert)
+}
+
+/// Windows 11's title bar and frame in the theme's colours, with square corners like the rest.
+fn title_bar(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::Graphics::Dwm::{
+        DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute,
+    };
+    let colorref = |c: egui::Color32| u32::from(c.r()) | u32::from(c.g()) << 8 | u32::from(c.b()) << 16;
+    let set = |attribute, value: u32| unsafe {
+        // Older Windows ignores what it doesn't know.
+        let _ = DwmSetWindowAttribute(hwnd, attribute, (&value as *const u32).cast(), 4);
+    };
+    set(DWMWA_CAPTION_COLOR, colorref(crate::theme::RAIL()));
+    set(DWMWA_TEXT_COLOR, colorref(crate::theme::HEADER()));
+    set(DWMWA_BORDER_COLOR, colorref(crate::theme::BORDER()));
+    set(DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND.0 as u32);
 }
 
 /// Centers the window on its monitor.

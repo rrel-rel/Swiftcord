@@ -20,13 +20,13 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Actio
     let header = egui::Frame::new().inner_margin(egui::Margin::symmetric(INSET as i8, 0)).show(ui, |ui| {
         ui.set_height(48.0);
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-            ui.add(egui::Label::new(RichText::new(title).font(theme::font_semibold(15.0)).color(theme::HEADER())).truncate());
+            ui.add(egui::Label::new(RichText::new(title.to_uppercase()).font(theme::font_bold(13.0)).color(theme::HEADER())).truncate());
         });
     });
     ui.painter().hline(ui.max_rect().x_range(), header.response.rect.bottom(), egui::Stroke::new(1.0, theme::RAIL()));
 
     // Bottom panels first so the list takes the remaining space.
-    egui::Panel::bottom("user-panel").show_separator_line(false).frame(egui::Frame::new().fill(Color32::from_rgb(0x23, 0x24, 0x28))).show(ui, |ui| {
+    egui::Panel::bottom("user-panel").show_separator_line(false).frame(egui::Frame::new().fill(theme::RAIL())).show(ui, |ui| {
         crate::voice_glue::status_panel(ui, s, uis, actions);
         user_panel(ui, state, uis, actions);
     });
@@ -183,7 +183,7 @@ fn thread_rows(ui: &mut Ui, state: &State, parent: &Channel, joined: &[Snowflake
         // The connector: down from the channel, then across to this thread.
         let x = r.rect.left() + INSET + 10.0;
         let y = r.rect.center().y;
-        let stroke = egui::Stroke::new(1.5, Color32::from_rgb(0x4e, 0x50, 0x58));
+        let stroke = egui::Stroke::new(1.5, theme::FAINT());
         ui.painter().line_segment([egui::pos2(x, top), egui::pos2(x, y - 6.0)], stroke);
         ui.painter().add(egui::Shape::QuadraticBezier(egui::epaint::QuadraticBezierShape::from_points_stroke(
             [egui::pos2(x, y - 6.0), egui::pos2(x, y), egui::pos2(x + 8.0, y)],
@@ -340,7 +340,7 @@ fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Acti
                     }
                     None => {
                         let (rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
-                        ui.painter().circle_filled(rect.center(), 16.0, theme::BLURPLE());
+                        ui.painter().circle_filled(rect.center(), 16.0, theme::ACCENT());
                         ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::PEOPLE, theme::icon_font(15.0), Color32::WHITE);
                     }
                 }
@@ -383,7 +383,7 @@ fn status_menu(ui: &mut Ui, actions: &mut Vec<Action>) {
     for (status, label, detail) in STATUSES {
         let height = if detail.is_some() { 40.0 } else { 30.0 };
         let (rect, r) = ui.allocate_exact_size(Vec2::new(290.0, height), Sense::click());
-        let fill = if r.hovered() { theme::BLURPLE() } else { bg };
+        let fill = if r.hovered() { theme::ACCENT() } else { bg };
         if r.hovered() {
             ui.painter().rect_filled(rect, 3, fill);
         }
@@ -407,7 +407,7 @@ fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Actio
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(INSET);
-        let avatar = widgets::avatar_with_status(ui, me, 32.0, state.own_status(), false, Color32::from_rgb(0x23, 0x24, 0x28));
+        let avatar = widgets::avatar_with_status(ui, me, 32.0, state.own_status(), false, theme::RAIL());
         egui::Popup::menu(&avatar).show(|ui| status_menu(ui, actions));
         avatar.on_hover_text("Set Status");
         ui.vertical(|ui| {

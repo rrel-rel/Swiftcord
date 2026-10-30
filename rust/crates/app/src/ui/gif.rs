@@ -272,7 +272,7 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 for name in row {
                                     let (rect, r) = ui.allocate_exact_size(Vec2::new(col_w, 64.0), Sense::click());
-                                    let base = if name == FAVORITES { theme::BLURPLE() } else { tile_color(name) };
+                                    let base = if name == FAVORITES { theme::ACCENT() } else { tile_color(name) };
                                     ui.painter().rect_filled(rect, 6, if r.hovered() { base.gamma_multiply(1.25) } else { base });
                                     if name == FAVORITES {
                                         ui.painter().text(rect.center() - Vec2::new(46.0, 0.0), egui::Align2::CENTER_CENTER, STAR_FILLED, theme::icon_font(15.0), Color32::WHITE);

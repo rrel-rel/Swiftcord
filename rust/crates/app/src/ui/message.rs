@@ -174,7 +174,7 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
     // The message being replied to stays marked while the reply is written.
     let replying = !cx.read_only && cx.uis.drafts.get(&cx.channel).and_then(|d| d.reply).is_some_and(|(id, _)| id == msg.id);
     let fill = if cx.highlight == Some(msg.id) || replying {
-        Some(theme::BLURPLE().gamma_multiply(0.18))
+        Some(theme::ACCENT().gamma_multiply(0.18))
     } else if mentioned {
         Some(if hovered { theme::MENTIONED_ROW_HOVER() } else { theme::MENTIONED_ROW() })
     } else if hovered {
@@ -186,7 +186,7 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
         ui.painter().set(bg, egui::Shape::rect_filled(rect, 0, f));
     }
     if replying {
-        ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())), 0, theme::BLURPLE());
+        ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())), 0, theme::ACCENT());
     } else if mentioned {
         ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())), 0, theme::YELLOW());
     }
@@ -223,7 +223,7 @@ fn header(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         r.on_hover_text(msg.author.tag());
         if msg.author.bot || msg.webhook_id.is_some() {
             let text = if msg.webhook_id.is_some() { " APP " } else { " BOT " };
-            ui.label(RichText::new(text).font(theme::font_semibold(10.0)).color(Color32::WHITE).background_color(theme::BLURPLE()));
+            ui.label(RichText::new(text).font(theme::font_semibold(10.0)).color(Color32::WHITE).background_color(theme::ACCENT()));
         }
         ui.label(RichText::new(time_label(msg.timestamp())).size(12.0).color(theme::FAINT()))
             .on_hover_text(msg.timestamp().with_timezone(&Local).format("%A, %B %-d, %Y %-I:%M %p").to_string());
@@ -591,7 +591,7 @@ pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
     egui::Frame::new().fill(theme::EMBED_BG()).corner_radius(6).inner_margin(10).stroke(egui::Stroke::new(1.0, theme::RAIL())).show(ui, |ui| {
         ui.set_width(380.0_f32.min(ui.available_width()));
         ui.horizontal(|ui| {
-            ui.label(RichText::new(icon::FILE).font(theme::icon_font(28.0)).color(theme::BLURPLE()));
+            ui.label(RichText::new(icon::FILE).font(theme::icon_font(28.0)).color(theme::ACCENT()));
             ui.vertical(|ui| {
                 if ui.link(&a.filename).clicked() {
                     crate::platform::open_url(&a.url);
@@ -762,7 +762,7 @@ pub(crate) fn gallery(ui: &mut Ui, items: &[GalleryMedia], msg_id: Snowflake, ke
         let reveal_key = (msg_id, key.wrapping_add(i as u16));
         if m.spoiler && !cx.uis.revealed.contains(&reveal_key) {
             let r = ui.interact(rect, egui::Id::unique(("gallery-spoiler", reveal_key, cx.read_only)), Sense::click());
-            ui.painter().rect_filled(rect, 4, Color32::from_rgb(0x1e, 0x1f, 0x22));
+            ui.painter().rect_filled(rect, 4, theme::RAIL());
             ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "SPOILER", theme::font_bold(14.0), Color32::WHITE);
             if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 cx.uis.revealed.insert(reveal_key);
@@ -956,7 +956,7 @@ fn reactions(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
             if ui.available_size_before_wrap().x < 6.0 + 18.0 + 4.0 + count_w + 6.0 + 2.0 {
                 ui.end_row();
             }
-            let (fill, stroke) = if r.me { (theme::BLURPLE().gamma_multiply(0.25), theme::BLURPLE()) } else { (theme::SIDEBAR(), theme::SIDEBAR()) };
+            let (fill, stroke) = if r.me { (theme::ACCENT().gamma_multiply(0.25), theme::ACCENT()) } else { (theme::SIDEBAR(), theme::SIDEBAR()) };
             let resp = egui::Frame::new().fill(fill).stroke(egui::Stroke::new(1.0, stroke)).corner_radius(8).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
@@ -1035,7 +1035,7 @@ fn quick_reaction(ui: &mut Ui, msg: &Message, e: &swiftcord_core::models::Emoji,
     // Drawn by hand at exactly the size of the toolbar's icon buttons (an image button pads itself wider).
     let (rect, r) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
     if r.hovered() || mine {
-        ui.painter().rect_filled(rect, 4, if mine { theme::BLURPLE().gamma_multiply(0.3) } else { theme::HOVER() });
+        ui.painter().rect_filled(rect, 4, if mine { theme::ACCENT().gamma_multiply(0.3) } else { theme::HOVER() });
     }
     crate::emoji_sheet::any(ui.ctx(), e, Vec2::splat(20.0)).paint_at(ui, rect.shrink(4.0));
     let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);

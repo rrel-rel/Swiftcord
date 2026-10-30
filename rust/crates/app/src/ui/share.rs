@@ -75,7 +75,7 @@ pub fn picker(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
 
             ui.add_space(6.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let go = ui.add_enabled(p.selected.is_some(), egui::Button::new(RichText::new("Go Live").color(Color32::WHITE)).fill(theme::BLURPLE()));
+                let go = ui.add_enabled(p.selected.is_some(), egui::Button::new(RichText::new("Go Live").color(Color32::WHITE)).fill(theme::ACCENT()));
                 if go.clicked() {
                     actions.push(Action::StartShare);
                 }

@@ -1,180 +1,101 @@
-//! Colours, fonts and egui styling. The colours come from the chosen palette (Dark, Darker or Midnight) and
-//! accent; they're functions so the theme can change while the app runs.
+//! The look: Source engine menus of the late 2000s (VGUI). Flat olive-grey panels, near-white Tahoma
+//! text, controls outlined with a light 1 px border, square corners throughout, and Source's orange as
+//! the one accent.
 #![allow(non_snake_case)]
 
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
-use serde::{Deserialize, Serialize};
-
-/// The background shades: how dark the app is.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Palette {
-    /// Discord's dark theme.
-    #[default]
-    Dark,
-    /// Deeper greys.
-    Darker,
-    /// Near-black, for OLED screens and dark rooms.
-    Midnight,
-}
-
-impl Palette {
-    pub const ALL: [Palette; 3] = [Palette::Dark, Palette::Darker, Palette::Midnight];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Palette::Dark => "Dark",
-            Palette::Darker => "Darker",
-            Palette::Midnight => "Midnight",
-        }
-    }
-}
-
-/// The accent colours offered (buttons, selection, links to act on), Discord's blurple first.
-pub const ACCENTS: [(&str, u32); 6] =
-    [("Blurple", 0x5865F2), ("Green", 0x23A55A), ("Pink", 0xEB459E), ("Orange", 0xE67E22), ("Teal", 0x1ABC9C), ("Red", 0xED4245)];
-
-/// The shades of one palette.
-struct Shades {
-    rail: Color32,
-    sidebar: Color32,
-    chat: Color32,
-    input: Color32,
-    hover: Color32,
-    selected: Color32,
-    message_hover: Color32,
-    /// Embeds and code blocks.
-    card: Color32,
-}
 
 const fn rgb(c: u32) -> Color32 {
     Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
 }
 
-const DARK: Shades = Shades {
-    rail: rgb(0x1e1f22),
-    sidebar: rgb(0x2b2d31),
-    chat: rgb(0x313338),
-    input: rgb(0x383a40),
-    hover: rgb(0x35373c),
-    selected: rgb(0x404249),
-    message_hover: rgb(0x2e3035),
-    card: rgb(0x2b2d31),
-};
-
-const DARKER: Shades = Shades {
-    rail: rgb(0x111214),
-    sidebar: rgb(0x1a1b1e),
-    chat: rgb(0x1f2023),
-    input: rgb(0x292a2e),
-    hover: rgb(0x26272b),
-    selected: rgb(0x303136),
-    message_hover: rgb(0x1b1c1f),
-    card: rgb(0x18191c),
-};
-
-const MIDNIGHT: Shades = Shades {
-    rail: rgb(0x000000),
-    sidebar: rgb(0x08080a),
-    chat: rgb(0x000000),
-    input: rgb(0x16171a),
-    hover: rgb(0x121315),
-    selected: rgb(0x1d1e22),
-    message_hover: rgb(0x0b0b0d),
-    card: rgb(0x0d0e10),
-};
-
-static PALETTE: AtomicU8 = AtomicU8::new(0);
-static ACCENT: AtomicU32 = AtomicU32::new(0x5865F2);
-
-/// Switches the colours; [`apply_visuals`] then restyles egui's own widgets.
-pub fn set(palette: Palette, accent: u32) {
-    PALETTE.store(palette as u8, Ordering::Relaxed);
-    ACCENT.store(accent & 0xFF_FFFF, Ordering::Relaxed);
-}
-
-fn shades() -> &'static Shades {
-    match PALETTE.load(Ordering::Relaxed) {
-        1 => &DARKER,
-        2 => &MIDNIGHT,
-        _ => &DARK,
-    }
-}
-
+/// The darkest shade: the server rail, the user panel, dark dividers.
 pub fn RAIL() -> Color32 {
-    shades().rail
+    rgb(0x3e3f3b)
 }
 pub fn SIDEBAR() -> Color32 {
-    shades().sidebar
+    rgb(0x4a4b47)
 }
+/// The main panel, like a VGUI frame.
 pub fn CHAT() -> Color32 {
-    shades().chat
+    rgb(0x585954)
 }
+/// Text fields and drop-downs, a shade darker than the panel they sit in.
 pub fn INPUT() -> Color32 {
-    shades().input
+    rgb(0x424340)
 }
 pub fn HOVER() -> Color32 {
-    shades().hover
+    rgb(0x60615c)
 }
 pub fn SELECTED() -> Color32 {
-    shades().selected
+    rgb(0x6e6f69)
 }
 pub fn MESSAGE_HOVER() -> Color32 {
-    shades().message_hover
+    rgb(0x51524d)
 }
 pub fn CODE_BG() -> Color32 {
-    shades().card
+    rgb(0x464743)
 }
 pub fn EMBED_BG() -> Color32 {
-    shades().card
+    rgb(0x4a4b47)
+}
+/// The light edge VGUI draws around buttons and fields.
+pub fn BORDER() -> Color32 {
+    rgb(0x8c8d87)
 }
 pub fn TEXT() -> Color32 {
-    rgb(0xdbdee1)
+    rgb(0xdcdcd6)
 }
 pub fn MUTED() -> Color32 {
-    rgb(0x949ba4)
+    rgb(0xa2a39d)
 }
 pub fn FAINT() -> Color32 {
-    rgb(0x6d6f78)
+    rgb(0x7f807a)
 }
 pub fn HEADER() -> Color32 {
-    rgb(0xf2f3f5)
+    rgb(0xffffff)
 }
-/// The accent colour (Discord's blurple unless another was chosen).
-pub fn BLURPLE() -> Color32 {
-    rgb(ACCENT.load(Ordering::Relaxed))
+/// Source's orange: selection, the home button, primary buttons.
+pub fn ACCENT() -> Color32 {
+    rgb(0xc47f1e)
 }
+/// Steam's in-game green.
 pub fn GREEN() -> Color32 {
-    rgb(0x23a559)
+    rgb(0x8db24a)
 }
 pub fn YELLOW() -> Color32 {
-    rgb(0xf0b232)
+    rgb(0xd8b23c)
 }
 pub fn RED() -> Color32 {
-    rgb(0xf23f43)
+    rgb(0xc8483a)
 }
 /// The offline / invisible status.
 pub fn OFFLINE() -> Color32 {
-    rgb(0x80848e)
+    rgb(0x7a7b76)
 }
+/// Links are white and underlined, as in VGUI.
 pub fn LINK() -> Color32 {
-    rgb(0x00a8fc)
+    rgb(0xffffff)
 }
 /// Mentions: a dim wash of the accent behind, a pale tint of it for the text.
 pub fn MENTION_BG() -> Color32 {
-    BLURPLE().lerp_to_gamma(SIDEBAR(), 0.62)
+    ACCENT().lerp_to_gamma(SIDEBAR(), 0.6)
 }
 pub fn MENTION_TEXT() -> Color32 {
-    BLURPLE().lerp_to_gamma(Color32::WHITE, 0.7)
+    ACCENT().lerp_to_gamma(Color32::WHITE, 0.7)
 }
-/// Discord's gold tint for messages that mention you.
+/// A gold tint for messages that mention you.
 pub fn MENTIONED_ROW() -> Color32 {
-    rgb(0xf0b232).lerp_to_gamma(CHAT(), 0.9)
+    YELLOW().lerp_to_gamma(CHAT(), 0.88)
 }
 pub fn MENTIONED_ROW_HOVER() -> Color32 {
-    rgb(0xf0b232).lerp_to_gamma(CHAT(), 0.87)
+    YELLOW().lerp_to_gamma(CHAT(), 0.84)
+}
+/// The outline for text fields and boxes.
+pub fn field_stroke() -> egui::Stroke {
+    egui::Stroke::new(1.0, BORDER())
 }
 
 /// Segoe Fluent Icons code points.
@@ -269,14 +190,14 @@ pub fn install(ctx: &egui::Context) {
         })
     };
 
-    let regular = add("segoe", "segoeui.ttf", 0);
-    let bold = add("segoe-bold", "segoeuib.ttf", 0);
-    let semibold = add("segoe-semibold", "seguisb.ttf", 0);
+    let regular = add("tahoma", "tahoma.ttf", 0);
+    let bold = add("tahoma-bold", "tahomabd.ttf", 0);
     let mono = add("consolas", "consola.ttf", 0);
     let icons = add("fluent-icons", "SegoeIcons.ttf", 0).or_else(|| add("mdl2", "segmdl2.ttf", 0));
-    // Fallbacks in order: symbols, emoji (drawn in one colour, like any text), then Simplified Chinese
+    // Fallbacks in order: Segoe UI (Tahoma lacks some punctuation and symbols), symbols, emoji (drawn in one colour, like any text), then Simplified Chinese
     // (covers most CJK), Japanese and Korean.
     let fallbacks: Vec<String> = [
+        add("segoe", "segoeui.ttf", 0),
         add("symbols", "seguisym.ttf", 0),
         add("emoji", "seguiemj.ttf", 0),
         add("yahei", "msyh.ttc", 0),
@@ -290,30 +211,32 @@ pub fn install(ctx: &egui::Context) {
     let family = |primary: Option<String>| -> Vec<String> { primary.into_iter().chain(fallbacks.iter().cloned()).collect() };
     fonts.families.insert(FontFamily::Proportional, family(regular.clone()));
     fonts.families.insert(FontFamily::Monospace, family(mono));
-    fonts.families.insert(self::bold(), family(bold.or(regular.clone())));
-    fonts.families.insert(self::semibold(), family(semibold.or(regular)));
+    fonts.families.insert(self::bold(), family(bold.clone().or(regular.clone())));
+    // Tahoma has no semibold; VGUI used its bold.
+    fonts.families.insert(self::semibold(), family(bold.clone().or(regular.clone())));
     fonts.families.insert(self::icons(), family(icons));
     ctx.set_fonts(fonts);
     apply_visuals(ctx);
 }
 
-/// Styles egui's own widgets in the current palette and accent (again after either changes).
-pub fn apply_visuals(ctx: &egui::Context) {
+/// Styles egui's own widgets as VGUI controls.
+fn apply_visuals(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);
     ctx.style_mut_of(egui::Theme::Dark, |style| {
         style.text_styles = [
-            (TextStyle::Small, font(12.0)),
-            (TextStyle::Body, font(15.0)),
-            (TextStyle::Button, font(14.0)),
-            (TextStyle::Heading, font_bold(20.0)),
+            (TextStyle::Small, font(11.5)),
+            (TextStyle::Body, font(14.0)),
+            (TextStyle::Button, font(13.5)),
+            (TextStyle::Heading, font_bold(18.0)),
             (TextStyle::Monospace, FontId::monospace(13.5)),
         ]
         .into();
         style.spacing.item_spacing = egui::vec2(6.0, 4.0);
-        style.spacing.button_padding = egui::vec2(10.0, 5.0);
-        style.spacing.scroll.bar_width = 8.0;
-        style.spacing.scroll.floating = true;
-        // Interface text keeps the arrow cursor, as in Discord; messages and profiles turn selection back on.
+        style.spacing.button_padding = egui::vec2(10.0, 4.0);
+        // Solid bars in their own gutter, not overlays.
+        style.spacing.scroll = egui::style::ScrollStyle::solid();
+        style.spacing.scroll.bar_width = 10.0;
+        // Interface text keeps the arrow cursor; messages and profiles turn selection back on.
         style.interaction.selectable_labels = false;
 
         let v = &mut style.visuals;
@@ -325,19 +248,51 @@ pub fn apply_visuals(ctx: &egui::Context) {
         v.faint_bg_color = SIDEBAR();
         v.code_bg_color = CODE_BG();
         v.hyperlink_color = LINK();
-        v.selection.bg_fill = BLURPLE().gamma_multiply(0.6);
-        v.window_corner_radius = 8.into();
-        v.menu_corner_radius = 6.into();
-        v.window_stroke = egui::Stroke::new(1.0, Color32::from_gray(30));
-        for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.noninteractive] {
-            w.corner_radius = 4.into();
+        v.selection.bg_fill = ACCENT().gamma_multiply(0.7);
+        v.selection.stroke = egui::Stroke::new(1.0, HEADER());
+        v.window_corner_radius = 0.into();
+        v.menu_corner_radius = 0.into();
+        v.window_stroke = field_stroke();
+        v.window_shadow = egui::Shadow::NONE;
+        v.popup_shadow = egui::Shadow::NONE;
+        // Buttons: a shade darker than the panel, outlined; brighter when pointed at, sunk when pressed.
+        let w = &mut v.widgets;
+        w.noninteractive.bg_fill = SIDEBAR();
+        w.noninteractive.bg_stroke = egui::Stroke::new(1.0, rgb(0x6e6f69));
+        w.noninteractive.fg_stroke = egui::Stroke::new(1.0, TEXT());
+        w.inactive.bg_fill = rgb(0x4e4f4a);
+        w.inactive.weak_bg_fill = rgb(0x4e4f4a);
+        w.inactive.bg_stroke = field_stroke();
+        w.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT());
+        w.hovered.bg_fill = rgb(0x5c5d58);
+        w.hovered.weak_bg_fill = rgb(0x5c5d58);
+        w.hovered.bg_stroke = egui::Stroke::new(1.0, rgb(0xc4c5be));
+        w.hovered.fg_stroke = egui::Stroke::new(1.0, HEADER());
+        w.active.bg_fill = RAIL();
+        w.active.weak_bg_fill = RAIL();
+        w.active.bg_stroke = egui::Stroke::new(1.0, rgb(0x2a2a28));
+        w.active.fg_stroke = egui::Stroke::new(1.0, HEADER());
+        w.open = w.active;
+        for s in [&mut w.noninteractive, &mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+            s.corner_radius = 0.into();
+            s.expansion = 0.0;
         }
-        v.widgets.inactive.weak_bg_fill = Color32::from_rgb(0x4e, 0x50, 0x58);
-        v.widgets.inactive.bg_fill = Color32::from_rgb(0x4e, 0x50, 0x58);
-        v.widgets.hovered.weak_bg_fill = Color32::from_rgb(0x5d, 0x60, 0x6b);
-        v.widgets.active.weak_bg_fill = Color32::from_rgb(0x6d, 0x6f, 0x78);
-        v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, Color32::from_rgb(0x3f, 0x41, 0x47));
     });
+}
+
+/// VGUI has no rounded corners: squares off every rectangle (panels, buttons, highlights, avatars) before
+/// it's drawn, wherever it came from.
+pub fn square_corners(shapes: &mut [egui::epaint::ClippedShape]) {
+    fn square(shape: &mut egui::Shape) {
+        match shape {
+            egui::Shape::Rect(r) => r.corner_radius = egui::CornerRadius::ZERO,
+            egui::Shape::Vec(v) => v.iter_mut().for_each(square),
+            _ => {}
+        }
+    }
+    for s in shapes {
+        square(&mut s.shape);
+    }
 }
 
 pub fn role_color(c: Option<u32>) -> Color32 {

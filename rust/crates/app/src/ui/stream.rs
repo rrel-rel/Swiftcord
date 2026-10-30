@@ -129,7 +129,7 @@ fn sound_menu(ui: &mut Ui, uis: &UiState, actions: &mut Vec<Action>) {
 pub fn return_bar(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) {
     let Some(view) = uis.stream.as_ref().filter(|v| !v.visible) else { return };
     let name = s.state.display_name(view.owner, view.guild);
-    egui::Panel::top("stream-return").frame(egui::Frame::new().fill(theme::BLURPLE().gamma_multiply(0.5)).inner_margin(egui::Margin::symmetric(12, 4))).show(ui, |ui| {
+    egui::Panel::top("stream-return").frame(egui::Frame::new().fill(theme::ACCENT().gamma_multiply(0.5)).inner_margin(egui::Margin::symmetric(12, 4))).show(ui, |ui| {
         // Buttons first, from the right, so a long name is cut short rather than pushing them out of view.
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

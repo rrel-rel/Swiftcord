@@ -159,9 +159,7 @@ fn span(ui: &mut Ui, s: &Span, cx: &mut Cx, size: f32) {
                         None if text != url => r.on_hover_text(url),
                         None => r,
                     };
-                    if r.hovered() {
-                        ui.painter().hline(r.rect.x_range(), r.rect.bottom() - 2.0, egui::Stroke::new(1.0, theme::LINK()));
-                    }
+                    ui.painter().hline(r.rect.x_range(), r.rect.bottom() - 2.0, egui::Stroke::new(1.0, theme::LINK()));
                     r
                 }
             };

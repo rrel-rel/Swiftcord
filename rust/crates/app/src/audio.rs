@@ -113,7 +113,7 @@ fn is_ogg_opus(a: &Attachment) -> bool {
 /// A round play / pause button (a spinner while loading); true when clicked.
 fn play_button(ui: &Ui, rect: Rect, id: egui::Id, paused: bool, loading: bool) -> egui::Response {
     let b = ui.interact(rect, id, Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-    let fill = if b.hovered() { theme::BLURPLE().gamma_multiply(0.85) } else { theme::BLURPLE() };
+    let fill = if b.hovered() { theme::ACCENT().gamma_multiply(0.85) } else { theme::ACCENT() };
     let c = rect.center();
     ui.painter().circle_filled(c, rect.width() / 2.0, fill);
     if loading {
@@ -207,7 +207,7 @@ impl AudioClips {
         egui::Frame::new().fill(theme::EMBED_BG()).corner_radius(6).inner_margin(10).stroke(egui::Stroke::new(1.0, theme::RAIL())).show(ui, |ui| {
             ui.set_width(380.0_f32.min(ui.available_width()));
             ui.horizontal(|ui| {
-                ui.label(RichText::new(icon::FILE).font(theme::icon_font(28.0)).color(theme::BLURPLE()));
+                ui.label(RichText::new(icon::FILE).font(theme::icon_font(28.0)).color(theme::ACCENT()));
                 ui.vertical(|ui| {
                     if ui.link(&a.filename).clicked() {
                         crate::platform::open_url(&a.url);
@@ -237,7 +237,7 @@ impl AudioClips {
             let hit = ui.interact(bar.expand2(Vec2::new(0.0, 8.0)), ui.scope_id().with(("af-bar", &a.url)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
             ui.painter().rect_filled(bar, 3, theme::RAIL());
             let filled = Rect::from_min_max(bar.min, egui::pos2(bar.left() + bar.width() * progress, bar.bottom()));
-            ui.painter().rect_filled(filled, 3, theme::BLURPLE());
+            ui.painter().rect_filled(filled, 3, theme::ACCENT());
             if hit.hovered() || started {
                 ui.painter().circle_filled(egui::pos2(filled.right(), bar.center().y), 6.0, Color32::WHITE);
             }

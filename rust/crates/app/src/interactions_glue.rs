@@ -243,7 +243,7 @@ pub fn modal_window(ui: &egui::Ui, uis: &mut UiState, actions: &mut Vec<Action>)
             }
             ui.add_space(10.0);
             ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 30.0), Layout::right_to_left(Align::Center), |ui| {
-                let submit = egui::Button::new(RichText::new(if m.busy { "Sending…" } else { "Submit" }).color(Color32::WHITE)).fill(theme::BLURPLE());
+                let submit = egui::Button::new(RichText::new(if m.busy { "Sending…" } else { "Submit" }).color(Color32::WHITE)).fill(theme::ACCENT());
                 if ui.add_enabled(!m.busy, submit).clicked() {
                     actions.push(Action::SubmitModal);
                 }

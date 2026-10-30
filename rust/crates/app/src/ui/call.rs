@@ -9,7 +9,6 @@ use crate::theme::{self, icon};
 use crate::ui::widgets;
 use crate::voice_glue::Status;
 
-const BG: Color32 = Color32::from_rgb(0x11, 0x12, 0x14);
 /// A camera in the DM call screen.
 const CAMERA_TILE: Vec2 = Vec2::new(256.0, 144.0);
 
@@ -32,7 +31,7 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, actions
         people.retain(|u| in_call.contains(&u.id) || ringing.contains(&u.id));
     }
 
-    egui::Panel::top(("call", channel.id)).frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::symmetric(16, 18))).show(ui, |ui| {
+    egui::Panel::top(("call", channel.id)).frame(egui::Frame::new().fill(theme::RAIL()).inner_margin(egui::Margin::symmetric(16, 18))).show(ui, |ui| {
         ui.vertical_centered(|ui| {
             ui.horizontal(|ui| {
                 let width: f32 = people.iter().map(|u| if in_call.contains(&u.id) && uis.cameras.contains_key(&u.id) { CAMERA_TILE.x } else { 96.0 } + 24.0).sum();
@@ -135,7 +134,7 @@ fn participant(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, u: &U
                 let r = widgets::user_avatar(ui, u, 80.0);
                 if !joined {
                     // Not in the call (yet): dimmed.
-                    ui.painter().circle_filled(r.rect.center(), 40.0, BG.gamma_multiply(0.6));
+                    ui.painter().circle_filled(r.rect.center(), 40.0, theme::RAIL().gamma_multiply(0.6));
                 }
                 if uis.speaking.contains(&u.id) && joined {
                     ui.painter().circle_stroke(r.rect.center(), 42.0, egui::Stroke::new(3.0, theme::GREEN()));
@@ -191,7 +190,7 @@ pub fn incoming(ui: &Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) 
             .order(egui::Order::Foreground)
             .anchor(Align2::CENTER_TOP, Vec2::new(0.0, 60.0 + i as f32 * 110.0))
             .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style()).fill(BG).corner_radius(10).inner_margin(14).show(ui, |ui| {
+                egui::Frame::popup(ui.style()).fill(theme::RAIL()).corner_radius(10).inner_margin(14).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         match c.recipients.first().filter(|_| c.recipients.len() == 1) {
                             Some(u) => {
@@ -199,7 +198,7 @@ pub fn incoming(ui: &Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) 
                             }
                             None => {
                                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), Sense::hover());
-                                ui.painter().circle_filled(rect.center(), 24.0, theme::BLURPLE());
+                                ui.painter().circle_filled(rect.center(), 24.0, theme::ACCENT());
                                 ui.painter().text(rect.center(), Align2::CENTER_CENTER, icon::PEOPLE, theme::icon_font(20.0), Color32::WHITE);
                             }
                         }

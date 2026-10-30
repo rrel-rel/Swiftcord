@@ -447,7 +447,7 @@ impl Videos {
             }
             let frac = p.dragging.unwrap_or((p.position as f64 / d as f64).clamp(0.0, 1.0) as f32);
             painter.rect_filled(track, 2, Color32::from_white_alpha(60));
-            painter.rect_filled(Rect::from_min_size(track.min, Vec2::new(track.width() * frac, 4.0)), 2, theme::BLURPLE());
+            painter.rect_filled(Rect::from_min_size(track.min, Vec2::new(track.width() * frac, 4.0)), 2, theme::ACCENT());
             if hit.hovered() || p.dragging.is_some() {
                 painter.circle_filled(egui::pos2(track.left() + track.width() * frac, cy), 6.0, Color32::WHITE);
             }

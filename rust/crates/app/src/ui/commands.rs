@@ -211,7 +211,7 @@ pub fn form(ui: &mut Ui, state: &State, channel: &Channel, draft: &mut CommandDr
             ui.label(RichText::new(e).color(theme::RED()));
         }
         ui.horizontal(|ui| {
-            let run = egui::Button::new(RichText::new(format!("Run /{}", draft.command.name)).color(Color32::WHITE)).fill(theme::BLURPLE());
+            let run = egui::Button::new(RichText::new(format!("Run /{}", draft.command.name)).color(Color32::WHITE)).fill(theme::ACCENT());
             if ui.add(run).clicked() {
                 result = FormResult::Run;
             }

@@ -87,7 +87,7 @@ fn member_row(ui: &Ui, state: &State, guild: Snowflake, user_id: Snowflake, rect
     let name_rect = Rect::from_min_size(egui::pos2(x, name_top), name.size());
     if user.bot {
         let pill = Rect::from_min_size(egui::pos2(name_rect.right() + 4.0, name_rect.center().y - 7.5), Vec2::new(26.0, 15.0));
-        ui.painter().rect_filled(pill, 3, dim(theme::BLURPLE()));
+        ui.painter().rect_filled(pill, 3, dim(theme::ACCENT()));
         ui.painter().text(pill.center(), Align2::CENTER_CENTER, "APP", theme::font_semibold(10.0), Color32::WHITE);
     }
     ui.painter().galley(name_rect.min, name, color);

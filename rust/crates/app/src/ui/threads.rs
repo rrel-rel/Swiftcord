@@ -145,7 +145,7 @@ pub fn forum(ui: &mut Ui, s: &Session, uis: &UiState, c: &Channel, actions: &mut
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if can_start_threads(&s.state, c) {
-                        let b = egui::Button::new(RichText::new("New Post").font(theme::font_semibold(14.0)).color(Color32::WHITE)).fill(theme::BLURPLE());
+                        let b = egui::Button::new(RichText::new("New Post").font(theme::font_semibold(14.0)).color(Color32::WHITE)).fill(theme::ACCENT());
                         if ui.add(b).clicked() {
                             actions.push(Action::StartThread { channel: c.id, message: None, name: String::new() });
                         }
@@ -236,7 +236,7 @@ pub fn prompt(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
             ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 32.0), Layout::right_to_left(Align::Center), |ui| {
                 let ready = !p.name.trim().is_empty() && (!p.forum || !p.content.trim().is_empty()) && !p.busy;
                 let label = if p.forum { "Post" } else { "Create" };
-                let go = egui::Button::new(RichText::new(label).color(Color32::WHITE)).fill(theme::BLURPLE());
+                let go = egui::Button::new(RichText::new(label).color(Color32::WHITE)).fill(theme::ACCENT());
                 submit |= ui.add_enabled(ready, go).clicked();
                 if ui.button("Cancel").clicked() {
                     actions.push(Action::CloseThreadPrompt);

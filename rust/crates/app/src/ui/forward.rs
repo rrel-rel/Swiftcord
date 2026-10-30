@@ -92,7 +92,7 @@ pub fn show(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) 
         ui.add_space(10.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let label = if fwd.picked.len() > 1 { format!("Send ({})", fwd.picked.len()) } else { "Send".to_owned() };
-            let send = egui::Button::new(RichText::new(label).color(Color32::WHITE)).fill(theme::BLURPLE()).min_size(Vec2::new(90.0, 32.0));
+            let send = egui::Button::new(RichText::new(label).color(Color32::WHITE)).fill(theme::ACCENT()).min_size(Vec2::new(90.0, 32.0));
             if ui.add_enabled(!fwd.picked.is_empty(), send).clicked() {
                 actions.push(Action::Forward { channel: fwd.channel, message: fwd.message, to: fwd.picked.clone(), note: fwd.note.trim().to_owned() });
                 close = true;
@@ -147,7 +147,7 @@ fn destination_row(ui: &mut Ui, state: &State, c: &Channel, picked: bool) -> egu
     // The tick circle on the right.
     let tick = rect.right_center() - Vec2::new(18.0, 0.0);
     if picked {
-        p.circle_filled(tick, 9.0, theme::BLURPLE());
+        p.circle_filled(tick, 9.0, theme::ACCENT());
         p.text(tick, egui::Align2::CENTER_CENTER, "✔", theme::font_bold(11.0), Color32::WHITE);
     } else {
         p.circle_stroke(tick, 9.0, egui::Stroke::new(1.5, theme::MUTED()));

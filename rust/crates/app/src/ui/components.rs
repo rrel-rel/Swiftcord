@@ -173,10 +173,10 @@ fn button(ui: &mut Ui, c: &Component, msg: &Message, cx: &mut Ctx) {
     let style = c.style.unwrap_or(2);
     let waiting = c.custom_id.as_deref().is_some_and(|id| cx.uis.interactions.is_pending(msg.id, id));
     let fill = match style {
-        1 | 6 => theme::BLURPLE(),
+        1 | 6 => theme::ACCENT(),
         3 => Color32::from_rgb(0x24, 0x80, 0x46),
         4 => Color32::from_rgb(0xda, 0x37, 0x3c),
-        _ => Color32::from_rgb(0x4e, 0x50, 0x58),
+        _ => theme::HOVER(),
     };
     let mut label = c.label.clone().unwrap_or_default();
     if style == 5 {
