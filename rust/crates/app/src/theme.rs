@@ -274,9 +274,11 @@ pub fn install(ctx: &egui::Context) {
     let semibold = add("segoe-semibold", "seguisb.ttf", 0);
     let mono = add("consolas", "consola.ttf", 0);
     let icons = add("fluent-icons", "SegoeIcons.ttf", 0).or_else(|| add("mdl2", "segmdl2.ttf", 0));
-    // Fallbacks in order: symbols, then Simplified Chinese (covers most CJK), Japanese and Korean.
+    // Fallbacks in order: symbols, emoji (drawn in one colour, like any text), then Simplified Chinese
+    // (covers most CJK), Japanese and Korean.
     let fallbacks: Vec<String> = [
         add("symbols", "seguisym.ttf", 0),
+        add("emoji", "seguiemj.ttf", 0),
         add("yahei", "msyh.ttc", 0),
         add("yugothic", "YuGothM.ttc", 0),
         add("malgun", "malgun.ttf", 0),
@@ -285,17 +287,12 @@ pub fn install(ctx: &egui::Context) {
     .flatten()
     .collect();
 
-    // egui's bundled fonts stay at the end of each list as a last resort (and for its own icons).
-    let builtin_prop = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    let builtin_mono = fonts.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
-    let family = |primary: Option<String>, builtin: &[String]| -> Vec<String> {
-        primary.into_iter().chain(fallbacks.iter().cloned()).chain(builtin.iter().cloned()).collect()
-    };
-    fonts.families.insert(FontFamily::Proportional, family(regular.clone(), &builtin_prop));
-    fonts.families.insert(FontFamily::Monospace, family(mono, &builtin_mono));
-    fonts.families.insert(self::bold(), family(bold.or(regular.clone()), &builtin_prop));
-    fonts.families.insert(self::semibold(), family(semibold.or(regular), &builtin_prop));
-    fonts.families.insert(self::icons(), icons.into_iter().chain(builtin_prop.iter().cloned()).collect());
+    let family = |primary: Option<String>| -> Vec<String> { primary.into_iter().chain(fallbacks.iter().cloned()).collect() };
+    fonts.families.insert(FontFamily::Proportional, family(regular.clone()));
+    fonts.families.insert(FontFamily::Monospace, family(mono));
+    fonts.families.insert(self::bold(), family(bold.or(regular.clone())));
+    fonts.families.insert(self::semibold(), family(semibold.or(regular)));
+    fonts.families.insert(self::icons(), family(icons));
     ctx.set_fonts(fonts);
     apply_visuals(ctx);
 }

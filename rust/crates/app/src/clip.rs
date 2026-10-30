@@ -449,7 +449,8 @@ mod tests {
         let stop = std::sync::atomic::AtomicBool::new(false);
         let img = first_frame(&bytes, 400).expect("decode");
         let rgba: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();
-        image::save_buffer(format!("{path}.png"), &rgba, img.size[0] as u32, img.size[1] as u32, image::ExtendedColorType::Rgba8).unwrap();
+        let png = crate::platform::wic::encode_png(&crate::platform::wic::Rgba { width: img.size[0] as u32, height: img.size[1] as u32, pixels: rgba }).unwrap();
+        std::fs::write(format!("{path}.png"), png).unwrap();
         let _ = (frame, stop);
     }
 }

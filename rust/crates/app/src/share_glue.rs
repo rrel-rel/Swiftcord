@@ -228,14 +228,16 @@ fn send_preview(app: &mut App, p: &swiftcord_voice::video::Picture) {
     }
     sh.preview_sent = Some(std::time::Instant::now());
     let key = sh.key.clone();
-    let Some(rgba) = image::RgbaImage::from_raw(p.width as u32, p.height as u32, p.rgba.clone()) else { return };
+    let rgba = crate::platform::wic::Rgba { width: p.width as u32, height: p.height as u32, pixels: p.rgba.clone() };
+    if rgba.pixels.len() != (rgba.width * rgba.height * 4) as usize {
+        return;
+    }
     let Some(s) = &app.session else { return };
     let rest = s.rest.clone();
     app.spawn(async move {
         let jpeg = tokio::task::spawn_blocking(move || {
-            let small = image::DynamicImage::ImageRgba8(rgba).thumbnail(512, 288).to_rgb8();
-            let mut out = Vec::new();
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 75).encode_image(&small).ok().map(|()| out)
+            let small = crate::platform::wic::fit(&rgba, 512, 288).ok()?;
+            crate::platform::wic::encode_jpeg(&small, 0.75).ok()
         })
         .await
         .ok()

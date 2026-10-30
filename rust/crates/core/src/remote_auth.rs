@@ -7,8 +7,6 @@ use std::time::Duration;
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use futures_util::{SinkExt, StreamExt};
-use rsa::pkcs8::EncodePublicKey;
-use rsa::{Oaep, RsaPrivateKey};
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -63,17 +61,17 @@ where
     }
 }
 
-type BoxErr = Box<dyn std::error::Error + Send + Sync>;
+use crate::rsa_key::{BoxErr, KeyPair};
 
 async fn session<F, Fut>(tx: &mpsc::UnboundedSender<RemoteAuthEvent>, solve: F) -> Result<(), BoxErr>
 where
     F: Fn(Captcha) -> Fut,
     Fut: Future<Output = Option<String>>,
 {
-    let key = tokio::task::spawn_blocking(|| RsaPrivateKey::new(&mut rand::thread_rng(), 2048)).await??;
-    let public_der = key.to_public_key().to_public_key_der()?;
+    let key = tokio::task::spawn_blocking(KeyPair::generate).await??;
+    let public_der = key.public_key_der()?;
     let decrypt = |b64: &str| -> Result<Vec<u8>, BoxErr> {
-        Ok(key.decrypt(Oaep::new::<Sha256>(), &STANDARD.decode(b64)?)?)
+        key.decrypt(&STANDARD.decode(b64)?)
     };
 
     let mut request = URL.into_client_request()?;
@@ -99,7 +97,7 @@ where
                     "hello" => {
                         let iv = Duration::from_millis(msg.heartbeat_interval.unwrap_or(41_250));
                         heartbeat = interval_at(Instant::now() + iv, iv);
-                        let init = json!({ "op": "init", "encoded_public_key": STANDARD.encode(public_der.as_bytes()) });
+                        let init = json!({ "op": "init", "encoded_public_key": STANDARD.encode(&public_der) });
                         ws.send(WsMessage::text(init.to_string())).await?;
                     }
                     "nonce_proof" => {

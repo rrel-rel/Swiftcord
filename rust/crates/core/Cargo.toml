@@ -18,6 +18,12 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 tracing.workspace = true
-rsa = "0.9"
 sha2 = "0.10"
 unicode-segmentation = "1"
+
+# QR login's RSA key: Windows' CNG there, the rsa crate elsewhere.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
+[target.'cfg(not(windows))'.dependencies]
+rsa = "0.9"

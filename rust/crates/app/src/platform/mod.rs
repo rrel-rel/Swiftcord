@@ -1,9 +1,12 @@
 pub mod captcha_webview;
+pub mod clipboard;
 pub mod credentials;
 pub mod d3d11;
 pub mod inline_player;
 pub mod login_webview;
 pub mod video_window;
+pub mod webview_window;
+pub mod wic;
 
 use std::path::PathBuf;
 

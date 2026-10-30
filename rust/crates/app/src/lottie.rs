@@ -136,6 +136,7 @@ mod tests {
         let img = a.render(a.composition.frames.start + 10.0, 160);
         println!("rendered in {:?}", t.elapsed());
         let rgba: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_srgba_unmultiplied()).collect();
-        image::save_buffer(format!("{path}.png"), &rgba, 160, 160, image::ExtendedColorType::Rgba8).unwrap();
+        let png = crate::platform::wic::encode_png(&crate::platform::wic::Rgba { width: 160, height: 160, pixels: rgba }).unwrap();
+        std::fs::write(format!("{path}.png"), png).unwrap();
     }
 }

@@ -87,19 +87,16 @@ pub const STILL: &str = "still+";
 pub const KEEP: &str = "keep+";
 
 fn first_frame_png(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    // MP4 clips (an "ftyp" box first) go through the video decoder; everything else through the image crate.
+    use crate::platform::wic;
+    // MP4 clips (an "ftyp" box first) go through the video decoder; everything else through WIC.
     let img = if bytes.get(4..8) == Some(b"ftyp") {
-        let frame = crate::clip::first_frame(bytes, 320).ok_or("undecodable video")?;
-        let rgba: Vec<u8> = frame.pixels.iter().flat_map(|c| c.to_array()).collect();
-        image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(frame.size[0] as u32, frame.size[1] as u32, rgba).ok_or("bad frame")?)
+        wic::Rgba::from_color_image(&crate::clip::first_frame(bytes, 320).ok_or("undecodable video")?)
     } else {
-        image::load_from_memory(bytes).map_err(|e| e.to_string())?
+        wic::decode(bytes)?
     };
     // Previews are small on screen; cap their size too.
-    let img = if img.width() > 320 { img.thumbnail(320, 320) } else { img };
-    let mut out = std::io::Cursor::new(Vec::new());
-    img.write_to(&mut out, image::ImageFormat::Png).map_err(|e| e.to_string())?;
-    Ok(out.into_inner())
+    let img = if img.width > 320 { wic::fit(&img, 320, 320)? } else { img };
+    wic::encode_png(&img)
 }
 
 async fn fetch(http: &reqwest::Client, uri: &str, disk: Option<PathBuf>) -> Result<File, String> {

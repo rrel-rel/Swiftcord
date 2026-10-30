@@ -25,8 +25,8 @@ A lightweight native Discord client for Windows 11, written in Rust with [egui](
 ## Build
 
 Needs Rust (stable) and the MSVC build tools with the Windows SDK. There are no other native dependencies: Opus is
-the transpiled [unsafe-libopus](https://crates.io/crates/unsafe-libopus), TLS is Windows' SChannel, and fonts and
-icons are Windows' own.
+the transpiled [unsafe-libopus](https://crates.io/crates/unsafe-libopus), and the rest is Windows' own: Direct3D 11
+for drawing, WIC for images, SChannel for TLS, CNG for QR login's key, the clipboard, and fonts and icons.
 
 ```powershell
 cargo run -p swiftcord              # debug

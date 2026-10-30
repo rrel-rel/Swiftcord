@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use egui::{self, Color32, ColorImage, Rect, TextureHandle, TextureOptions, Vec2};
+use egui::{self, Color32, Rect, TextureHandle, TextureOptions, Vec2};
 use parking_lot::Mutex;
 use serde::Deserialize;
 
@@ -111,8 +111,7 @@ fn load(ctx: &egui::Context, version: &str, cell: u32) {
             }
         };
         let image = tokio::task::spawn_blocking(move || {
-            let rgba = image::load_from_memory(&bytes?).ok()?.to_rgba8();
-            Some(ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw()))
+            crate::platform::wic::decode(&bytes?).ok().map(|img| img.to_color_image())
         })
         .await
         .ok()

@@ -389,7 +389,7 @@ impl App {
         let settings = crate::settings::Settings::load();
         crate::theme::set(settings.palette, settings.accent);
         crate::theme::install(&ctx);
-        egui_extras::install_image_loaders(&ctx);
+        ctx.add_image_loader(std::sync::Arc::new(crate::image_decode::WicLoader::new(rt.clone())));
         let images = crate::image_cache::install(&ctx);
         let cache = platform::data_dir().join("cache").join("media");
         ctx.add_bytes_loader(std::sync::Arc::new(crate::media::MediaLoader::new(rt.clone(), cache)));
@@ -1902,12 +1902,7 @@ impl App {
 
 /// A pasted clipboard image as PNG bytes, to upload.
 fn pasted_png(image: &egui::ColorImage) -> Result<Vec<u8>, String> {
-    let [w, h] = image.size;
-    let rgba: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_srgba_unmultiplied()).collect();
-    let img = image::RgbaImage::from_raw(w as u32, h as u32, rgba).ok_or("the image is malformed")?;
-    let mut out = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(img).write_to(&mut out, image::ImageFormat::Png).map_err(|e| e.to_string())?;
-    Ok(out.into_inner())
+    platform::wic::encode_png(&platform::wic::Rgba::from_color_image(image))
 }
 
 #[cfg(test)]
@@ -1918,8 +1913,8 @@ mod tests {
     fn a_pasted_image_round_trips_through_png() {
         let pixels = vec![egui::Color32::from_rgb(200, 30, 90); 6];
         let png = pasted_png(&egui::ColorImage::new([3, 2], pixels)).unwrap();
-        let back = image::load_from_memory(&png).unwrap().to_rgba8();
-        assert_eq!(back.dimensions(), (3, 2));
-        assert_eq!(back.get_pixel(2, 1).0, [200, 30, 90, 255]);
+        let back = platform::wic::decode(&png).unwrap();
+        assert_eq!((back.width, back.height), (3, 2));
+        assert_eq!(&back.pixels[20..24], &[200, 30, 90, 255]);
     }
 }

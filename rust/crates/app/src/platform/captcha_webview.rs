@@ -7,9 +7,6 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
 use swiftcord_core::rest::Captcha;
-use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoopBuilder};
-use tao::window::WindowBuilder;
 use webview2_com::Microsoft::Web::WebView2::Win32::{COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT, ICoreWebView2WebResourceResponse};
 use webview2_com::WebResourceRequestedEventHandler;
 use windows::Win32::UI::Shell::SHCreateMemStream;
@@ -56,39 +53,26 @@ pub fn run_child() -> ! {
     // Keep "</script>" in the data from ending the script early.
     let page = PAGE.replace("__PARAMS__", &params.to_string().replace("</", "<\\/"));
 
-    let event_loop = EventLoopBuilder::<String>::with_user_event().build();
-    let proxy = event_loop.create_proxy();
-    let window = WindowBuilder::new()
-        .with_title("Captcha — Swiftcord")
-        .with_inner_size(tao::dpi::LogicalSize::new(520.0, 640.0))
-        .build(&event_loop)
-        .expect("captcha window");
-
-    // Kept between runs: hCaptcha goes easier on a browser it has seen before.
-    let mut context = wry::WebContext::new(Some(super::data_dir().join("WebView2-captcha")));
-    let webview = WebViewBuilder::new_with_web_context(&mut context)
-        .with_ipc_handler(move |req| {
-            let _ = proxy.send_event(req.body().clone());
-        })
-        .with_devtools(false)
-        .build(&window)
-        .expect("WebView2 is required for the captcha");
-    serve_page(&webview, page).expect("captcha page");
-    webview.load_url(PAGE_URL).expect("captcha page");
-
-    event_loop.run(move |event, _, flow| {
-        *flow = ControlFlow::Wait;
-        match event {
-            Event::UserEvent(answer) => {
-                let mut out = std::io::stdout();
-                let _ = writeln!(out, "{ANSWER_PREFIX}{answer}");
-                let _ = out.flush();
-                *flow = ControlFlow::Exit;
-            }
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => *flow = ControlFlow::Exit,
-            _ => {}
-        }
-    })
+    let answer = super::webview_window::run("Captcha — Swiftcord", (520.0, 640.0), |window, proxy| {
+        // Kept between runs: hCaptcha goes easier on a browser it has seen before.
+        let mut context = wry::WebContext::new(Some(super::data_dir().join("WebView2-captcha")));
+        let webview = WebViewBuilder::new_with_web_context(&mut context)
+            .with_ipc_handler(move |req| {
+                let _ = proxy.send_event(req.body().clone());
+            })
+            .with_devtools(false)
+            .build(window)
+            .expect("WebView2 is required for the captcha");
+        serve_page(&webview, page).expect("captcha page");
+        webview.load_url(PAGE_URL).expect("captcha page");
+        (context, webview)
+    });
+    if let Some(answer) = answer {
+        let mut out = std::io::stdout();
+        let _ = writeln!(out, "{ANSWER_PREFIX}{answer}");
+        let _ = out.flush();
+    }
+    std::process::exit(0)
 }
 
 /// Answers the webview's request for [`PAGE_URL`] with `page` instead of going to the network.

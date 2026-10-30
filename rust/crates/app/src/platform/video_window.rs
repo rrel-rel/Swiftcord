@@ -4,9 +4,6 @@
 
 use std::process::Command;
 
-use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoop};
-use tao::window::WindowBuilder;
 use wry::{WebViewBuilder, WebViewBuilderExtWindows};
 
 pub const ARG: &str = "--video-window";
@@ -56,45 +53,36 @@ pub fn run_child() -> ! {
     let title = args.next().filter(|t| !t.is_empty()).unwrap_or_else(|| "Video".into());
     let home = site(&url).unwrap_or_default().to_owned();
 
-    let event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
-        .with_title(format!("{title} — Swiftcord"))
-        .with_inner_size(tao::dpi::LogicalSize::new(854.0, 480.0))
-        .build(&event_loop)
-        .expect("video window");
-    let data_dir = crate::platform::data_dir().join("WebView2-video");
-    let mut context = wry::WebContext::new(Some(data_dir));
-    // Players refuse to load without a page embedding them (YouTube's "Error 153"), so the player goes in an
-    // iframe on a page of our own, served from a private scheme (https://swiftcord.localhost/ in WebView2).
-    let page = player_page(&url);
-    let _webview = WebViewBuilder::new_with_web_context(&mut context)
-        .with_custom_protocol("swiftcord".into(), move |_, _| {
-            wry::http::Response::builder().header("Content-Type", "text/html; charset=utf-8").body(std::borrow::Cow::Owned(page.clone().into_bytes())).expect("response")
-        })
-        .with_https_scheme(true)
-        .with_url("https://swiftcord.localhost/")
-        // Stay on our page and the video's site; anything else opens in the browser.
-        .with_navigation_handler(move |to| {
-            let ok = site(&to).is_some_and(|s| s == "swiftcord.localhost" || s == home || s.ends_with(&format!(".{home}")));
-            if !ok {
+    super::webview_window::run(&format!("{title} — Swiftcord"), (854.0, 480.0), |window, _| {
+        let data_dir = crate::platform::data_dir().join("WebView2-video");
+        let mut context = wry::WebContext::new(Some(data_dir));
+        // Players refuse to load without a page embedding them (YouTube's "Error 153"), so the player goes in
+        // an iframe on a page of our own, served from a private scheme (https://swiftcord.localhost/ in WebView2).
+        let page = player_page(&url);
+        let webview = WebViewBuilder::new_with_web_context(&mut context)
+            .with_custom_protocol("swiftcord".into(), move |_, _| {
+                wry::http::Response::builder().header("Content-Type", "text/html; charset=utf-8").body(std::borrow::Cow::Owned(page.clone().into_bytes())).expect("response")
+            })
+            .with_https_scheme(true)
+            .with_url("https://swiftcord.localhost/")
+            // Stay on our page and the video's site; anything else opens in the browser.
+            .with_navigation_handler(move |to| {
+                let ok = site(&to).is_some_and(|s| s == "swiftcord.localhost" || s == home || s.ends_with(&format!(".{home}")));
+                if !ok {
+                    crate::platform::open_url(&to);
+                }
+                ok
+            })
+            .with_new_window_req_handler(|to, _| {
                 crate::platform::open_url(&to);
-            }
-            ok
-        })
-        .with_new_window_req_handler(|to, _| {
-            crate::platform::open_url(&to);
-            wry::NewWindowResponse::Deny
-        })
-        .with_devtools(false)
-        .build(&window)
-        .expect("WebView2 is required for the video window");
-
-    event_loop.run(move |event, _, flow| {
-        *flow = ControlFlow::Wait;
-        if let Event::WindowEvent { event: WindowEvent::CloseRequested, .. } = event {
-            *flow = ControlFlow::Exit;
-        }
-    })
+                wry::NewWindowResponse::Deny
+            })
+            .with_devtools(false)
+            .build(window)
+            .expect("WebView2 is required for the video window");
+        (context, webview)
+    });
+    std::process::exit(0)
 }
 
 #[cfg(test)]

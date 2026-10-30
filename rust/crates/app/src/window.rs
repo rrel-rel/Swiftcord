@@ -8,11 +8,14 @@ use std::time::Instant;
 use egui::{ViewportId, ViewportInfo};
 use egui_winit::ActionRequested;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::platform::windows::IconExtWindows;
 use winit::raw_window_handle::{HandleError, HasWindowHandle, RawWindowHandle, WindowHandle};
 use winit::window::{Window, WindowId};
 
+use crate::platform::clipboard;
 use crate::platform::d3d11::Painter;
 
 pub trait App {
@@ -66,6 +69,7 @@ struct AppWindow {
     info: ViewportInfo,
     actions: Vec<ActionRequested>,
     shown: bool,
+    modifiers: ModifiersState,
 }
 
 impl ApplicationHandler<Instant> for Shell {
@@ -110,7 +114,15 @@ impl ApplicationHandler<Instant> for Shell {
                     event_loop.exit();
                 }
             }
+            WindowEvent::KeyboardInput { event: key, .. } if is_paste(&key, w.modifiers) => {
+                // egui-winit's own clipboard is off (it would bring in arboard), so pasting is done here.
+                w.paste();
+                w.window.request_redraw();
+            }
             event => {
+                if let WindowEvent::ModifiersChanged(m) = &event {
+                    w.modifiers = m.state();
+                }
                 if w.egui_winit.on_window_event(&w.window, &event).repaint {
                     w.window.request_redraw();
                 }
@@ -136,6 +148,8 @@ impl ApplicationHandler<Instant> for Shell {
 impl AppWindow {
     fn new(ctx: &egui::Context, event_loop: &ActiveEventLoop, viewport: egui::ViewportBuilder) -> anyhow::Result<Self> {
         let window = Arc::new(egui_winit::create_window(ctx, event_loop, &viewport.with_visible(false))?);
+        // The exe's own icon (resource 1, embedded by build.rs).
+        window.set_window_icon(winit::window::Icon::from_resource(1, None).ok());
         center(&window);
         let RawWindowHandle::Win32(handle) = window.window_handle()?.as_raw() else {
             anyhow::bail!("not a Win32 window");
@@ -153,7 +167,7 @@ impl AppWindow {
         );
         let mut info = ViewportInfo::default();
         egui_winit::update_viewport_info(&mut info, ctx, &window, true);
-        Ok(Self { window, egui_winit, painter, info, actions: Vec::new(), shown: false })
+        Ok(Self { window, egui_winit, painter, info, actions: Vec::new(), shown: false, modifiers: ModifiersState::empty() })
     }
 
     /// One frame: input in, the app's logic and UI, then drawing. Minimized, only the logic runs.
@@ -167,7 +181,7 @@ impl AppWindow {
         let size = self.window.inner_size();
         if self.shown && (self.window.is_minimized() == Some(true) || size.width == 0 || size.height == 0) {
             let output = ctx.run_logic(&input, |ctx| app.logic(ctx, &mut frame));
-            self.egui_winit.handle_platform_output(&self.window, output.platform_output);
+            self.handle_platform_output(output.platform_output);
             for (id, commands) in output.viewport_commands {
                 if id == ViewportId::ROOT {
                     egui_winit::process_viewport_commands(ctx, &mut self.info, commands, &self.window, &mut self.actions);
@@ -180,7 +194,7 @@ impl AppWindow {
             app.logic(ui.ctx(), &mut frame);
             app.ui(ui, &mut frame);
         });
-        self.egui_winit.handle_platform_output(&self.window, output.platform_output);
+        self.handle_platform_output(output.platform_output);
         let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
         let clear = ctx.global_style().visuals.panel_fill.to_normalized_gamma_f32();
         self.painter.resize([size.width, size.height])?;
@@ -195,20 +209,58 @@ impl AppWindow {
             egui_winit::process_viewport_commands(ctx, &mut self.info, root.commands.clone(), &self.window, &mut self.actions);
         }
         for action in std::mem::take(&mut self.actions) {
-            let event = match action {
-                ActionRequested::Cut => egui::Event::Cut,
-                ActionRequested::Copy => egui::Event::Copy,
-                ActionRequested::Paste => match self.egui_winit.clipboard_text() {
-                    Some(text) => egui::Event::Paste(text),
-                    None => continue,
-                },
+            match action {
+                ActionRequested::Cut => self.egui_winit.egui_input_mut().events.push(egui::Event::Cut),
+                ActionRequested::Copy => self.egui_winit.egui_input_mut().events.push(egui::Event::Copy),
+                ActionRequested::Paste => self.paste(),
                 _ => continue,
-            };
-            self.egui_winit.egui_input_mut().events.push(event);
+            }
             self.window.request_redraw();
         }
         Ok(())
     }
+
+    /// Copying goes to the Windows clipboard; the rest (cursor, IME, links) is egui-winit's.
+    fn handle_platform_output(&mut self, mut output: egui::PlatformOutput) {
+        output.commands.retain(|command| match command {
+            egui::OutputCommand::CopyText(text) => {
+                clipboard::set_text(text);
+                false
+            }
+            egui::OutputCommand::CopyImage(image) => {
+                clipboard::set_image(image);
+                false
+            }
+            _ => true,
+        });
+        self.egui_winit.handle_platform_output(&self.window, output);
+    }
+
+    /// Text if the clipboard has any, otherwise an image (a screenshot, say).
+    fn paste(&mut self) {
+        let event = match clipboard::get_text().filter(|t| !t.is_empty()) {
+            Some(text) => egui::Event::Paste(text.replace("\r\n", "\n")),
+            None => match clipboard::get_image() {
+                Some(image) => egui::Event::PasteImage(image),
+                None => return,
+            },
+        };
+        self.egui_winit.egui_input_mut().events.push(event);
+    }
+}
+
+/// Ctrl+V, Shift+Insert, or a keyboard's Paste key.
+fn is_paste(key: &KeyEvent, modifiers: ModifiersState) -> bool {
+    if key.state != ElementState::Pressed {
+        return false;
+    }
+    let ctrl_only = modifiers.control_key() && !modifiers.alt_key() && !modifiers.shift_key() && !modifiers.super_key();
+    let v = match &key.logical_key {
+        Key::Character(c) => c.eq_ignore_ascii_case("v"),
+        _ => key.physical_key == PhysicalKey::Code(KeyCode::KeyV),
+    };
+    let insert = key.logical_key == Key::Named(NamedKey::Insert);
+    key.logical_key == Key::Named(NamedKey::Paste) || (ctrl_only && v) || (modifiers == ModifiersState::SHIFT && insert)
 }
 
 /// Centers the window on its monitor.

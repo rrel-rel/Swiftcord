@@ -5,6 +5,7 @@ mod app;
 mod clip;
 mod demo;
 mod emoji_sheet;
+mod image_decode;
 mod inbox_glue;
 mod interactions_glue;
 mod lottie;
@@ -30,24 +31,23 @@ use std::fs::{self, File};
 use std::sync::Mutex;
 
 
-/// The window and taskbar icon (otherwise winit shows a generic one).
-fn window_icon() -> std::sync::Arc<egui::IconData> {
-    let icon = image::load_from_memory(include_bytes!("../assets/icon.png")).map(|i| i.to_rgba8()).ok();
-    std::sync::Arc::new(icon.map_or_else(egui::IconData::default, |i| egui::IconData { width: i.width(), height: i.height(), rgba: i.into_raw() }))
-}
-
 fn init_logging() {
     let dir = platform::data_dir().join("logs");
     let _ = fs::create_dir_all(&dir);
     let path = dir.join("swiftcord.log");
     // Keep the previous run's log for bug reports.
     let _ = fs::rename(&path, dir.join("swiftcord.old.log"));
-    let filter = tracing_subscriber::EnvFilter::try_from_env("SWIFTCORD_LOG")
-        .unwrap_or_else(|_| "info".into());
-    let builder = tracing_subscriber::fmt().with_env_filter(filter).with_ansi(false).with_target(false);
+    // SWIFTCORD_LOG takes "debug", or per-module levels like "info,swiftcord=debug".
+    let filter: tracing_subscriber::filter::Targets = std::env::var("SWIFTCORD_LOG")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| tracing_subscriber::filter::Targets::new().with_default(tracing::Level::INFO));
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    let layer = tracing_subscriber::fmt::layer().with_ansi(false).with_target(false);
     match File::create(&path) {
-        Ok(f) => builder.with_writer(Mutex::new(f)).init(),
-        Err(_) => builder.init(),
+        Ok(f) => tracing_subscriber::registry().with(layer.with_writer(Mutex::new(f))).with(filter).init(),
+        Err(_) => tracing_subscriber::registry().with(layer).with(filter).init(),
     }
     std::panic::set_hook(Box::new(|info| {
         tracing::error!("panic: {info}\n{}", std::backtrace::Backtrace::force_capture());
@@ -80,8 +80,7 @@ fn main() -> anyhow::Result<()> {
     let viewport = egui::ViewportBuilder::default()
         .with_title("Swiftcord")
         .with_inner_size([1100.0, 680.0])
-        .with_min_inner_size([760.0, 460.0])
-        .with_icon(window_icon());
+        .with_min_inner_size([760.0, 460.0]);
     let handle = rt.handle().clone();
     let _ = clip::RUNTIME.set(handle.clone());
     let result = window::run(viewport, move |ctx| Box::new(app::App::new(ctx, handle)));

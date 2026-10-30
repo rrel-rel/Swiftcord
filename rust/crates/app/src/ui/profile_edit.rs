@@ -210,8 +210,9 @@ pub fn prepare_image(bytes: &[u8], kind: ImageKind) -> Result<(String, ColorImag
     if bytes.len() > MAX_BYTES {
         return Err("That image is over 10 MB.".into());
     }
-    let img = image::load_from_memory(bytes).map_err(|_| "That file isn't an image Discord can use.".to_owned())?;
-    let (w, h) = (img.width(), img.height());
+    use crate::platform::wic;
+    let img = wic::decode(bytes).map_err(|_| "That file isn't an image Discord can use.".to_owned())?;
+    let (w, h) = (img.width, img.height);
     let (cw, ch, max_w) = match kind {
         ImageKind::Avatar => {
             let side = w.min(h);
@@ -223,17 +224,15 @@ pub fn prepare_image(bytes: &[u8], kind: ImageKind) -> Result<(String, ColorImag
             (cw, cw * 2 / 5, 1500)
         }
     };
-    let cropped = img.crop_imm((w - cw) / 2, (h - ch) / 2, cw, ch);
-    let preview = cropped.thumbnail(256, 256).to_rgba8();
-    let preview = ColorImage::from_rgba_unmultiplied([preview.width() as usize, preview.height() as usize], preview.as_raw());
+    let cropped = img.crop((w - cw) / 2, (h - ch) / 2, cw, ch);
+    let preview = wic::fit(&cropped, 256, 256)?.to_color_image();
     let b64 = base64::engine::general_purpose::STANDARD;
     if bytes.starts_with(b"GIF8") {
         return Ok((format!("data:image/gif;base64,{}", b64.encode(bytes)), preview));
     }
-    let resized = if cw > max_w { cropped.resize_exact(max_w, max_w * ch / cw.max(1), image::imageops::FilterType::Triangle) } else { cropped };
-    let mut png = std::io::Cursor::new(Vec::new());
-    resized.write_to(&mut png, image::ImageFormat::Png).map_err(|e| e.to_string())?;
-    Ok((format!("data:image/png;base64,{}", b64.encode(png.into_inner())), preview))
+    let resized = if cw > max_w { wic::resize(&cropped, max_w, max_w * ch / cw.max(1))? } else { cropped };
+    let png = wic::encode_png(&resized)?;
+    Ok((format!("data:image/png;base64,{}", b64.encode(png)), preview))
 }
 
 /// Applies a picked image to the tab it was picked for.
@@ -486,10 +485,9 @@ mod tests {
 
     #[test]
     fn banners_are_cropped_to_five_by_two() {
-        let img = image::RgbaImage::from_pixel(1000, 1000, image::Rgba([10, 20, 30, 255]));
-        let mut png = std::io::Cursor::new(Vec::new());
-        image::DynamicImage::ImageRgba8(img).write_to(&mut png, image::ImageFormat::Png).unwrap();
-        let (uri, preview) = prepare_image(&png.into_inner(), ImageKind::Banner).unwrap();
+        let img = crate::platform::wic::Rgba { width: 1000, height: 1000, pixels: [10, 20, 30, 255].repeat(1000 * 1000) };
+        let png = crate::platform::wic::encode_png(&img).unwrap();
+        let (uri, preview) = prepare_image(&png, ImageKind::Banner).unwrap();
         assert!(uri.starts_with("data:image/png;base64,"));
         let ratio = preview.size[0] as f32 / preview.size[1] as f32;
         assert!((ratio - 2.5).abs() < 0.05, "{:?}", preview.size);

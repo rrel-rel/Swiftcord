@@ -175,17 +175,8 @@ fn decode(url: &str, bytes: &[u8]) -> Option<Loaded> {
     if url.ends_with(".json") {
         return Animation::parse(bytes).map(|a| Loaded::Lottie(Box::new(a)));
     }
-    use image::AnimationDecoder;
-    let decoder = image::codecs::png::PngDecoder::new(std::io::Cursor::new(bytes)).ok()?;
-    let frames = decoder.apng().ok()?.into_frames().collect_frames().ok()?;
-    let frames = frames
-        .into_iter()
-        .map(|f| {
-            let (n, d) = f.delay().numer_denom_ms();
-            let delay = Duration::from_micros((n as u64 * 1000) / d.max(1) as u64).max(Duration::from_millis(16));
-            let buf = f.into_buffer();
-            (ColorImage::from_rgba_unmultiplied([buf.width() as usize, buf.height() as usize], buf.as_raw()), delay)
-        })
-        .collect();
+    // APNG (or a plain PNG, as one frame).
+    let frames = crate::platform::wic::decode_frames(bytes).ok()?;
+    let frames = frames.into_iter().map(|(f, delay)| (f.to_color_image(), delay.max(Duration::from_millis(16)))).collect();
     Some(Loaded::Frames(frames))
 }
