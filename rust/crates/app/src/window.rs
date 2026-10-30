@@ -123,6 +123,11 @@ impl ApplicationHandler<Instant> for Shell {
                 if let WindowEvent::ModifiersChanged(m) = &event {
                     w.modifiers = m.state();
                 }
+                if let WindowEvent::MouseWheel { .. } = &event {
+                    // Read each time, so a change in Windows' mouse settings applies straight away.
+                    let notch = wheel_notch_points(&self.ctx);
+                    self.ctx.options_mut(|o| o.input_options.line_scroll_speed = notch);
+                }
                 if w.egui_winit.on_window_event(&w.window, &event).repaint {
                     w.window.request_redraw();
                 }
@@ -282,6 +287,21 @@ fn title_bar(hwnd: windows::Win32::Foundation::HWND) {
     set(DWMWA_TEXT_COLOR, colorref(crate::theme::HEADER()));
     set(DWMWA_BORDER_COLOR, colorref(crate::theme::BORDER()));
     set(DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND.0 as u32);
+}
+
+/// How far one wheel notch scrolls, in points: Windows' "lines to scroll at a time" (3 unless changed),
+/// at the 100/3 px a line that browsers (and so Discord) use, or a screenful if it's set to "one screen".
+fn wheel_notch_points(ctx: &egui::Context) -> f32 {
+    use windows::Win32::UI::WindowsAndMessaging::{SPI_GETWHEELSCROLLLINES, SystemParametersInfoW};
+    // WHEEL_PAGESCROLL: "one screen at a time".
+    const WHEEL_PAGESCROLL: u32 = u32::MAX;
+    let mut lines: u32 = 3;
+    let _ = unsafe { SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, Some((&mut lines as *mut u32).cast()), Default::default()) };
+    if lines == WHEEL_PAGESCROLL {
+        ctx.content_rect().height() * 0.875
+    } else {
+        lines as f32 * 100.0 / 3.0
+    }
 }
 
 /// Centers the window on its monitor.
