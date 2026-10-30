@@ -385,12 +385,7 @@ pub fn status_panel(ui: &mut Ui, s: &Session, uis: &UiState, actions: &mut Vec<A
                 }
                 if matches!(call.status, Status::Connected { .. }) {
                     let tip = if uis.self_video { "Turn Off Camera" } else { "Turn On Camera" };
-                    let r = ui.add(
-                        egui::Button::new(RichText::new(icon::CAMERA).font(theme::icon_font(16.0)).color(if uis.self_video { theme::GREEN() } else { theme::MUTED() }))
-                            .frame(false)
-                            .min_size(egui::vec2(28.0, 28.0)),
-                    );
-                    if r.on_hover_text(tip).clicked() {
+                    if crate::ui::widgets::toggle_icon_colored(ui, icon::CAMERA, uis.self_video, theme::GREEN(), tip).clicked() {
                         actions.push(Action::ToggleCamera);
                     }
                 }

@@ -67,7 +67,7 @@ fn block(ui: &mut Ui, b: &Block, cx: &mut Cx) {
         Block::Code { code, .. } => {
             egui::Frame::new().fill(theme::CODE_BG()).corner_radius(4).inner_margin(8).stroke(egui::Stroke::new(1.0, theme::RAIL())).show(ui, |ui| {
                 ui.set_max_width(ui.available_width());
-                egui::ScrollArea::horizontal().id_salt(("code", cx.message, code.len())).show(ui, |ui| {
+                egui::ScrollArea::horizontal().content_margin(0).id_salt(("code", cx.message, code.len())).show(ui, |ui| {
                     ui.add(egui::Label::new(RichText::new(code).monospace().color(theme::TEXT())).extend());
                 });
             });

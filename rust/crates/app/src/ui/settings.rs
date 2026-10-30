@@ -96,7 +96,7 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
         ui.add_space(12.0);
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.add(egui::Button::new(RichText::new("Save").color(egui::Color32::WHITE)).fill(theme::ACCENT())).clicked() {
+            if ui.add(egui::Button::new(RichText::new("Save").color(egui::Color32::WHITE))).clicked() {
                 actions.push(Action::SaveSettings(draft.settings.clone()));
                 if draft.share_activity != draft.saved_share_activity {
                     actions.push(Action::SetShareActivity(draft.share_activity));

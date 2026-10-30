@@ -104,8 +104,14 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
     let top = ui.cursor().top();
     let width = ui.available_width();
     let hover_rect_prev = ui.ctx().memory(|m| m.data.get_temp::<Rect>(row_id));
+    // The toolbar sticks out above its message, over the one before: while the pointer is on it, its message
+    // stays hovered (and the one underneath doesn't).
+    let over_toolbar = ToolbarSpot::last(ui.ctx()).filter(|t| ui.rect_contains_pointer(t.rect));
     let hovered = !cx.read_only
-        && hover_rect_prev.is_some_and(|r| ui.rect_contains_pointer(r))
+        && match over_toolbar {
+            Some(t) => t.row == row_id,
+            None => hover_rect_prev.is_some_and(|r| ui.rect_contains_pointer(r)),
+        }
         && ui.ctx().memory(|m| m.focused().is_none_or(|_| true));
 
     // Context menu target registered before the content, so links and buttons inside still get clicks.
@@ -193,7 +199,7 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
 
     if !cx.read_only && msg.pending.is_none() {
         if hovered {
-            toolbar(ui, msg, rect, cx);
+            toolbar(ui, msg, rect, row_id, cx);
         }
         if let Some(r) = menu_resp {
             // Alt-click marks it unread, as in Discord.
@@ -979,7 +985,27 @@ fn reactions(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
     });
 }
 
-fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, cx: &mut Ctx) {
+/// Where the hover toolbar was drawn last frame, and for which message.
+#[derive(Clone, Copy)]
+struct ToolbarSpot {
+    row: egui::Id,
+    rect: Rect,
+    pass: u64,
+}
+
+impl ToolbarSpot {
+    fn key() -> egui::Id {
+        egui::Id::unique("message-toolbar")
+    }
+
+    /// The toolbar drawn in the previous frame, if one was.
+    fn last(ctx: &egui::Context) -> Option<ToolbarSpot> {
+        let pass = ctx.cumulative_pass_nr();
+        ctx.memory(|m| m.data.get_temp::<ToolbarSpot>(Self::key())).filter(|t| t.pass + 1 >= pass)
+    }
+}
+
+fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, row_id: egui::Id, cx: &mut Ctx) {
     let mine = cx.state.me.as_ref().is_some_and(|m| m.id == msg.author.id);
     // In DMs (where every permission is granted) only your own messages can be deleted.
     let can_delete = mine || (cx.guild.is_some() && cx.perms & perm::MANAGE_MESSAGES != 0);
@@ -1003,6 +1029,8 @@ fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, cx: &mut Ctx) {
     let w = (buttons.len() + quick.len()) as f32 * 32.0 + divider + 8.0;
     let rect = Rect::from_min_size(egui::pos2(row.right() - w - 16.0, row.top() - 14.0), Vec2::new(w, 32.0));
     let rect = rect.translate(Vec2::new(0.0, (ui.clip_rect().top() - rect.top()).max(0.0)));
+    let pass = ui.ctx().cumulative_pass_nr();
+    ui.ctx().memory_mut(|m| m.data.insert_temp(ToolbarSpot::key(), ToolbarSpot { row: row_id, rect, pass }));
     ui.painter().rect(rect, 6, theme::SIDEBAR(), egui::Stroke::new(1.0, theme::RAIL()), egui::StrokeKind::Inside);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(4.0)).layout(Layout::left_to_right(Align::Center)));
     child.spacing_mut().item_spacing.x = 4.0;
@@ -1016,7 +1044,9 @@ fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, cx: &mut Ctx) {
     }
     for (glyph, tip, kind) in buttons {
         let color = if kind == 3 { theme::RED() } else { theme::MUTED() };
-        let r = child.add(egui::Button::new(RichText::new(glyph).font(theme::icon_font(15.0)).color(color)).frame_when_inactive(false).min_size(Vec2::splat(28.0)));
+        let r = widgets::vgui_button(&mut child, Vec2::splat(28.0), false, |ui, cell| {
+            ui.painter().text(cell.center(), egui::Align2::CENTER_CENTER, glyph, theme::icon_font(15.0), color);
+        });
         let r = r.on_hover_text(tip);
         if r.clicked() {
             match kind {
@@ -1032,13 +1062,10 @@ fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, cx: &mut Ctx) {
 /// A one-click reaction: adds it, or takes ours back if we've already reacted with it.
 fn quick_reaction(ui: &mut Ui, msg: &Message, e: &swiftcord_core::models::Emoji, cx: &mut Ctx) -> bool {
     let mine = msg.reactions.iter().any(|r| r.me && r.emoji.same_as(e));
-    // Drawn by hand at exactly the size of the toolbar's icon buttons (an image button pads itself wider).
-    let (rect, r) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
-    if r.hovered() || mine {
-        ui.painter().rect_filled(rect, 4, if mine { theme::ACCENT().gamma_multiply(0.3) } else { theme::HOVER() });
-    }
-    crate::emoji_sheet::any(ui.ctx(), e, Vec2::splat(20.0)).paint_at(ui, rect.shrink(4.0));
-    let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+    // A button the size of the toolbar's others, held in while we've reacted with it.
+    let r = widgets::vgui_button(ui, Vec2::splat(28.0), mine, |ui, rect| {
+        crate::emoji_sheet::any(ui.ctx(), e, Vec2::splat(20.0)).paint_at(ui, rect.shrink(4.0));
+    });
     let name = e.name.clone().unwrap_or_default();
     let shown = if e.id.is_some() { format!(":{name}:") } else { name };
     if r.on_hover_text(shown).clicked() {
@@ -1066,8 +1093,8 @@ fn context_menu(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
             for e in &quick {
                 picked |= quick_reaction(ui, msg, e, cx);
             }
-            let more = ui.add(egui::Button::new(RichText::new(icon::EMOJI).font(theme::icon_font(15.0)).color(theme::MUTED())).frame_when_inactive(false).min_size(Vec2::splat(28.0)));
-            if more.on_hover_text("Add Reaction").clicked() {
+            let more = widgets::icon_button(ui, icon::EMOJI, "Add Reaction");
+            if more.clicked() {
                 cx.uis.emoji_picker = Some(PickerTarget::Reaction { channel: msg.channel_id, message: msg.id, at: ui.ctx().pointer_latest_pos().unwrap_or_default() });
                 picked = true;
             }

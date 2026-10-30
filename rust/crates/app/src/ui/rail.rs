@@ -15,13 +15,13 @@ const WIDTH: f32 = 72.0;
 
 pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Action>) {
     let badges = state.guild_badges();
-    egui::ScrollArea::vertical().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
+    egui::ScrollArea::vertical().content_margin(0).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
         ui.set_width(WIDTH);
         ui.add_space(12.0);
         ui.vertical_centered(|ui| {
             let home = uis.guild.is_none();
             let r = item(ui, home, false, state.dm_mentions(), "Direct Messages", |ui, rect, hovered| {
-                let fill = if home || hovered { theme::ACCENT() } else { theme::SELECTED() };
+                let fill = if hovered { theme::HOVER() } else { theme::SELECTED() };
                 ui.painter().rect_filled(rect, radius(home || hovered), fill);
                 ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, theme::icon::HOME, theme::icon_font(22.0), Color32::WHITE);
             });
@@ -87,7 +87,7 @@ fn guild_icon(ui: &mut Ui, state: &State, id: Snowflake, rect: Rect, rounding: C
             egui::Image::from_uri(url).corner_radius(rounding).show_loading_spinner(false).paint_at(ui, rect);
         }
         None => {
-            let fill = if hovered { theme::ACCENT() } else { theme::SELECTED() };
+            let fill = if hovered { theme::HOVER() } else { theme::SELECTED() };
             ui.painter().rect_filled(rect, rounding, fill);
             let size = (rect.width() * 0.33).clamp(9.0, 16.0);
             ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, acronym(&g.name), theme::font_semibold(size), theme::HEADER());

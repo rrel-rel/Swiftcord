@@ -297,7 +297,7 @@ fn select(ui: &mut Ui, c: &Component, msg: &Message, cx: &mut Ctx) {
         if list.is_empty() {
             ui.label(RichText::new("Nothing to choose from.").color(theme::MUTED()));
         }
-        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+        let scroll = egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
             for ch in &list {
                 if many {
                     let chosen = cx.uis.interactions.choosing.entry(key.clone()).or_default();
@@ -317,6 +317,7 @@ fn select(ui: &mut Ui, c: &Component, msg: &Message, cx: &mut Ctx) {
                 }
             }
         });
+        crate::ui::widgets::scrollbar(ui, &scroll);
         if many {
             ui.separator();
             let chosen = cx.uis.interactions.choosing.get(&key).cloned().unwrap_or_default();

@@ -10,7 +10,8 @@ use crate::theme;
 use crate::ui::{chat, emoji, rail, sidebar};
 
 pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Catalog, actions: &mut Vec<Action>) {
-    if !s.ready {
+    // Before READY, the saved session (if there is one) is shown instead.
+    if !s.ready && s.state.me.is_none() {
         egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::RAIL())).show(ui, |ui| {
             ui.centered_and_justified(|ui| {
                 ui.vertical_centered(|ui| {
@@ -35,10 +36,10 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Ca
         return;
     }
 
-    egui::Panel::left("rail").exact_size(72.0).resizable(false).show_separator_line(false).frame(egui::Frame::new().fill(theme::RAIL())).show(ui, |ui| {
+    let rail = egui::Panel::left("rail").exact_size(72.0).resizable(false).show_separator_line(false).frame(egui::Frame::new().fill(theme::RAIL())).show(ui, |ui| {
         rail::show(ui, &s.state, uis, actions);
     });
-    egui::Panel::left("sidebar").exact_size(240.0).resizable(false).show_separator_line(false).frame(egui::Frame::new().fill(theme::SIDEBAR())).show(ui, |ui| {
+    let sidebar = egui::Panel::left("sidebar").exact_size(240.0).resizable(false).show_separator_line(false).frame(egui::Frame::new().fill(theme::SIDEBAR())).show(ui, |ui| {
         sidebar::show(ui, s, uis, actions);
     });
     egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT())).show(ui, |ui| {
@@ -49,6 +50,11 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Ca
             chat::show(ui, s, uis, catalog, actions);
         }
     });
+    // VGUI's light outlines between the panels, each in the first pixel column of the panel to its right (so
+    // not over the sidebar's scrollbar), drawn after them so they stay on top.
+    for r in [rail.response.rect, sidebar.response.rect] {
+        crate::ui::widgets::pixel_vline(ui.painter(), r.right(), r.y_range(), theme::DIVIDER().color);
+    }
 
     emoji::show(ui, &s.state, uis, catalog, actions);
     crate::ui::settings::show(ui, uis, actions);
@@ -94,7 +100,7 @@ fn delete_prompt(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Acti
             if ui.add(egui::Button::new(RichText::new("Delete").color(Color32::WHITE)).fill(theme::RED()).min_size(Vec2::new(90.0, 32.0))).clicked() {
                 choice = Some(true);
             }
-            if ui.add(egui::Button::new("Cancel").frame_when_inactive(false).min_size(Vec2::new(80.0, 32.0))).clicked() {
+            if ui.add(egui::Button::new("Cancel").min_size(Vec2::new(80.0, 32.0))).clicked() {
                 choice = Some(false);
             }
         });

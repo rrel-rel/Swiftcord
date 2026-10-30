@@ -18,7 +18,9 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 # Without egui's bundled fonts (1.4 MB): text uses Windows' (see theme::install).
-egui = { version = "0.37", default-features = false }
+# serde: to set a scroll area's offset (ui::widgets::set_scroll_offset). experimental: widget style providers,
+# for VGUI's buttons (theme::VguiButtons).
+egui = { version = "0.37", default-features = false, features = ["serde", "experimental"] }
 # The window and its input; drawing is our own, with Direct3D 11 (src/platform/d3d11.rs).
 # Its clipboard feature is off: that's arboard and the image crate; src/platform/clipboard.rs uses Windows'.
 egui-winit = { version = "0.37", default-features = false, features = ["links"] }

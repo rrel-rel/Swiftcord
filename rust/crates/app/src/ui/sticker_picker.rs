@@ -86,7 +86,7 @@ pub fn show(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) 
                 r.request_focus();
             }
             ui.add_space(6.0);
-            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            let scroll = egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 let columns = ((ui.available_width() / CELL).floor() as usize).max(1);
                 for (title, list) in &sections {
                     ui.label(RichText::new(title.to_uppercase()).font(theme::font_semibold(12.0)).color(theme::MUTED()));
@@ -119,6 +119,7 @@ pub fn show(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) 
                     ui.vertical_centered(|ui| ui.label(RichText::new("No stickers found.").color(theme::MUTED())));
                 }
             });
+            crate::ui::widgets::scrollbar(ui, &scroll);
         });
     });
     if let Some(sticker) = picked {

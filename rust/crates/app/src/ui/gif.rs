@@ -260,7 +260,7 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                 }
             });
             ui.add_space(6.0);
-            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            let scroll = egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 let col_w = (ui.available_width() - 6.0) / 2.0;
                 match &p.view {
                     View::Categories => {
@@ -328,6 +328,7 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                     },
                 }
             });
+            crate::ui::widgets::scrollbar(ui, &scroll);
         });
     });
     match picked {

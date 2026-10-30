@@ -54,7 +54,7 @@ pub fn show(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) 
             search.request_focus();
         }
         ui.add_space(6.0);
-        egui::ScrollArea::vertical().max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
+        let scroll = egui::ScrollArea::vertical().max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
             let list = destinations(state, guild, &fwd.query);
             if list.is_empty() {
                 ui.label(RichText::new("No matches.").color(theme::MUTED()));
@@ -70,6 +70,7 @@ pub fn show(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) 
                 }
             }
         });
+        crate::ui::widgets::scrollbar(ui, &scroll);
         ui.add_space(8.0);
         // What's being forwarded.
         egui::Frame::new().fill(theme::CHAT()).corner_radius(6).inner_margin(10).show(ui, |ui| {
@@ -92,12 +93,12 @@ pub fn show(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) 
         ui.add_space(10.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let label = if fwd.picked.len() > 1 { format!("Send ({})", fwd.picked.len()) } else { "Send".to_owned() };
-            let send = egui::Button::new(RichText::new(label).color(Color32::WHITE)).fill(theme::ACCENT()).min_size(Vec2::new(90.0, 32.0));
+            let send = egui::Button::new(RichText::new(label).color(Color32::WHITE)).min_size(Vec2::new(90.0, 32.0));
             if ui.add_enabled(!fwd.picked.is_empty(), send).clicked() {
                 actions.push(Action::Forward { channel: fwd.channel, message: fwd.message, to: fwd.picked.clone(), note: fwd.note.trim().to_owned() });
                 close = true;
             }
-            if ui.add(egui::Button::new("Cancel").frame_when_inactive(false).min_size(Vec2::new(80.0, 32.0))).clicked() {
+            if ui.add(egui::Button::new("Cancel").min_size(Vec2::new(80.0, 32.0))).clicked() {
                 close = true;
             }
         });

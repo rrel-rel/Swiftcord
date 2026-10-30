@@ -37,6 +37,7 @@ pub fn panel(ui: &mut Ui, s: &Session, channel: &Channel, actions: &mut Vec<Acti
         }
         range
     });
+    crate::ui::widgets::scrollbar(ui, &out);
     let range = out.inner;
     actions.push(Action::MemberListRange { guild, channel: list_channel, first: range.start, last: range.end.saturating_sub(1) });
     if list.is_none() {

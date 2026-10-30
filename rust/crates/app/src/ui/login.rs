@@ -86,7 +86,7 @@ pub fn show(ui: &mut egui::Ui, login: &mut LoginUi, actions: &mut Vec<Action>) {
 
                         let enabled = !login.busy;
                         let b = egui::Button::new(RichText::new("Sign in with your browser").color(Color32::WHITE))
-                            .fill(theme::ACCENT())
+                            
                             .min_size(Vec2::new(ui.available_width(), 40.0));
                         if ui.add_enabled(enabled, b).clicked() {
                             login.error = None;

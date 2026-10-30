@@ -85,7 +85,7 @@ impl Member {
 
 /// Someone's profile as shown on their profile card (`users/{id}/profile`), with their server profile when
 /// asked for one server.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Profile {
     pub user: ProfileUser,
@@ -98,7 +98,7 @@ pub struct Profile {
     pub premium_since: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProfileUser {
     pub banner: Option<String>,
@@ -107,14 +107,14 @@ pub struct ProfileUser {
     pub avatar_decoration_data: Option<AvatarDecoration>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProfileMember {
     pub joined_at: Option<DateTime<Utc>>,
     pub avatar_decoration_data: Option<AvatarDecoration>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProfileDetails {
     pub bio: Option<String>,
@@ -125,13 +125,13 @@ pub struct ProfileDetails {
     pub theme_colors: Option<Vec<u32>>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AvatarDecoration {
     pub asset: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Badge {
     pub id: String,
@@ -214,7 +214,7 @@ impl Emoji {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GuildProperties {
     pub name: Option<String>,
@@ -223,7 +223,7 @@ pub struct GuildProperties {
     pub default_message_notifications: Option<u8>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Guild {
     pub id: Snowflake,
@@ -339,7 +339,7 @@ impl From<ChannelType> for u8 {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Overwrite {
     pub id: Snowflake,
@@ -352,7 +352,7 @@ pub struct Overwrite {
     pub deny: u64,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Channel {
     pub id: Snowflake,
@@ -396,7 +396,7 @@ pub struct Channel {
     pub flags: u64,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThreadMetadata {
     #[serde(deserialize_with = "null_as_default")]
@@ -409,7 +409,7 @@ pub struct ThreadMetadata {
 }
 
 /// Someone's membership of a thread; `id` is the thread and `user_id` the member (both omitted in some payloads).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThreadMember {
     pub id: Option<Snowflake>,
@@ -417,7 +417,7 @@ pub struct ThreadMember {
     pub join_timestamp: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ForumTag {
     pub id: Snowflake,
@@ -485,7 +485,7 @@ impl Channel {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceState {
     pub guild_id: Option<Snowflake>,
@@ -503,7 +503,7 @@ pub struct VoiceState {
     pub suppress: bool,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Attachment {
     pub id: Snowflake,
@@ -544,7 +544,7 @@ impl Attachment {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EmbedMedia {
     pub url: String,
@@ -553,7 +553,7 @@ pub struct EmbedMedia {
     pub height: Option<u32>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EmbedAuthor {
     pub name: String,
@@ -561,14 +561,14 @@ pub struct EmbedAuthor {
     pub icon_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EmbedFooter {
     pub text: String,
     pub icon_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EmbedField {
     pub name: String,
@@ -577,7 +577,7 @@ pub struct EmbedField {
     pub inline: bool,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Embed {
     #[serde(rename = "type")]
@@ -597,7 +597,7 @@ pub struct Embed {
     pub fields: Vec<EmbedField>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Reaction {
     pub emoji: Emoji,
@@ -605,7 +605,7 @@ pub struct Reaction {
     pub me: bool,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MessageReference {
     /// 0 = reply, 1 = forward.
@@ -616,7 +616,7 @@ pub struct MessageReference {
     pub guild_id: Option<Snowflake>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StickerItem {
     pub id: Snowflake,
@@ -626,7 +626,7 @@ pub struct StickerItem {
 }
 
 /// A sticker that can be sent: a server's own, or one of Discord's standard packs.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Sticker {
     pub id: Snowflake,
@@ -655,7 +655,7 @@ impl Sticker {
 }
 
 /// One of Discord's standard sticker packs.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StickerPack {
     pub id: Snowflake,
@@ -666,7 +666,7 @@ pub struct StickerPack {
 }
 
 /// The copied content of a forwarded message.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SnapshotMessage {
     pub content: String,
@@ -677,7 +677,7 @@ pub struct SnapshotMessage {
     pub timestamp: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MessageSnapshot {
     pub message: SnapshotMessage,
@@ -740,7 +740,7 @@ pub mod component_type {
 /// A message component: buttons and menus in action rows, and (Components V2) the layout of a whole message:
 /// containers, sections, text, thumbnails, galleries, files and separators. One struct holds the fields of
 /// every kind; unknown kinds are skipped when drawn.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Component {
     #[serde(rename = "type")]
@@ -792,7 +792,7 @@ pub struct Component {
     pub component: Option<Box<Component>>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SelectOption {
     pub label: String,
@@ -803,7 +803,7 @@ pub struct SelectOption {
     pub default: bool,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UnfurledMedia {
     pub url: String,
@@ -819,7 +819,7 @@ impl UnfurledMedia {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GalleryItem {
     pub media: UnfurledMedia,
@@ -828,7 +828,7 @@ pub struct GalleryItem {
     pub spoiler: bool,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Message {
     pub id: Snowflake,
@@ -917,7 +917,7 @@ impl Message {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ReadStateEntry {
     pub id: Snowflake,
@@ -927,13 +927,13 @@ pub struct ReadStateEntry {
     pub read_state_type: u8,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MuteConfig {
     pub end_time: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChannelOverride {
     pub channel_id: Snowflake,
@@ -943,7 +943,7 @@ pub struct ChannelOverride {
     pub message_notifications: u8,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UserGuildSettings {
     pub guild_id: Option<Snowflake>,
@@ -973,7 +973,7 @@ impl ChannelOverride {
 }
 
 /// A server folder from the user's settings. Servers outside a real folder are folders of one with no ID.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GuildFolder {
     pub id: Option<i64>,

@@ -142,7 +142,7 @@ pub fn column(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, ch
 }
 
 fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut String, actions: &mut Vec<Action>) {
-    egui::Panel::top(("chat-header", c.id)).show_separator_line(false).frame(egui::Frame::new().fill(theme::CHAT()).inner_margin(egui::Margin { left: 16, right: 9, top: 0, bottom: 0 })).show(ui, |ui| {
+    let panel = egui::Panel::top(("chat-header", c.id)).show_separator_line(false).frame(egui::Frame::new().fill(theme::CHAT()).inner_margin(egui::Margin { left: 16, right: 16, top: 0, bottom: 0 })).show(ui, |ui| {
         ui.set_height(48.0);
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             // In a thread: "# parent › thread", the parent leading back to its channel.
@@ -165,7 +165,7 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut
             };
             let font = if glyph == "#" || glyph == "@" { theme::font(22.0) } else if glyph == "💬" { theme::font(18.0) } else { theme::icon_font(18.0) };
             ui.label(RichText::new(glyph).font(font).color(theme::FAINT()));
-            ui.label(RichText::new(c.label()).font(theme::font_semibold(16.0)).color(theme::HEADER()));
+            ui.label(RichText::new(c.label()).font(theme::font_bold(15.0)).color(theme::HEADER()));
             if c.is_archived() {
                 ui.label(RichText::new("Archived").size(12.0).color(theme::FAINT()));
             }
@@ -188,17 +188,17 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut
                 });
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if widgets::icon_button(ui, icon::INBOX, "Inbox").clicked() {
+                if widgets::icon_button_sized(ui, icon::INBOX, "Inbox", HEADER_CONTROL).clicked() {
                     actions.push(Action::ShowInbox);
                 }
                 search_field(ui, c, search_box, actions);
-                if c.guild_id.is_some() && widgets::icon_button(ui, icon::PEOPLE, "Member List").clicked() {
+                if c.guild_id.is_some() && widgets::icon_button_sized(ui, icon::PEOPLE, "Member List", HEADER_CONTROL).clicked() {
                     actions.push(Action::ToggleMemberList);
                 }
-                if !c.is_forum() && widgets::icon_button(ui, icon::PIN, "Pinned Messages").clicked() {
+                if !c.is_forum() && widgets::icon_button_sized(ui, icon::PIN, "Pinned Messages", HEADER_CONTROL).clicked() {
                     actions.push(Action::ShowPins(c.id));
                 }
-                if c.has_threads() && !c.is_forum() && widgets::icon_button(ui, icon::CHAT, "Threads").clicked() {
+                if c.has_threads() && !c.is_forum() && widgets::icon_button_sized(ui, icon::CHAT, "Threads", HEADER_CONTROL).clicked() {
                     actions.push(Action::ShowThreads(c.id));
                 }
                 if c.is_thread() {
@@ -207,15 +207,15 @@ fn header(ui: &mut Ui, s: &Session, c: &Channel, in_call: bool, search_box: &mut
                         actions.push(Action::SetThreadJoined(c.id, join));
                     }
                 }
-                if c.is_private() && !in_call && s.state.call(c.id).is_none() && widgets::icon_button(ui, icon::PHONE, "Start Voice Call").clicked() {
+                if c.is_private() && !in_call && s.state.call(c.id).is_none() && widgets::icon_button_sized(ui, icon::PHONE, "Start Voice Call", HEADER_CONTROL).clicked() {
                     actions.push(Action::JoinVoice { guild: None, channel: c.id });
                 }
             });
         });
     });
-    // Discord's subtle header shadow.
-    let y = ui.cursor().top();
-    ui.painter().hline(ui.max_rect().x_range(), y, egui::Stroke::new(1.0, theme::RAIL()));
+    // The divider on the header's last pixel row (below it, the message list would paint over it).
+    let r = panel.response.rect;
+    widgets::pixel_hline(ui.painter(), r.x_range(), r.bottom() - 1.0 / ui.ctx().pixels_per_point(), theme::DIVIDER().color);
 }
 
 fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, perms: u64, actions: &mut Vec<Action>) {
@@ -350,22 +350,24 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
     });
 
     let viewport = out.inner;
+    let bar = widgets::scrollbar(ui, &out);
     if !measured.is_empty() {
         for (id, h) in measured {
             view.heights.insert(id, h);
         }
         ui.ctx().request_repaint();
     }
-    view.scroll_y = out.state.clamped_offset().y;
+    let offset = bar.unwrap_or(out.state.clamped_offset().y);
+    view.scroll_y = offset;
     let max_scroll = (out.content_size.y - out.inner_rect.height()).max(0.0);
-    let at_end = out.state.clamped_offset().y >= max_scroll - 4.0;
+    let at_end = offset >= max_scroll - 4.0;
     if view.at_bottom && scroll_to.is_none() {
         // Following the bottom: the offset can lag while sizes settle, so only the user scrolling or dragging
         // in the list stops it.
         let user_moved = ui.input(|i| {
             let over = i.pointer.hover_pos().is_some_and(|p| out.inner_rect.contains(p));
             over && (i.is_scrolling() || i.pointer.primary_down())
-        });
+        }) || bar.is_some();
         view.at_bottom = !user_moved || at_end;
     } else if view.jump.is_none() {
         view.at_bottom = at_end;
@@ -386,7 +388,7 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
     // A "jump to present" pill when scrolled far up or viewing older history.
     if history.has_newer || (!view.at_bottom && max_scroll - out.state.clamped_offset().y > 1500.0) {
         let rect = Rect::from_center_size(out.inner_rect.center_bottom() - Vec2::new(0.0, 24.0), Vec2::new(150.0, 30.0));
-        let r = ui.put(rect, egui::Button::new(RichText::new("Jump to present").color(Color32::WHITE)).fill(theme::ACCENT()).corner_radius(15));
+        let r = ui.put(rect, egui::Button::new(RichText::new("Jump to present").color(Color32::WHITE)).corner_radius(15));
         if r.clicked() {
             actions.push(Action::JumpToPresent(channel.id));
             ui.ctx().request_repaint();
@@ -566,6 +568,15 @@ fn accept(ctx: &egui::Context, edit_id: egui::Id, draft: &mut crate::app::Draft,
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The message field's height on one line, and its attachment button's size.
+const FIELD_HEIGHT: f32 = 32.0;
+/// The square buttons inside the field (GIF, stickers, emoji), and their margin from its inner edges and
+/// each other: 3 + 24 + 3 fills the 30 inside its 1 pt edge.
+const FIELD_BUTTON_MARGIN: f32 = 3.0;
+const FIELD_BUTTON: f32 = FIELD_HEIGHT - 2.0 - 2.0 * FIELD_BUTTON_MARGIN;
+/// The header's buttons and search box are this tall.
+const HEADER_CONTROL: f32 = 26.0;
+
 fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &Channel, perms: u64, actions: &mut Vec<Action>) {
     let state = &s.state;
     if perms & perm::SEND_MESSAGES == 0 {
@@ -679,134 +690,149 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
     let reply = draft.reply;
     let files: Vec<(String, usize)> = draft.files.iter().map(|f| (f.name.clone(), f.bytes.len())).collect();
 
-    let frame = egui::Frame::new().fill(theme::INPUT()).stroke(theme::field_stroke()).corner_radius(8).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        if let Some((rid, ping)) = reply {
-            egui::Frame::new().fill(theme::SIDEBAR()).corner_radius(egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }).inner_margin(egui::Margin::symmetric(14, 6)).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    let name = state.message(c.id, rid).map(|m| state.display_name(m.author.id, c.guild_id)).unwrap_or_default();
-                    ui.label(RichText::new("Replying to ").color(theme::MUTED()));
-                    ui.label(RichText::new(name).font(theme::font_semibold(14.0)).color(theme::HEADER()));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if widgets::icon_button(ui, icon::CLOSE, "Cancel reply").clicked() {
-                            uis.drafts.entry(c.id).or_default().reply = None;
-                        }
-                        let label = RichText::new(if ping { "@ ON" } else { "@ OFF" }).font(theme::font_bold(12.0)).color(if ping { theme::ACCENT() } else { theme::MUTED() });
-                        if ui.add(egui::Button::new(label).frame(false)).on_hover_text("Mention the author").clicked() {
-                            if let Some(r) = &mut uis.drafts.entry(c.id).or_default().reply {
-                                r.1 = !r.1;
+    // VGUI's text entry: a button for attachments, then a sunken field. The button goes in last, level with
+    // the field's bottom, so it stays beside the text when a reply or attachments make the field taller.
+    let attach = perms & perm::ATTACH_FILES != 0;
+    let row = ui.horizontal_top(|ui| {
+        let slot = attach.then(|| ui.allocate_exact_size(Vec2::splat(FIELD_HEIGHT), Sense::hover()).0);
+        let field = egui::Frame::new().fill(theme::INPUT()).inner_margin(egui::Margin { left: 6, right: 0, top: 1, bottom: 1 }).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            if let Some((rid, ping)) = reply {
+                egui::Frame::new().fill(theme::SIDEBAR()).corner_radius(egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }).inner_margin(egui::Margin::symmetric(14, 6)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let name = state.message(c.id, rid).map(|m| state.display_name(m.author.id, c.guild_id)).unwrap_or_default();
+                        ui.label(RichText::new("Replying to ").color(theme::MUTED()));
+                        ui.label(RichText::new(name).font(theme::font_semibold(14.0)).color(theme::HEADER()));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if widgets::icon_button(ui, icon::CLOSE, "Cancel reply").clicked() {
+                                uis.drafts.entry(c.id).or_default().reply = None;
                             }
-                        }
-                    });
-                });
-            });
-        }
-        if !files.is_empty() {
-            ui.horizontal_wrapped(|ui| {
-                ui.add_space(12.0);
-                for (i, (name, size)) in files.iter().enumerate() {
-                    egui::Frame::new().fill(theme::SIDEBAR()).corner_radius(6).inner_margin(8).show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(icon::FILE).font(theme::icon_font(18.0)).color(theme::ACCENT()));
-                            ui.vertical(|ui| {
-                                ui.add(egui::Label::new(RichText::new(name).size(13.0)).truncate());
-                                ui.label(RichText::new(widgets::human_size(*size as u64)).size(11.0).color(theme::MUTED()));
-                            });
-                            if widgets::icon_button(ui, icon::DELETE, "Remove").clicked() {
-                                let d = uis.drafts.entry(c.id).or_default();
-                                if i < d.files.len() {
-                                    d.files.remove(i);
+                            let label = RichText::new(if ping { "@ ON" } else { "@ OFF" }).font(theme::font_bold(12.0)).color(if ping { theme::ACCENT() } else { theme::MUTED() });
+                            if ui.add(egui::Button::new(label)).on_hover_text("Mention the author").clicked() {
+                                if let Some(r) = &mut uis.drafts.entry(c.id).or_default().reply {
+                                    r.1 = !r.1;
                                 }
                             }
                         });
                     });
-                }
-            });
-        }
+                });
+            }
+            if !files.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(12.0);
+                    for (i, (name, size)) in files.iter().enumerate() {
+                        egui::Frame::new().fill(theme::SIDEBAR()).corner_radius(6).inner_margin(8).show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(icon::FILE).font(theme::icon_font(18.0)).color(theme::ACCENT()));
+                                ui.vertical(|ui| {
+                                    ui.add(egui::Label::new(RichText::new(name).size(13.0)).truncate());
+                                    ui.label(RichText::new(widgets::human_size(*size as u64)).size(11.0).color(theme::MUTED()));
+                                });
+                                if widgets::icon_button(ui, icon::DELETE, "Remove").clicked() {
+                                    let d = uis.drafts.entry(c.id).or_default();
+                                    if i < d.files.len() {
+                                        d.files.remove(i);
+                                    }
+                                }
+                            });
+                        });
+                    }
+                });
+            }
 
-        // A slash command being filled in takes the text box's place.
-        if let Some(cmd) = uis.drafts.entry(c.id).or_default().command.as_mut() {
-            match crate::ui::commands::form(ui, state, c, cmd) {
-                crate::ui::commands::FormResult::Run => actions.push(Action::RunCommand(c.id)),
-                crate::ui::commands::FormResult::Cancel => {
-                    uis.drafts.entry(c.id).or_default().command = None;
-                    uis.focus_composer = true;
+            // A slash command being filled in takes the text box's place.
+            if let Some(cmd) = uis.drafts.entry(c.id).or_default().command.as_mut() {
+                match crate::ui::commands::form(ui, state, c, cmd) {
+                    crate::ui::commands::FormResult::Run => actions.push(Action::RunCommand(c.id)),
+                    crate::ui::commands::FormResult::Cancel => {
+                        uis.drafts.entry(c.id).or_default().command = None;
+                        uis.focus_composer = true;
+                    }
+                    crate::ui::commands::FormResult::Nothing => {}
                 }
-                crate::ui::commands::FormResult::Nothing => {}
+                return;
             }
-            return;
-        }
-        let row = Layout::left_to_right(Align::Center);
-        ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 44.0), row, |ui| {
-            ui.set_min_height(44.0);
-            ui.add_space(8.0);
-            if perms & perm::ATTACH_FILES != 0 && widgets::icon_button(ui, icon::ADD, "Upload a file").clicked() {
-                actions.push(Action::PickFiles(c.id));
-            }
-            let emoji_w = 108.0;
-            let draft = uis.drafts.entry(c.id).or_default();
-            let hint = match c.kind {
-                ChannelType::Dm | ChannelType::GroupDm => format!("Message @{}", c.label()),
-                _ => format!("Message #{}", c.label()),
-            };
-            let before = draft.text.len();
-            let out = egui::TextEdit::multiline(&mut draft.text)
-                .id(edit_id)
-                .hint_text(RichText::new(hint).color(theme::FAINT()))
-                .font(theme::font(15.5))
-                .frame(egui::Frame::NONE)
-                .desired_rows(1)
-                .desired_width(ui.available_width() - emoji_w - 8.0)
-                .margin(egui::Margin::symmetric(4, 10))
-                // Tab completes suggestions rather than moving focus.
-                .lock_focus(true)
-                .show(ui);
-            if let Some(range) = out.cursor_range {
-                if draft.caret != range.primary.index.0 {
-                    // Suggestions are worked out from the caret before drawing, so take another look now.
-                    draft.caret = range.primary.index.0;
-                    ui.ctx().request_repaint();
-                }
-            }
-            if draft.text.is_empty() {
-                draft.mentions.clear();
-            }
-            let r = out.response.response;
-            if draft.text.len() != before && !draft.text.is_empty() {
-                actions.push(Action::Typing(c.id));
-            }
-            // An image on the clipboard (a screenshot, say) is pasted as an attachment.
-            if r.has_focus() {
-                let pasted = ui.input(|i| i.events.iter().find_map(|e| if let egui::Event::PasteImage(image) = e { Some(image.clone()) } else { None }));
-                if let Some(image) = pasted {
-                    if perms & perm::ATTACH_FILES != 0 {
-                        actions.push(Action::PasteImage { channel: c.id, image });
-                    } else {
-                        actions.push(Action::Notice("You can't upload files in this channel".into()));
+            let line = Layout::left_to_right(Align::Center);
+            ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), FIELD_HEIGHT - 2.0), line, |ui| {
+                ui.set_min_height(FIELD_HEIGHT - 2.0);
+                // The buttons on the right, and the gaps before, between and after them.
+                ui.spacing_mut().item_spacing.x = FIELD_BUTTON_MARGIN;
+                let emoji_w = 3.0 * FIELD_BUTTON + 4.0 * FIELD_BUTTON_MARGIN;
+                let draft = uis.drafts.entry(c.id).or_default();
+                let hint = match c.kind {
+                    ChannelType::Dm | ChannelType::GroupDm => format!("Message @{}", c.label()),
+                    _ => format!("Message #{}", c.label()),
+                };
+                let before = draft.text.len();
+                let out = egui::TextEdit::multiline(&mut draft.text)
+                    .id(edit_id)
+                    .hint_text(RichText::new(hint).color(theme::FAINT()))
+                    .font(theme::font(15.5))
+                    .frame(egui::Frame::NONE)
+                    .desired_rows(1)
+                    .desired_width(ui.available_width() - emoji_w)
+                    .margin(egui::Margin::symmetric(4, 5))
+                    // Tab completes suggestions rather than moving focus.
+                    .lock_focus(true)
+                    .show(ui);
+                if let Some(range) = out.cursor_range {
+                    if draft.caret != range.primary.index.0 {
+                        // Suggestions are worked out from the caret before drawing, so take another look now.
+                        draft.caret = range.primary.index.0;
+                        ui.ctx().request_repaint();
                     }
                 }
-            }
-            if uis.focus_composer {
-                r.request_focus();
-                uis.focus_composer = false;
-            }
-            let gr = ui.add(egui::Button::new(RichText::new("GIF").font(theme::font_bold(11.5)).color(theme::MUTED())).frame_when_inactive(false).min_size(Vec2::new(34.0, 28.0)));
-            let gif_at = gr.rect.right_top();
-            if gr.on_hover_text("GIFs").clicked() {
-                actions.push(Action::OpenGifPicker { channel: c.id, at: gif_at });
-            }
-            let sr = sticker_button(ui);
-            let sticker_at = sr.rect.right_top();
-            if sr.on_hover_text("Stickers").clicked() {
-                actions.push(Action::OpenStickerPicker { channel: c.id, at: sticker_at });
-            }
-            let er = widgets::icon_button(ui, icon::EMOJI, "Emoji");
-            if er.clicked() {
-                uis.emoji_picker = Some(PickerTarget::Composer { channel: c.id, at: er.rect.left_top() });
-            }
+                if draft.text.is_empty() {
+                    draft.mentions.clear();
+                }
+                let r = out.response.response;
+                if draft.text.len() != before && !draft.text.is_empty() {
+                    actions.push(Action::Typing(c.id));
+                }
+                // An image on the clipboard (a screenshot, say) is pasted as an attachment.
+                if r.has_focus() {
+                    let pasted = ui.input(|i| i.events.iter().find_map(|e| if let egui::Event::PasteImage(image) = e { Some(image.clone()) } else { None }));
+                    if let Some(image) = pasted {
+                        if perms & perm::ATTACH_FILES != 0 {
+                            actions.push(Action::PasteImage { channel: c.id, image });
+                        } else {
+                            actions.push(Action::Notice("You can't upload files in this channel".into()));
+                        }
+                    }
+                }
+                if uis.focus_composer {
+                    r.request_focus();
+                    uis.focus_composer = false;
+                }
+                let gr = widgets::vgui_button(ui, Vec2::splat(FIELD_BUTTON), false, |ui, rect| {
+                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "GIF", theme::font_bold(9.5), theme::HEADER());
+                });
+                let gif_at = gr.rect.right_top();
+                if gr.on_hover_text("GIFs").clicked() {
+                    actions.push(Action::OpenGifPicker { channel: c.id, at: gif_at });
+                }
+                let sr = sticker_button(ui);
+                let sticker_at = sr.rect.right_top();
+                if sr.on_hover_text("Stickers").clicked() {
+                    actions.push(Action::OpenStickerPicker { channel: c.id, at: sticker_at });
+                }
+                let er = widgets::icon_button_sized(ui, icon::EMOJI, "Emoji", FIELD_BUTTON);
+                if er.clicked() {
+                    uis.emoji_picker = Some(PickerTarget::Composer { channel: c.id, at: er.rect.left_top() });
+                }
+            });
         });
+        if let Some(slot) = slot {
+            let rect = Rect::from_min_size(egui::pos2(slot.left(), field.response.rect.bottom() - FIELD_HEIGHT), slot.size());
+            if widgets::vgui_icon_button(ui, egui::Id::unique(("attach", c.id)), rect, icon::ADD).on_hover_text("Upload a file").clicked() {
+                actions.push(Action::PickFiles(c.id));
+            }
+        }
+        field
     });
+    let frame = row.inner;
+    widgets::sunken_edge(ui.painter(), frame.response.rect);
 
     // Suggestions float above the composer.
     if !items.is_empty() && (token.is_some() || slash) {
@@ -843,11 +869,13 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
 /// The header's search box: Enter searches the whole server (or this DM); filters like `from:` and `in:`
 /// narrow it.
 fn search_field(ui: &mut Ui, c: &Channel, text: &mut String, actions: &mut Vec<Action>) {
-    egui::Frame::new().fill(theme::INPUT()).stroke(theme::field_stroke()).corner_radius(4).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
+    // Styled as the message field: a dark sunken box, as tall as the header's buttons.
+    let field = egui::Frame::new().fill(theme::INPUT()).inner_margin(egui::Margin { left: 6, right: 6, top: 1, bottom: 1 }).show(ui, |ui| {
         ui.horizontal(|ui| {
+            ui.set_height(HEADER_CONTROL - 2.0);
             ui.label(RichText::new(icon::SEARCH).font(theme::icon_font(12.0)).color(theme::MUTED()));
             let hint = if c.guild_id.is_some() { "Search" } else { "Search this chat" };
-            let r = ui.add(egui::TextEdit::singleline(text).hint_text(hint).frame(egui::Frame::NONE).desired_width(170.0));
+            let r = ui.add(egui::TextEdit::singleline(text).hint_text(RichText::new(hint).color(theme::FAINT())).frame(egui::Frame::NONE).margin(egui::Margin::symmetric(2, 2)).desired_width(170.0));
             let r = r.on_hover_text("Search messages. Filters: from:name, in:channel, has:image, mentions:name, before:2024-01-31, after:, during:");
             if r.lost_focus() {
                 if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {
@@ -858,17 +886,19 @@ fn search_field(ui: &mut Ui, c: &Channel, text: &mut String, actions: &mut Vec<A
             }
         });
     });
+    widgets::sunken_edge(ui.painter(), field.response.rect);
 }
 
 /// The composer's sticker button: a rounded square with a peeled corner (there's no sticker icon in the font).
 fn sticker_button(ui: &mut Ui) -> egui::Response {
-    let (rect, r) = ui.allocate_exact_size(Vec2::new(32.0, 28.0), Sense::click());
-    let color = if r.hovered() { theme::HEADER() } else { theme::MUTED() };
-    if r.hovered() {
-        ui.painter().rect_filled(rect, 4, theme::SELECTED());
-    }
-    let b = Rect::from_center_size(rect.center(), Vec2::splat(17.0));
-    let fold = 6.0;
+    widgets::vgui_button(ui, Vec2::splat(FIELD_BUTTON), false, |ui, rect| sticker_icon(ui, rect))
+}
+
+/// A sticker (a square with a folded corner), drawn as no icon font has one.
+fn sticker_icon(ui: &Ui, rect: Rect) {
+    let color = theme::HEADER();
+    let b = Rect::from_center_size(rect.center(), Vec2::splat(14.0));
+    let fold = 5.0;
     let stroke = egui::Stroke::new(1.6, color);
     let p = |x: f32, y: f32| egui::pos2(x, y);
     let outline = vec![
@@ -884,7 +914,6 @@ fn sticker_button(ui: &mut Ui) -> egui::Response {
     ui.painter().add(egui::Shape::closed_line(outline, stroke));
     ui.painter().line_segment([p(b.right(), b.bottom() - fold), p(b.right() - fold, b.bottom() - fold)], stroke);
     ui.painter().line_segment([p(b.right() - fold, b.bottom() - fold), p(b.right() - fold, b.bottom())], stroke);
-    r.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn pins_panel(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, pins: Option<&[Message]>, actions: &mut Vec<Action>) {
@@ -907,7 +936,7 @@ fn pins_panel(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, pins: Op
     }
     let perms = s.state.permissions(c.id);
     let mut jump = None;
-    egui::ScrollArea::vertical().id_salt(("pins-list", c.id)).auto_shrink(false).show(ui, |ui| {
+    let scroll = egui::ScrollArea::vertical().id_salt(("pins-list", c.id)).auto_shrink(false).show(ui, |ui| {
         // Messages lay out within the panel rather than at their natural width.
         ui.set_max_width(ui.available_width());
         let mut cx = Ctx { state: &s.state, uis, actions, channel: c.id, guild: c.guild_id, perms, highlight: None, read_only: true };
@@ -924,6 +953,7 @@ fn pins_panel(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, pins: Op
             ui.add_space(6.0);
         }
     });
+    crate::ui::widgets::scrollbar(ui, &scroll);
     if let Some(message) = jump {
         actions.push(Action::JumpTo { channel: c.id, message: Some(message) });
     }

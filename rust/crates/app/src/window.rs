@@ -22,6 +22,8 @@ pub trait App {
     /// Runs every frame, including while the window is minimized (when `ui` doesn't).
     fn logic(&mut self, ctx: &egui::Context, frame: &mut Frame);
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut Frame);
+    /// The window is closing and the app about to end.
+    fn on_exit(&mut self) {}
 }
 
 /// The app's window, for things that attach native windows to it.
@@ -73,6 +75,10 @@ struct AppWindow {
 }
 
 impl ApplicationHandler<Instant> for Shell {
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.app.on_exit();
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -200,8 +206,11 @@ impl AppWindow {
             app.logic(ui.ctx(), &mut frame);
             app.ui(ui, &mut frame);
         });
+        // VGUI buttons keep the arrow cursor (the app shows a pointing hand over other clickable things).
+        if crate::theme::post_process(ctx, &mut output.shapes) && output.platform_output.cursor_icon == egui::CursorIcon::PointingHand {
+            output.platform_output.cursor_icon = egui::CursorIcon::Default;
+        }
         self.handle_platform_output(output.platform_output);
-        crate::theme::square_corners(&mut output.shapes);
         let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
         let clear = ctx.global_style().visuals.panel_fill.to_normalized_gamma_f32();
         self.painter.resize([size.width, size.height])?;

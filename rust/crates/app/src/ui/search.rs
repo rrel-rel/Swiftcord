@@ -48,7 +48,7 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Acti
         return;
     }
     let mut jump = None;
-    egui::ScrollArea::vertical().id_salt("search-results").auto_shrink(false).show(ui, |ui| {
+    let scroll = egui::ScrollArea::vertical().id_salt("search-results").auto_shrink(false).show(ui, |ui| {
         ui.set_max_width(ui.available_width());
         for m in &results {
             let channel = s.state.channel(m.channel_id);
@@ -80,6 +80,7 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Acti
         }
         ui.add_space(Vec2::splat(8.0).y);
     });
+    crate::ui::widgets::scrollbar(ui, &scroll);
     if let Some((channel, message)) = jump {
         actions.push(Action::JumpTo { channel, message: Some(message) });
     }

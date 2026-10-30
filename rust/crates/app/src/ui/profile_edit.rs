@@ -437,7 +437,7 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
             ui.add_space(10.0);
             ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 30.0), Layout::right_to_left(Align::Center), |ui| {
                 let changed = ed.main.changed() || ed.server.changed();
-                let save = egui::Button::new(RichText::new(if ed.busy { "Saving…" } else { "Save" }).color(Color32::WHITE)).fill(theme::ACCENT());
+                let save = egui::Button::new(RichText::new(if ed.busy { "Saving…" } else { "Save" }).color(Color32::WHITE));
                 if ui.add_enabled(changed && !ed.busy, save).clicked() {
                     actions.push(Action::SaveProfile);
                 }

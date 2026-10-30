@@ -133,27 +133,54 @@ pub fn badge(ui: &Ui, center: egui::Pos2, count: u32, outline: Color32) {
     ui.painter().galley(rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
 }
 
-/// A flat icon button that highlights on hover.
+/// A VGUI icon button.
 pub fn icon_button(ui: &mut Ui, icon: &str, tooltip: &str) -> Response {
-    let r = ui.add(
-        egui::Button::new(egui::RichText::new(icon).font(theme::icon_font(16.0)).color(theme::MUTED()))
-            .frame(false)
-            .min_size(Vec2::splat(30.0)),
-    );
-    if r.hovered() {
-        ui.painter().rect_filled(r.rect, 4, theme::HOVER().gamma_multiply(0.6));
-    }
-    r.on_hover_text(tooltip)
+    icon_button_sized(ui, icon, tooltip, 30.0)
 }
 
-/// A toggle-style icon button (e.g. mute) that turns red when active.
+/// A VGUI icon button `side` points square.
+pub fn icon_button_sized(ui: &mut Ui, icon: &str, tooltip: &str, side: f32) -> Response {
+    vgui_button(ui, Vec2::splat(side), false, |ui, rect| glyph(ui, rect, icon, theme::HEADER())).on_hover_text(tooltip)
+}
+
+/// A VGUI icon button that stays pressed in while `active` (e.g. mute), its icon red then.
 pub fn toggle_icon(ui: &mut Ui, icon: &str, active: bool, tooltip: &str) -> Response {
-    let color = if active { theme::RED() } else { theme::MUTED() };
-    let r = ui.add(egui::Button::new(egui::RichText::new(icon).font(theme::icon_font(16.0)).color(color)).frame(false).min_size(Vec2::splat(30.0)));
-    if r.hovered() {
-        ui.painter().rect_filled(r.rect, 4, theme::HOVER().gamma_multiply(0.6));
-    }
-    r.on_hover_text(tooltip)
+    toggle_icon_colored(ui, icon, active, theme::RED(), tooltip)
+}
+
+/// As [`toggle_icon`], with the icon in `active_color` while active.
+pub fn toggle_icon_colored(ui: &mut Ui, icon: &str, active: bool, active_color: Color32, tooltip: &str) -> Response {
+    let color = if active { active_color } else { theme::HEADER() };
+    vgui_button(ui, Vec2::splat(30.0), active, |ui, rect| glyph(ui, rect, icon, color)).on_hover_text(tooltip)
+}
+
+fn glyph(ui: &Ui, rect: egui::Rect, icon: &str, color: Color32) {
+    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon, theme::icon_font(15.0), color);
+}
+
+/// A VGUI button of `size`, laid out in place, its contents drawn by `paint` into the rect it's given.
+/// Sunk while pressed (or while `held`, for toggles), outlined while it has keyboard focus.
+pub fn vgui_button(ui: &mut Ui, size: Vec2, held: bool, paint: impl FnOnce(&Ui, egui::Rect)) -> Response {
+    let (_, r) = ui.allocate_exact_size(size, Sense::click());
+    paint_vgui_button(ui, &r, held, paint);
+    r
+}
+
+/// Draws a VGUI button over `r` (see `theme::button_frame`). VGUI buttons keep the arrow cursor.
+fn paint_vgui_button(ui: &Ui, r: &Response, held: bool, paint: impl FnOnce(&Ui, egui::Rect)) {
+    plain_cursor(r);
+    let ppp = ui.ctx().pixels_per_point();
+    let look = if r.is_pointer_button_down_on() || held {
+        theme::ButtonLook::Pressed
+    } else if r.has_focus() {
+        theme::ButtonLook::Focused
+    } else {
+        theme::ButtonLook::Default
+    };
+    ui.painter().add(theme::button_frame(r.rect, look, ppp));
+    // Pressed, the contents move right as Source's labels do.
+    let nudge = if look == theme::ButtonLook::Pressed { Vec2::new(2.0 * ppp.floor().max(1.0) / ppp, 0.0) } else { Vec2::ZERO };
+    paint(ui, r.rect.translate(nudge));
 }
 
 pub fn human_size(bytes: u64) -> String {
@@ -192,4 +219,170 @@ pub fn pointer_cursor(ctx: &egui::Context) {
     if hit.enabled && button && hit.interact_rect.contains(pos) && !background && !plain.contains(&hit.id) {
         ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
     }
+}
+
+/// A VGUI scrollbar for a vertical scroll area, drawn after it in the room it keeps on its right, pixel for
+/// pixel as Source's: bevelled arrow buttons at both ends (scrolling while held), a bevelled thumb on a flat
+/// track. Drawn at whole multiples of its size (1x up to 200% display scaling) so its 1 px edges stay
+/// crisp, and it doesn't change when pointed at or pressed. Returns the new offset when it moved the area.
+pub fn scrollbar<R>(ui: &Ui, out: &egui::scroll_area::ScrollAreaOutput<R>) -> Option<f32> {
+    let inner = out.inner_rect;
+    let max_offset = out.content_size.y - inner.height();
+    let ppp = ui.ctx().pixels_per_point();
+    // Laid out in physical pixels: the bar's design is 17 px wide, its buttons 18 px tall.
+    let scale = ppp.floor().max(1.0);
+    let (bar_w, button_h) = (17.0 * scale, 18.0 * scale);
+    let right = (inner.right() * ppp).round();
+    let (top, bottom) = ((inner.top() * ppp).round(), (inner.bottom() * ppp).round());
+    let left = right - bar_w;
+    if max_offset < 1.0 || bottom - top < button_h * 2.0 + 8.0 * scale {
+        return None;
+    }
+    let track = (top + button_h, bottom - button_h);
+    let track_len = track.1 - track.0;
+    let thumb_len = (track_len * inner.height() / out.content_size.y).round().clamp(8.0 * scale, track_len);
+    let travel = (track_len - thumb_len).max(1.0);
+    let thumb_top = |offset: f32| track.0 + (travel * offset / max_offset).round();
+    // Physical pixels to points.
+    let rect = |x0: f32, y0: f32, x1: f32, y1: f32| egui::Rect::from_min_max(egui::pos2(x0 / ppp, y0 / ppp), egui::pos2(x1 / ppp, y1 / ppp));
+
+    let start = out.state.clamped_offset().y.clamp(0.0, max_offset);
+    let id = out.id.with("vgui-scrollbar");
+    // Registered back to front: the thumb and arrows take clicks over the track.
+    let track_r = ui.interact(rect(left, track.0, right, track.1), id.with("track"), Sense::click());
+    let thumb_r = ui.interact(rect(left, thumb_top(start), right, thumb_top(start) + thumb_len), id.with("thumb"), Sense::drag());
+    let up_r = ui.interact(rect(left, top, right, top + button_h), id.with("up"), Sense::click());
+    let down_r = ui.interact(rect(left, bottom - button_h, right, bottom), id.with("down"), Sense::click());
+
+    let mut offset = start;
+    let dt = ui.input(|i| i.stable_dt).min(0.1);
+    for (r, dir) in [(&up_r, -1.0), (&down_r, 1.0)] {
+        if r.is_pointer_button_down_on() {
+            offset += dir * 600.0 * dt;
+            ui.ctx().request_repaint();
+        }
+    }
+    if track_r.clicked() {
+        // A page towards where it was clicked.
+        if let Some(p) = track_r.interact_pointer_pos() {
+            let y = p.y * ppp;
+            if y < thumb_top(start) {
+                offset -= inner.height();
+            } else if y > thumb_top(start) + thumb_len {
+                offset += inner.height();
+            }
+        }
+    }
+    offset += thumb_r.drag_delta().y * ppp * max_offset / travel;
+    let offset = offset.clamp(0.0, max_offset);
+    let moved = (offset - start).abs() > 0.01;
+    if moved {
+        set_scroll_offset(ui.ctx(), out.id, &out.state, offset);
+        ui.ctx().request_repaint();
+    }
+
+    // A mesh of whole-pixel quads: egui's shapes are feathered, which would blur the 1 px edges.
+    let mut mesh = egui::Mesh::default();
+    let mut px = |x0: f32, y0: f32, x1: f32, y1: f32, c: u32| mesh.add_colored_rect(rect(x0, y0, x1, y1), rgb(c));
+    // A bevelled box: light top and left edges, dark right and bottom ones, 1 design pixel wide. The buttons'
+    // top edge runs the full width; the thumb's right edge takes its top-right pixel.
+    let bevel = |px: &mut dyn FnMut(f32, f32, f32, f32, u32), y0: f32, y1: f32, fill: u32, light: (u32, u32), dark: (u32, u32), full_top: bool| {
+        let s = scale;
+        px(left, y0, right, y1, fill);
+        px(left, y0, if full_top { right } else { right - s }, y0 + s, light.0);
+        px(left, y0 + s, left + s, y1 - s, light.0);
+        px(left, y0, left + s, y0 + s, light.1);
+        px(right - s, if full_top { y0 + s } else { y0 }, right, y1 - s, dark.0);
+        px(left, y1 - s, right - s, y1, dark.0);
+        px(right - s, y1 - s, right, y1, dark.1);
+    };
+    px(left, track.0, right, track.1, 0x9b9b9b);
+    let t = thumb_top(offset);
+    bevel(&mut px, t, t + thumb_len, 0x9b9c9c, (0xc0c0c0, 0xc7c7c7), (0x545454, 0x333333), false);
+    for (y0, fill, pointing_down) in [(top, 0x5c5e5e, false), (bottom - button_h, 0x5a5b5b, true)] {
+        bevel(&mut px, y0, y0 + button_h, fill, (0xb7b7b7, 0xc5c5c5), (0x373838, 0x292929), true);
+        // The arrow: five rows widening by a pixel each side, with Source's antialiased edge pixels.
+        for k in 0..5 {
+            let row = if pointing_down { 11 - k } else { 8 + k } as f32;
+            let y = y0 + row * scale;
+            let cell = |px: &mut dyn FnMut(f32, f32, f32, f32, u32), x: i32, c: u32| px(left + x as f32 * scale, y, left + (x + 1) as f32 * scale, y + scale, c);
+            let k = k as i32;
+            cell(&mut px, 8 - k, 0x878888);
+            cell(&mut px, 10 + k, 0x878888);
+            if k == 0 {
+                cell(&mut px, 9, 0xebebeb);
+            } else {
+                cell(&mut px, 9 - k, 0xf5f5f5);
+                cell(&mut px, 9 + k, 0xf5f5f5);
+                for x in 10 - k..9 + k {
+                    cell(&mut px, x, 0xffffff);
+                }
+            }
+        }
+    }
+    ui.painter().add(egui::Shape::mesh(mesh));
+    moved.then_some(offset)
+}
+
+fn rgb(c: u32) -> Color32 {
+    Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
+}
+
+/// Moves a scroll area to `y` from the next frame. egui's scroll state has no setter, but its serde form has
+/// the offset, so it goes out and back through that.
+fn set_scroll_offset(ctx: &egui::Context, id: egui::Id, state: &egui::scroll_area::State, y: f32) {
+    let Ok(mut value) = serde_json::to_value(state) else { return };
+    let Some(offset) = value.get_mut("offset").and_then(|o| o.get_mut("y")) else { return };
+    *offset = serde_json::json!(y);
+    if let Ok(state) = serde_json::from_value::<egui::scroll_area::State>(value) {
+        state.store(ctx, id);
+    }
+}
+
+/// A one-pixel line down from `y.min` to `y.max`, in the pixel column starting at `x`: crisp, where egui's
+/// lines are feathered across two.
+pub fn pixel_vline(painter: &egui::Painter, x: f32, y: egui::Rangef, color: Color32) {
+    let ppp = painter.ctx().pixels_per_point();
+    let x = (x * ppp).round() / ppp;
+    let mut mesh = egui::Mesh::default();
+    mesh.add_colored_rect(egui::Rect::from_x_y_ranges(x..=x + 1.0 / ppp, y), color);
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// As [`pixel_vline`], across: the pixel row starting at `y`.
+pub fn pixel_hline(painter: &egui::Painter, x: egui::Rangef, y: f32, color: Color32) {
+    let ppp = painter.ctx().pixels_per_point();
+    let y = (y * ppp).round() / ppp;
+    let mut mesh = egui::Mesh::default();
+    mesh.add_colored_rect(egui::Rect::from_x_y_ranges(x, y..=y + 1.0 / ppp), color);
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// One-pixel bevel lines just inside `rect` (`inset` pixels in): `top_left` along the top and left, `bottom_right`
+/// along the bottom and right. Whole pixels (at whole multiples, as the scrollbar), so the edges stay crisp.
+fn bevel(painter: &egui::Painter, rect: egui::Rect, top_left: Color32, bottom_right: Color32, inset: f32) {
+    let ppp = painter.ctx().pixels_per_point();
+    let s = ppp.floor().max(1.0);
+    let i = inset * s;
+    let (x0, x1) = ((rect.left() * ppp).round() + i, (rect.right() * ppp).round() - i);
+    let (y0, y1) = ((rect.top() * ppp).round() + i, (rect.bottom() * ppp).round() - i);
+    let r = |a: f32, b: f32, c: f32, d: f32| egui::Rect::from_min_max(egui::pos2(a / ppp, b / ppp), egui::pos2(c / ppp, d / ppp));
+    let mut mesh = egui::Mesh::default();
+    mesh.add_colored_rect(r(x0, y0, x1 - s, y0 + s), top_left);
+    mesh.add_colored_rect(r(x0, y0 + s, x0 + s, y1 - s), top_left);
+    mesh.add_colored_rect(r(x0, y1 - s, x1, y1), bottom_right);
+    mesh.add_colored_rect(r(x1 - s, y0, x1, y1 - s), bottom_right);
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// VGUI's sunken edge, as around text fields: dark above and left, light below and right.
+pub fn sunken_edge(painter: &egui::Painter, rect: egui::Rect) {
+    bevel(painter, rect, rgb(0x353535), rgb(0xb7b7b7), 0.0);
+}
+
+/// A VGUI icon button placed at `rect` rather than laid out.
+pub fn vgui_icon_button(ui: &Ui, id: egui::Id, rect: egui::Rect, icon: &str) -> Response {
+    let r = ui.interact(rect, id, Sense::click());
+    paint_vgui_button(ui, &r, false, |ui, rect| glyph(ui, rect, icon, theme::HEADER()));
+    r
 }

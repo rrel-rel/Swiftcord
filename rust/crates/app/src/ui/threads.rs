@@ -58,7 +58,7 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &UiState, c: &Channel, actions: &mut
     ui.separator();
     let browser = uis.thread_browsers.get(&c.id);
     let active = s.state.threads(c.id);
-    egui::ScrollArea::vertical().id_salt(("threads-list", c.id)).auto_shrink(false).show(ui, |ui| {
+    let scroll = egui::ScrollArea::vertical().id_salt(("threads-list", c.id)).auto_shrink(false).show(ui, |ui| {
         section_label(ui, &format!("{} ACTIVE THREADS", active.len()));
         if active.is_empty() {
             ui.label(RichText::new("No active threads.").color(theme::MUTED()));
@@ -76,6 +76,7 @@ pub fn panel(ui: &mut Ui, s: &Session, uis: &UiState, c: &Channel, actions: &mut
         }
         more_or_spinner(ui, c.id, browser, actions);
     });
+    crate::ui::widgets::scrollbar(ui, &scroll);
 }
 
 fn section_label(ui: &mut Ui, text: &str) {
@@ -136,7 +137,7 @@ pub fn forum(ui: &mut Ui, s: &Session, uis: &UiState, c: &Channel, actions: &mut
     }
     posts.sort_by_key(|t| (t.flags & PINNED_POST == 0, std::cmp::Reverse(t.last_message_id.unwrap_or(t.id))));
 
-    egui::ScrollArea::vertical().id_salt(("forum", c.id)).auto_shrink(false).show(ui, |ui| {
+    let scroll = egui::ScrollArea::vertical().id_salt(("forum", c.id)).auto_shrink(false).show(ui, |ui| {
         egui::Frame::new().inner_margin(egui::Margin::symmetric(24, 16)).show(ui, |ui| {
             ui.set_max_width(760.0_f32.min(ui.available_width()));
             ui.horizontal(|ui| {
@@ -145,7 +146,7 @@ pub fn forum(ui: &mut Ui, s: &Session, uis: &UiState, c: &Channel, actions: &mut
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if can_start_threads(&s.state, c) {
-                        let b = egui::Button::new(RichText::new("New Post").font(theme::font_semibold(14.0)).color(Color32::WHITE)).fill(theme::ACCENT());
+                        let b = egui::Button::new(RichText::new("New Post").font(theme::font_semibold(14.0)).color(Color32::WHITE));
                         if ui.add(b).clicked() {
                             actions.push(Action::StartThread { channel: c.id, message: None, name: String::new() });
                         }
@@ -163,6 +164,7 @@ pub fn forum(ui: &mut Ui, s: &Session, uis: &UiState, c: &Channel, actions: &mut
             more_or_spinner(ui, c.id, browser, actions);
         });
     });
+    crate::ui::widgets::scrollbar(ui, &scroll);
 }
 
 fn post_card(ui: &mut Ui, s: &Session, browser: Option<&crate::threads_glue::Browser>, forum: &Channel, t: &Channel, actions: &mut Vec<Action>) {
@@ -236,7 +238,7 @@ pub fn prompt(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
             ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 32.0), Layout::right_to_left(Align::Center), |ui| {
                 let ready = !p.name.trim().is_empty() && (!p.forum || !p.content.trim().is_empty()) && !p.busy;
                 let label = if p.forum { "Post" } else { "Create" };
-                let go = egui::Button::new(RichText::new(label).color(Color32::WHITE)).fill(theme::ACCENT());
+                let go = egui::Button::new(RichText::new(label).color(Color32::WHITE));
                 submit |= ui.add_enabled(ready, go).clicked();
                 if ui.button("Cancel").clicked() {
                     actions.push(Action::CloseThreadPrompt);

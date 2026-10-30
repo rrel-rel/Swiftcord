@@ -4,6 +4,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
+
 use crate::events::*;
 use crate::models::*;
 use crate::permissions::{self, perm};
@@ -149,6 +151,110 @@ pub struct State {
     voice_states: HashMap<Snowflake, HashMap<Snowflake, VoiceState>>,
     /// Active DM and group DM calls by channel.
     calls: HashMap<Snowflake, CallEvent>,
+}
+
+/// Messages kept per channel in a [`Snapshot`]: the newest, enough to fill the view.
+const SNAPSHOT_MESSAGES: usize = 50;
+
+/// What the client knew when it was closed, saved so the next start can show it straight away, before the
+/// gateway has connected. Live things (typing, calls, voice, member lists) aren't kept.
+#[derive(Serialize, Deserialize)]
+pub struct Snapshot {
+    /// Changes whenever the layout here (or that of the models) does; other versions aren't read.
+    pub version: u32,
+    me: Option<User>,
+    guild_order: Vec<Snowflake>,
+    folders: Option<Vec<GuildFolder>>,
+    guilds: Vec<Guild>,
+    channels: Vec<Channel>,
+    users: Vec<User>,
+    members: Vec<(Snowflake, Vec<Member>)>,
+    /// Each channel's newest messages, oldest first, and whether that reaches its first message.
+    messages: Vec<(Snowflake, Vec<Message>, bool)>,
+    read_states: Vec<ReadStateEntry>,
+    presences: Vec<(Snowflake, String)>,
+    on_mobile: Vec<Snowflake>,
+    activities: Vec<(Snowflake, String)>,
+    own_custom_status: Vec<Activity>,
+    own_status: Option<String>,
+    own_show_activity: Option<bool>,
+    guild_settings: Vec<(Snowflake, UserGuildSettings)>,
+}
+
+impl Snapshot {
+    pub const VERSION: u32 = 1;
+}
+
+impl State {
+    /// What to save for the next start.
+    pub fn snapshot(&self) -> Snapshot {
+        let messages = self
+            .messages
+            .iter()
+            .filter(|(_, m)| m.loaded && !m.has_newer)
+            .map(|(id, m)| {
+                let sent: Vec<&Message> = m.list.values().filter(|msg| msg.pending.is_none()).collect();
+                let kept = sent.len().min(SNAPSHOT_MESSAGES);
+                let newest = sent[sent.len() - kept..].iter().map(|msg| (*msg).clone()).collect();
+                (*id, newest, m.reached_start && kept == sent.len())
+            })
+            .filter(|(_, list, _): &(Snowflake, Vec<Message>, bool)| !list.is_empty())
+            .collect();
+        Snapshot {
+            version: Snapshot::VERSION,
+            me: self.me.clone(),
+            guild_order: self.guild_order.clone(),
+            folders: self.folders.clone(),
+            guilds: self.guilds.values().cloned().collect(),
+            channels: self.channels.values().cloned().collect(),
+            users: self.users.values().cloned().collect(),
+            members: self.members.iter().map(|(g, m)| (*g, m.values().cloned().collect())).collect(),
+            messages,
+            read_states: self.read_states.values().cloned().collect(),
+            presences: self.presences.iter().map(|(u, p)| (*u, p.as_str().to_owned())).collect(),
+            on_mobile: self.on_mobile.iter().copied().collect(),
+            activities: self.activities.iter().map(|(u, a)| (*u, a.clone())).collect(),
+            own_custom_status: self.own_custom_status.clone(),
+            own_status: self.own_settings.status.clone(),
+            own_show_activity: self.own_settings.show_activity,
+            guild_settings: self.guild_settings.iter().map(|(g, s)| (*g, s.clone())).collect(),
+        }
+    }
+
+    /// The state as saved; replaced wholesale when the gateway's READY arrives.
+    pub fn from_snapshot(s: Snapshot) -> State {
+        let mut state = State {
+            me: s.me,
+            guild_order: s.guild_order,
+            folders: s.folders,
+            guilds: s.guilds.into_iter().map(|g| (g.id, g)).collect(),
+            channels: s.channels.into_iter().map(|c| (c.id, c)).collect(),
+            users: s.users.into_iter().map(|u| (u.id, u)).collect(),
+            members: s.members.into_iter().map(|(g, m)| (g, m.into_iter().filter_map(|m| Some((m.user.as_ref().map(|u| u.id).or(m.user_id)?, m))).collect())).collect(),
+            read_states: s.read_states.into_iter().map(|e| (e.id, e)).collect(),
+            presences: s.presences.into_iter().map(|(u, p)| (u, PresenceStatus::parse(&p))).collect(),
+            on_mobile: s.on_mobile.into_iter().collect(),
+            activities: s.activities.into_iter().collect(),
+            own_custom_status: s.own_custom_status,
+            own_settings: crate::proto::StatusSettings { status: s.own_status, show_activity: s.own_show_activity },
+            guild_settings: s.guild_settings.into_iter().collect(),
+            ..State::default()
+        };
+        for (channel, list, reached_start) in s.messages {
+            state.messages.insert(
+                channel,
+                ChannelMessages {
+                    list: list.into_iter().map(|m| (m.id, m)).collect(),
+                    reached_start,
+                    // Not fetched in this session: history loads as usual once connected.
+                    loaded: false,
+                    has_newer: false,
+                },
+            );
+        }
+        state.revision += 1;
+        state
+    }
 }
 
 impl State {
@@ -1336,6 +1442,26 @@ mod tests {
 
     fn list_member(id: u64, status: &str) -> String {
         format!(r#"{{"member":{{"user":{{"id":"{id}","username":"u{id}"}},"roles":[],"presence":{{"user":{{"id":"{id}"}},"status":"{status}","activities":[{{"type":0,"name":"Chess"}}]}}}}}}"#)
+    }
+
+    #[test]
+    fn a_snapshot_restores_what_was_known() {
+        let mut s = ready_state();
+        let dm = Snowflake(300);
+        let msg = |id: u64| ev_message(&format!(r#"{{"id":"{id}","channel_id":"300","author":{{"id":"2","username":"friend"}},"content":"hi {id}"}}"#));
+        s.add_history(dm, vec![msg(400), msg(399)], 50);
+        let json = serde_json::to_string(&s.snapshot()).unwrap();
+        let back = State::from_snapshot(serde_json::from_str(&json).unwrap());
+        assert_eq!(back.me.as_ref().map(|m| m.id), Some(Snowflake(1)));
+        assert_eq!(back.channel(Snowflake(200)).map(|c| c.name.clone()), s.channel(Snowflake(200)).map(|c| c.name.clone()));
+        // Permissions survive (they're read back from numbers as well as strings).
+        let view = |st: &State, c: u64| st.permissions(Snowflake(c)) & perm::VIEW_CHANNEL != 0;
+        assert!(view(&back, 200) && !view(&back, 201));
+        let list: Vec<String> = back.messages(dm).unwrap().list.values().map(|m| m.content.clone()).collect();
+        assert_eq!(list, ["hi 399", "hi 400"]);
+        assert!(!back.messages(dm).unwrap().loaded);
+        assert_eq!(back.last_read(dm), s.last_read(dm));
+        assert_eq!(back.private_channels().len(), 1);
     }
 
     #[test]

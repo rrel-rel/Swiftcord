@@ -21,7 +21,7 @@ pub fn picker(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
         .default_width(440.0)
         .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
         .show(ui.ctx(), |ui| {
-            egui::ScrollArea::vertical().max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
+            let scroll = egui::ScrollArea::vertical().max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
                 let mut heading = None;
                 for (i, s) in p.sources.iter().enumerate() {
                     let screen = matches!(s.source, Source::Monitor { .. });
@@ -54,6 +54,7 @@ pub fn picker(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                     ui.label(RichText::new("Nothing to share was found.").color(theme::MUTED()));
                 }
             });
+            crate::ui::widgets::scrollbar(ui, &scroll);
 
             ui.add_space(8.0);
             ui.separator();
@@ -75,7 +76,7 @@ pub fn picker(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
 
             ui.add_space(6.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let go = ui.add_enabled(p.selected.is_some(), egui::Button::new(RichText::new("Go Live").color(Color32::WHITE)).fill(theme::ACCENT()));
+                let go = ui.add_enabled(p.selected.is_some(), egui::Button::new(RichText::new("Go Live").color(Color32::WHITE)));
                 if go.clicked() {
                     actions.push(Action::StartShare);
                 }

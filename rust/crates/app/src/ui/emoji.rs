@@ -351,7 +351,7 @@ fn skin_tone_button(ui: &mut Ui, catalog: &mut Catalog) -> bool {
         (0..=5).map(|tone| catalog.by_name.get("raised_hand").map_or_else(|| "✋".to_owned(), |&i| catalog.toned(&catalog.unicode[i], tone))).collect();
     let ctx = ui.ctx().clone();
     let image = |ch: &str| crate::emoji_sheet::image(&ctx, ch, Vec2::splat(22.0));
-    let b = ui.add(egui::Button::image(image(&hands[catalog.skin_tone])).frame_when_inactive(false).min_size(Vec2::splat(32.0))).on_hover_text("Skin tone");
+    let b = ui.add(egui::Button::image(image(&hands[catalog.skin_tone])).min_size(Vec2::splat(32.0))).on_hover_text("Skin tone");
     let mut open = was_open;
     if b.clicked() {
         open = !open;
@@ -412,7 +412,7 @@ pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog
                 }
             };
             let mut hovered: Option<String> = None;
-            egui::ScrollArea::vertical().auto_shrink(false).max_height(size.y - 90.0).show_rows(ui, CELL, rows.len(), |ui, range| {
+            let scroll = egui::ScrollArea::vertical().auto_shrink(false).max_height(size.y - 90.0).show_rows(ui, CELL, rows.len(), |ui, range| {
                 for row in &rows[range] {
                     ui.horizontal(|ui| {
                         ui.set_height(CELL);
@@ -457,6 +457,7 @@ pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog
                     });
                 }
             });
+            crate::ui::widgets::scrollbar(ui, &scroll);
             ui.separator();
             // Unicode emoji are named by their character; show their :shortcode: instead.
             let footer = hovered.map(|n| format!(":{}:", catalog.name_of(&n).unwrap_or(&n))).unwrap_or_default();

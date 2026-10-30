@@ -422,10 +422,23 @@ impl App {
         app.ui.user_volumes = app.settings.user_volumes.iter().map(|(&u, &v)| (Snowflake(u), v)).collect();
         app.ui.muted_users = app.settings.muted_users.iter().map(|&u| Snowflake(u)).collect();
         match credentials::load_token() {
-            Some(token) => app.start_session(token),
+            Some(token) => {
+                app.start_session(token);
+                app.restore_session();
+            }
             None => app.start_qr_login(),
         }
         app
+    }
+
+    /// Shows what was open when the app was last closed, until the gateway's READY replaces it.
+    fn restore_session(&mut self) {
+        let Some(s) = &mut self.session else { return };
+        let Some(saved) = crate::session_cache::load() else { return };
+        s.state = State::from_snapshot(saved.state);
+        self.ui.guild = saved.guild.filter(|g| s.state.guild(*g).is_some());
+        self.ui.channel_for = saved.channel_for.into_iter().collect();
+        self.ui.collapsed = saved.collapsed.into_iter().collect();
     }
 
     fn send_event(tx: &UnboundedSender<AppEvent>, ctx: &egui::Context, e: AppEvent) {
@@ -494,6 +507,7 @@ impl App {
             }
         }
         credentials::delete_token();
+        crate::session_cache::delete();
         self.watch = None;
         self.sharing = None;
         self.voice = None;
@@ -1011,7 +1025,7 @@ impl App {
 
     fn select_channel(&mut self, channel: Snowflake) {
         self.ui.channel_for.insert(self.ui.guild.unwrap_or_default(), channel);
-        if let Some(s) = &self.session {
+        if let Some(s) = self.session.as_ref().filter(|s| s.ready) {
             if s.state.channel(channel).is_some_and(|c| c.is_private()) {
                 // Learn whether a call is going on in this DM.
                 s.gateway.request_call(channel);
@@ -1025,8 +1039,11 @@ impl App {
         }
         self.ui.threads_panel = None;
         // Forums have posts (threads), not messages.
+        let ready = self.session.as_ref().is_some_and(|s| s.ready);
         if self.session.as_ref().and_then(|s| s.state.channel(channel)).is_some_and(|c| c.is_forum()) {
-            crate::threads_glue::load(self, channel, false);
+            if ready {
+                crate::threads_glue::load(self, channel, false);
+            }
             return;
         }
         self.ui.kept_unread = None;
@@ -1040,7 +1057,8 @@ impl App {
     }
 
     fn mark_viewed(&mut self, channel: Snowflake) {
-        let Some(s) = &self.session else { return };
+        // Not before READY: the saved read states may be stale, and acknowledging needs the connection.
+        let Some(s) = self.session.as_ref().filter(|s| s.ready) else { return };
         if let Some(last) = s.state.channel(channel).and_then(|c| c.last_message_id) {
             if s.state.is_unread(channel) || s.state.mention_count(channel) > 0 {
                 self.queue_ack(channel, last);
@@ -1156,12 +1174,16 @@ impl App {
     }
 
     pub(crate) fn apply(&mut self, action: Action) {
+        // Showing the saved session, not yet connected: what needs Discord does nothing.
+        if self.session.as_ref().is_some_and(|s| !s.ready) && !works_offline(&action) {
+            return;
+        }
         match action {
             Action::SelectGuild(g) => {
                 self.ui.guild = g;
                 self.ui.emoji_picker = None;
                 self.ui.pins = None;
-                if let (Some(g), Some(s)) = (g, &mut self.session) {
+                if let (Some(g), Some(s)) = (g, self.session.as_mut().filter(|s| s.ready)) {
                     if s.subscribed.insert(g) {
                         s.gateway.subscribe_guild(g);
                     }
@@ -1183,7 +1205,7 @@ impl App {
                 let guild = self.session.as_ref().and_then(|s| s.state.channel(c)).map(|ch| ch.guild_id);
                 if let Some(g) = guild.filter(|g| *g != self.ui.guild) {
                     self.ui.guild = g;
-                    if let (Some(g), Some(s)) = (g, &mut self.session) {
+                    if let (Some(g), Some(s)) = (g, self.session.as_mut().filter(|s| s.ready)) {
                         if s.subscribed.insert(g) {
                             s.gateway.subscribe_guild(g);
                         }
@@ -1780,7 +1802,52 @@ impl App {
     }
 }
 
+/// Whether an action works without a connection to Discord (only views, local settings, and signing in or
+/// out). The rest do nothing while the saved session is shown before the gateway is ready.
+fn works_offline(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::SelectGuild(_)
+            | Action::SelectChannel(_)
+            | Action::Discard { .. }
+            | Action::PickFiles(_)
+            | Action::AddFiles { .. }
+            | Action::PasteImage { .. }
+            | Action::Notice(_)
+            | Action::CloseGifPicker
+            | Action::CloseProfile
+            | Action::CloseThreadPrompt
+            | Action::ToggleMemberList
+            | Action::SetUserVolume { .. }
+            | Action::ToggleLocalMute(_)
+            | Action::PlayWeb(_)
+            | Action::CloseProfileEditor
+            | Action::CloseModal
+            | Action::CloseSearch
+            | Action::SetStreamAudio { .. }
+            | Action::CloseSharePicker
+            | Action::ShowStream(_)
+            | Action::ToggleFullscreen
+            | Action::ToggleMute
+            | Action::ToggleDeafen
+            | Action::Copy(_)
+            | Action::OpenLink(_)
+            | Action::LogOut
+            | Action::StartQrLogin
+            | Action::SaveSettings(_)
+            | Action::OpenSettings
+            | Action::BrowserLogin
+            | Action::TokenLogin(_)
+    )
+}
+
 impl crate::window::App for App {
+    fn on_exit(&mut self) {
+        if let Some(s) = self.session.as_ref().filter(|s| s.ready) {
+            crate::session_cache::save(&s.state, &self.ui);
+        }
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut crate::window::Frame) {
         // Bounded so a flood of events can't starve a frame.
         for _ in 0..512 {
