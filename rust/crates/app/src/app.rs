@@ -510,7 +510,16 @@ impl App {
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         self.rt.spawn(async move {
             let (etx, mut erx) = unbounded_channel();
-            tokio::spawn(swiftcord_core::remote_auth::run(etx));
+            tokio::spawn(swiftcord_core::remote_auth::run(etx, |captcha| async move {
+                match tokio::task::spawn_blocking(move || platform::captcha_webview::solve_blocking(&captcha)).await {
+                    Ok(Ok(answer)) => answer,
+                    Ok(Err(e)) => {
+                        tracing::warn!("couldn't open the captcha window: {e}");
+                        None
+                    }
+                    Err(_) => None,
+                }
+            }));
             while let Some(e) = erx.recv().await {
                 Self::send_event(&tx, &ctx, AppEvent::RemoteAuth(e));
             }
@@ -605,6 +614,7 @@ impl App {
                 self.start_session(token);
             }
             AppEvent::TokenRejected(e) => {
+                tracing::warn!("token rejected: {e}");
                 self.ui.login.busy = false;
                 self.ui.login.error = Some(format!("That token didn't work: {e}"));
             }

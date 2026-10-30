@@ -1,6 +1,7 @@
 //! QR-code login through Discord's remote-auth gateway: the phone app scans a code and approves the
 //! sign-in, and the token is handed over encrypted to a key only this client holds.
 
+use std::future::Future;
 use std::time::Duration;
 
 use base64::Engine;
@@ -16,7 +17,7 @@ use tokio::time::{interval_at, Instant};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use crate::rest::Rest;
+use crate::rest::{ApiError, Captcha, Rest};
 
 const URL: &str = "wss://remote-auth-gateway.discord.gg/?v=2";
 
@@ -26,6 +27,8 @@ pub enum RemoteAuthEvent {
     QrCode(String),
     /// Scanned; waiting for the user to approve on their phone.
     Scanned { username: String },
+    /// Discord wants a captcha solved before it hands over the token; the solver has been asked.
+    Captcha,
     Token(String),
     /// The user cancelled on their phone, or the code expired; a new one can be requested.
     Cancelled,
@@ -48,8 +51,13 @@ struct Msg {
 }
 
 /// Runs one remote-auth session, reporting progress on `tx` until a token arrives or the session ends.
-pub async fn run(tx: mpsc::UnboundedSender<RemoteAuthEvent>) {
-    let result = session(&tx).await;
+/// `solve` answers a captcha (the hCaptcha response token), or returns `None` if the user gave up.
+pub async fn run<F, Fut>(tx: mpsc::UnboundedSender<RemoteAuthEvent>, solve: F)
+where
+    F: Fn(Captcha) -> Fut,
+    Fut: Future<Output = Option<String>>,
+{
+    let result = session(&tx, solve).await;
     if let Err(e) = result {
         let _ = tx.send(RemoteAuthEvent::Failed(e.to_string()));
     }
@@ -57,7 +65,11 @@ pub async fn run(tx: mpsc::UnboundedSender<RemoteAuthEvent>) {
 
 type BoxErr = Box<dyn std::error::Error + Send + Sync>;
 
-async fn session(tx: &mpsc::UnboundedSender<RemoteAuthEvent>) -> Result<(), BoxErr> {
+async fn session<F, Fut>(tx: &mpsc::UnboundedSender<RemoteAuthEvent>, solve: F) -> Result<(), BoxErr>
+where
+    F: Fn(Captcha) -> Fut,
+    Fut: Future<Output = Option<String>>,
+{
     let key = tokio::task::spawn_blocking(|| RsaPrivateKey::new(&mut rand::thread_rng(), 2048)).await??;
     let public_der = key.to_public_key().to_public_key_der()?;
     let decrypt = |b64: &str| -> Result<Vec<u8>, BoxErr> {
@@ -108,7 +120,20 @@ async fn session(tx: &mpsc::UnboundedSender<RemoteAuthEvent>) -> Result<(), BoxE
                     }
                     "pending_login" => {
                         let ticket = msg.ticket.unwrap_or_default();
-                        let encrypted = Rest::new("").remote_auth_login(&ticket).await?;
+                        let mut rest = Rest::new("");
+                        let encrypted = loop {
+                            match rest.remote_auth_login(&ticket).await {
+                                Err(ApiError::CaptchaRequired(captcha)) => {
+                                    let _ = tx.send(RemoteAuthEvent::Captcha);
+                                    let Some(answer) = solve(captcha.clone()).await else {
+                                        let _ = tx.send(RemoteAuthEvent::Cancelled);
+                                        return Ok(());
+                                    };
+                                    rest = Rest::with_captcha("", &captcha, &answer);
+                                }
+                                result => break result?,
+                            }
+                        };
                         let token = String::from_utf8(decrypt(&encrypted)?)?;
                         let _ = tx.send(RemoteAuthEvent::Token(token));
                         let _ = ws.close(None).await;

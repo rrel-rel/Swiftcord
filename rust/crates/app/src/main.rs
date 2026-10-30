@@ -54,9 +54,29 @@ fn init_logging() {
     }));
 }
 
+/// Renders through Direct3D 12 only: by default wgpu also starts the Vulkan and OpenGL drivers just to list
+/// their adapters. And it asks for small GPU memory blocks: the default reserves them 64 MB (system RAM)
+/// and 128 MB (video memory) at a time, far more than a chat client draws with.
+fn wgpu_options() -> eframe::WgpuConfiguration {
+    use eframe::egui_wgpu::{WgpuSetup, wgpu};
+    let mut options = eframe::WgpuConfiguration::default();
+    if let WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
+        setup.instance_descriptor.backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::DX12);
+        let device_descriptor = setup.device_descriptor.clone();
+        setup.device_descriptor = std::sync::Arc::new(move |adapter| wgpu::DeviceDescriptor {
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
+            ..device_descriptor(adapter)
+        });
+    }
+    options
+}
+
 fn main() -> eframe::Result {
     if std::env::args().any(|a| a == platform::login_webview::ARG) {
         platform::login_webview::run_child();
+    }
+    if std::env::args().any(|a| a == platform::captcha_webview::ARG) {
+        platform::captcha_webview::run_child();
     }
     if std::env::args().any(|a| a == platform::video_window::ARG) {
         platform::video_window::run_child();
@@ -82,6 +102,7 @@ fn main() -> eframe::Result {
             .with_min_inner_size([760.0, 460.0])
             .with_icon(window_icon()),
         renderer: eframe::Renderer::Wgpu,
+        wgpu_options: wgpu_options(),
         centered: true,
         ..Default::default()
     };

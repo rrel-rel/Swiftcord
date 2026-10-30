@@ -10,6 +10,8 @@ use crate::theme;
 pub struct LoginUi {
     qr: Option<TextureHandle>,
     scanned: Option<String>,
+    /// Discord asked for a captcha after the phone approved; it's open in its own window.
+    captcha: bool,
     qr_failed: Option<String>,
     token: String,
     show_token: bool,
@@ -21,6 +23,7 @@ impl LoginUi {
     pub fn reset_qr(&mut self) {
         self.qr = None;
         self.scanned = None;
+        self.captcha = false;
         self.qr_failed = None;
     }
 
@@ -31,9 +34,13 @@ impl LoginUi {
                 self.qr = render_qr(&url).map(|img| ctx.load_texture("login-qr", img, TextureOptions::NEAREST));
             }
             RemoteAuthEvent::Scanned { username } => self.scanned = Some(username),
+            RemoteAuthEvent::Captcha => self.captcha = true,
             RemoteAuthEvent::Failed(e) => {
                 tracing::warn!("QR login failed: {e}");
                 self.qr = None;
+                // Otherwise "Check your phone!" stays up and hides the failure.
+                self.scanned = None;
+                self.captcha = false;
                 self.qr_failed = Some(e);
             }
             RemoteAuthEvent::Token(_) | RemoteAuthEvent::Cancelled => {}
@@ -121,6 +128,11 @@ pub fn show(ui: &mut egui::Ui, login: &mut LoginUi, actions: &mut Vec<Action>) {
                     ui.vertical_centered(|ui| {
                         let size = 176.0;
                         match (&login.qr, &login.scanned, &login.qr_failed) {
+                            (_, Some(_), _) if login.captcha => {
+                                ui.add_space(40.0);
+                                ui.label(RichText::new("One more step").font(theme::font_bold(18.0)).color(theme::HEADER()));
+                                ui.label("Solve the captcha in the window that opened.");
+                            }
                             (_, Some(user), _) => {
                                 ui.add_space(40.0);
                                 ui.label(RichText::new("Check your phone!").font(theme::font_bold(18.0)).color(theme::HEADER()));
@@ -134,9 +146,10 @@ pub fn show(ui: &mut egui::Ui, login: &mut LoginUi, actions: &mut Vec<Action>) {
                                 ui.label(RichText::new("Sign in with QR code").font(theme::font_semibold(16.0)).color(theme::HEADER()));
                                 ui.label(RichText::new("Scan this with the Discord mobile app.").color(theme::MUTED()));
                             }
-                            (None, None, Some(_)) => {
+                            (None, None, Some(e)) => {
                                 ui.add_space(50.0);
-                                ui.label(RichText::new("The QR code couldn't load.").color(theme::MUTED()));
+                                ui.label(RichText::new("QR sign-in didn't work.").color(theme::MUTED()));
+                                ui.label(RichText::new(e).small().color(theme::MUTED()));
                                 if ui.button("Try again").clicked() {
                                     actions.push(Action::StartQrLogin);
                                 }

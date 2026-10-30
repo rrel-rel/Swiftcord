@@ -1,3 +1,4 @@
+pub mod captcha_webview;
 pub mod credentials;
 pub mod inline_player;
 pub mod login_webview;

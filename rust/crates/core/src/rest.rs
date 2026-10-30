@@ -31,12 +31,28 @@ pub enum ApiError {
     RateLimited,
     #[error("unexpected response: {0}")]
     Json(#[from] serde_json::Error),
+    /// Discord wants an hCaptcha solved; retry with [`Rest::with_captcha`].
+    #[error("captcha required")]
+    CaptchaRequired(Captcha),
+}
+
+/// A captcha challenge from a 400 response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Captcha {
+    pub captcha_sitekey: String,
+    #[serde(default)]
+    pub captcha_rqdata: Option<String>,
+    #[serde(default)]
+    pub captcha_rqtoken: Option<String>,
+    #[serde(default)]
+    pub captcha_session_id: Option<String>,
 }
 
 impl ApiError {
     pub fn status(&self) -> Option<StatusCode> {
         match self {
             ApiError::Api { status, .. } => Some(*status),
+            ApiError::CaptchaRequired(_) => Some(StatusCode::BAD_REQUEST),
             ApiError::Http(e) => e.status(),
             _ => None,
         }
@@ -120,7 +136,26 @@ pub struct Rest {
 
 impl Rest {
     pub fn new(token: &str) -> Rest {
+        Rest::with_headers(token, HeaderMap::new())
+    }
+
+    /// A client whose requests carry the answer to `captcha`, to retry the request that asked for it.
+    pub fn with_captcha(token: &str, captcha: &Captcha, answer: &str) -> Rest {
         let mut headers = HeaderMap::new();
+        let fields = [
+            ("X-Captcha-Key", Some(answer)),
+            ("X-Captcha-Rqtoken", captcha.captcha_rqtoken.as_deref()),
+            ("X-Captcha-Session-Id", captcha.captcha_session_id.as_deref()),
+        ];
+        for (name, value) in fields {
+            if let Some(v) = value.and_then(|v| HeaderValue::from_str(v).ok()) {
+                headers.insert(name, v);
+            }
+        }
+        Rest::with_headers(token, headers)
+    }
+
+    fn with_headers(token: &str, mut headers: HeaderMap) -> Rest {
         // An empty token makes an anonymous client, e.g. for QR login.
         if let Some(mut v) = Some(token).filter(|t| !t.is_empty()).and_then(|t| HeaderValue::from_str(t).ok()) {
             v.set_sensitive(true);
@@ -220,6 +255,12 @@ impl Rest {
                     message: String,
                 }
                 let text = resp.text().await.unwrap_or_default();
+                tracing::debug!("{key} failed with {status}: {text}");
+                if status == StatusCode::BAD_REQUEST && text.contains("\"captcha_key\"") {
+                    if let Ok(c) = serde_json::from_str::<Captcha>(&text) {
+                        return Err(ApiError::CaptchaRequired(c));
+                    }
+                }
                 let e: E = serde_json::from_str(&text).unwrap_or_default();
                 let message = if e.message.is_empty() { status.canonical_reason().unwrap_or("error").to_owned() } else { e.message };
                 return Err(ApiError::Api { status, code: e.code, message });

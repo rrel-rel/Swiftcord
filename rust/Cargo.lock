@@ -5464,6 +5464,7 @@ dependencies = [
  "tracing-subscriber",
  "velato",
  "vello_cpu",
+ "webview2-com",
  "windows",
  "winresource",
  "wry",
