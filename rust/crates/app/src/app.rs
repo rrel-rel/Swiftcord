@@ -203,6 +203,8 @@ pub enum Action {
     LogOut,
     StartQrLogin,
     SaveSettings(crate::settings::Settings),
+    /// Start (or stop starting) when the user signs in to Windows.
+    SetLaunchAtStartup(bool),
     /// Show the app in this palette and accent (while choosing in Settings; Cancel restores the saved one).
     OpenSettings,
     BrowserLogin,
@@ -1798,7 +1800,18 @@ impl App {
                 let (inputs, outputs) = swiftcord_voice::list_devices();
                 let cameras = swiftcord_voice::camera::list();
                 let share_activity = self.session.as_ref().is_none_or(|s| s.state.shares_activity());
-                self.ui.settings_draft = Some(ui::settings::Draft { settings: self.settings.clone(), inputs, outputs, cameras, mic_test: None, share_activity, saved_share_activity: share_activity });
+                let launch_at_startup = platform::startup::enabled();
+                self.ui.settings_draft = Some(ui::settings::Draft {
+                    settings: self.settings.clone(),
+                    inputs,
+                    outputs,
+                    cameras,
+                    mic_test: None,
+                    share_activity,
+                    saved_share_activity: share_activity,
+                    launch_at_startup,
+                    saved_launch_at_startup: launch_at_startup,
+                });
             }
             Action::SaveSettings(s) => {
                 let (vad, noise_suppression) = (s.vad_threshold_db, s.noise_suppression);
@@ -1807,6 +1820,11 @@ impl App {
                 if let Some(v) = self.voice.as_ref().and_then(|c| c.voice()) {
                     v.set_vad_threshold(vad);
                     v.set_noise_suppression(noise_suppression);
+                }
+            }
+            Action::SetLaunchAtStartup(on) => {
+                if let Err(e) = platform::startup::set(on) {
+                    self.banner(format!("Couldn't change launching at startup: {e}"));
                 }
             }
             Action::BrowserLogin => {
@@ -1858,6 +1876,7 @@ fn works_offline(action: &Action) -> bool {
             | Action::LogOut
             | Action::StartQrLogin
             | Action::SaveSettings(_)
+            | Action::SetLaunchAtStartup(_)
             | Action::OpenSettings
             | Action::BrowserLogin
             | Action::TokenLogin(_)

@@ -17,6 +17,9 @@ pub struct Draft {
     /// "Share my activity" (an account setting), and what it was when the window opened.
     pub share_activity: bool,
     pub saved_share_activity: bool,
+    /// Opening at sign-in (Windows' setting, not ours), and what it was when the window opened.
+    pub launch_at_startup: bool,
+    pub saved_launch_at_startup: bool,
 }
 
 /// A level meter from -80 to 0 dBFS with a marker at the voice-activity threshold.
@@ -85,6 +88,11 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
         ui.label(RichText::new("Sounds are off while you're deafened or on Do Not Disturb.").small().color(theme::FAINT()));
 
         ui.add_space(12.0);
+        ui.label(RichText::new("STARTUP").font(theme::font_semibold(12.0)).color(theme::MUTED()));
+        ui.checkbox(&mut draft.launch_at_startup, "Launch Swiftcord when Windows starts");
+        ui.label(RichText::new("Opens when you sign in to Windows. Also listed in Task Manager under Startup apps.").small().color(theme::FAINT()));
+
+        ui.add_space(12.0);
         ui.label(RichText::new("ACTIVITY PRIVACY").font(theme::font_semibold(12.0)).color(theme::MUTED()));
         ui.checkbox(&mut draft.share_activity, "Share my activity");
         ui.label(
@@ -100,6 +108,9 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                 actions.push(Action::SaveSettings(draft.settings.clone()));
                 if draft.share_activity != draft.saved_share_activity {
                     actions.push(Action::SetShareActivity(draft.share_activity));
+                }
+                if draft.launch_at_startup != draft.saved_launch_at_startup {
+                    actions.push(Action::SetLaunchAtStartup(draft.launch_at_startup));
                 }
                 close = true;
             }
