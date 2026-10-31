@@ -164,7 +164,7 @@ pub fn show(ui: &mut egui::Ui, login: &mut LoginUi, actions: &mut Vec<Action>) {
             });
             ui.add_space(12.0);
             ui.label(
-                RichText::new("Swiftcord is an unofficial client. Using it may break Discord's Terms of Service.")
+                RichText::new("'08cord is an unofficial client. Using it may break Discord's Terms of Service.")
                     .small()
                     .color(theme::FAINT()),
             );

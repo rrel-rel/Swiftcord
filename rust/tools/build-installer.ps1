@@ -1,4 +1,4 @@
-# Builds the release exes (x64 and ARM64) and the installer, target\installer\Swiftcord-Setup-<version>.exe.
+# Builds the release exes (x64 and ARM64) and the installer, target\installer\08cord-Setup-<version>.exe.
 # Needs the x86_64-pc-windows-msvc and aarch64-pc-windows-msvc Rust targets, the MSVC build tools for both, and
 # Inno Setup 6 (winget install JRSoftware.InnoSetup).
 param([switch]$SkipBuild)
@@ -26,4 +26,4 @@ $iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFile
 if (-not $iscc) { throw "Inno Setup 6 isn't installed (winget install JRSoftware.InnoSetup)" }
 & $iscc "/DAppVersion=$version" "$root\installer\swiftcord.iss"
 if ($LASTEXITCODE -ne 0) { throw "the installer didn't build" }
-Get-Item "$root\target\installer\Swiftcord-Setup-$version.exe"
+Get-Item "$root\target\installer\08cord-Setup-$version.exe"

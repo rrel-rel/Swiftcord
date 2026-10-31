@@ -3,8 +3,8 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut res = winresource::WindowsResource::new();
         res.set_icon("assets/icon.ico")
-            .set("ProductName", "Swiftcord")
-            .set("FileDescription", "Swiftcord")
+            .set("ProductName", "'08cord")
+            .set("FileDescription", "'08cord")
             .set("LegalCopyright", "GPL-3.0-or-later");
         if let Err(e) = res.compile() {
             println!("cargo:warning=couldn't embed the icon: {e}");
@@ -12,6 +12,7 @@ fn main() {
         compile_shaders();
     }
     println!("cargo:rerun-if-changed=assets/icon.ico");
+    println!("cargo:rerun-if-changed=build.rs");
 }
 
 /// Compiles the renderer's HLSL to bytecode now, so the app never loads a shader compiler.

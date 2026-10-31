@@ -113,9 +113,9 @@ fn set_icon_and_tip(data: &mut NOTIFYICONDATAW) {
         }
     }
     let tip = match mentions {
-        0 => "Swiftcord".to_owned(),
-        1 => "Swiftcord - 1 unread mention".to_owned(),
-        n => format!("Swiftcord - {n} unread mentions"),
+        0 => super::APP_NAME.to_owned(),
+        1 => format!("{} - 1 unread mention", super::APP_NAME),
+        n => format!("{} - {n} unread mentions", super::APP_NAME),
     };
     data.szTip = [0; 128];
     for (slot, c) in data.szTip.iter_mut().take(127).zip(tip.encode_utf16()) {
@@ -191,9 +191,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
 fn menu(hwnd: HWND) {
     unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
-        let _ = AppendMenuW(menu, MF_STRING, MENU_OPEN, w!("Open Swiftcord"));
+        let _ = AppendMenuW(menu, MF_STRING, MENU_OPEN, w!("Open '08cord"));
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-        let _ = AppendMenuW(menu, MF_STRING, MENU_QUIT, w!("Quit Swiftcord"));
+        let _ = AppendMenuW(menu, MF_STRING, MENU_QUIT, w!("Quit '08cord"));
         let _ = SetMenuDefaultItem(menu, MENU_OPEN as u32, 0);
         let mut at = POINT::default();
         let _ = GetCursorPos(&mut at);

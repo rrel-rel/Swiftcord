@@ -891,7 +891,7 @@ impl App {
             }
             Notice::Ring(channel) => {
                 let caller = s.state.channel(channel).map(|c| c.label()).unwrap_or_default();
-                platform::notify(&format!("call-{}", channel.0), format!("{caller} is calling you"), "Open Swiftcord to answer.".into(), channel.0);
+                platform::notify(&format!("call-{}", channel.0), format!("{caller} is calling you"), "Open '08cord to answer.".into(), channel.0);
             }
             Notice::RingStopped(_) => {}
             Notice::FrecencyChanged => self.load_frecency(),

@@ -35,7 +35,7 @@ const CAPTURE_SCRIPT: &str = r#"
 
 /// Entry point of the child process.
 pub fn run_child() -> ! {
-    let token = super::webview_window::run("Sign in to Discord — Swiftcord", (960.0, 720.0), |window, proxy| {
+    let token = super::webview_window::run("Sign in to Discord — '08cord", (960.0, 720.0), |window, proxy| {
         let data_dir = directories::ProjectDirs::from("", "", "Swiftcord")
             .map(|d| d.data_local_dir().join("WebView2"))
             .unwrap_or_else(|| std::env::temp_dir().join("Swiftcord-WebView2"));

@@ -89,7 +89,7 @@ fn main() -> anyhow::Result<()> {
         .expect("Tokio runtime");
 
     let viewport = egui::ViewportBuilder::default()
-        .with_title("Swiftcord")
+        .with_title("'08cord")
         .with_inner_size([1100.0, 680.0])
         .with_min_inner_size([760.0, 460.0]);
     let handle = rt.handle().clone();

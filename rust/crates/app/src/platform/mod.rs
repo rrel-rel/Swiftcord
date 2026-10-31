@@ -42,24 +42,32 @@ pub fn idle_time() -> std::time::Duration {
     std::time::Duration::from_millis(unsafe { GetTickCount() }.wrapping_sub(info.dwTime) as u64)
 }
 
+/// The app's name, as shown. Folders, the saved sign-in and Windows' records still say Swiftcord (the
+/// name it had first), so renaming it kept everyone's settings and sign-in.
+pub const APP_NAME: &str = "'08cord";
+
 const APP_ID: &str = "Swiftcord.Rust";
 
-/// Unpackaged apps need their AppUserModelID registered for toasts to show under their own name.
+/// Unpackaged apps need their AppUserModelID registered for toasts to show under their own name and icon
+/// (which Windows reads from a file: the app's, written next to the settings).
 pub fn register_app_id() {
     use windows::core::HSTRING;
     use windows::Win32::System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
     let key = HSTRING::from(format!(r"Software\Classes\AppUserModelId\{APP_ID}"));
-    let name: Vec<u16> = "Swiftcord".encode_utf16().chain([0]).collect();
-    unsafe {
-        let _ = RegSetKeyValueW(
-            HKEY_CURRENT_USER,
-            &key,
-            &HSTRING::from("DisplayName"),
-            REG_SZ.0,
-            Some(name.as_ptr().cast()),
-            (name.len() * 2) as u32,
-        );
+    let icon = data_dir().join("icon.png");
+    let png: &[u8] = include_bytes!("../../assets/icon.png");
+    if std::fs::read(&icon).ok().as_deref() != Some(png) {
+        let _ = std::fs::create_dir_all(data_dir());
+        let _ = std::fs::write(&icon, png);
     }
+    let set = |name: &str, value: &str| {
+        let value: Vec<u16> = value.encode_utf16().chain([0]).collect();
+        unsafe {
+            let _ = RegSetKeyValueW(HKEY_CURRENT_USER, &key, &HSTRING::from(name), REG_SZ.0, Some(value.as_ptr().cast()), (value.len() * 2) as u32);
+        }
+    };
+    set("DisplayName", APP_NAME);
+    set("IconUri", &icon.to_string_lossy());
 }
 
 /// A one-off Windows toast (message toasts are kept per channel; see `crate::notifications`). Clicking it

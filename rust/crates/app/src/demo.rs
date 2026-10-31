@@ -1,4 +1,4 @@
-//! A local "Swiftcord demo" conversation with sample embeds and links, for checking rendering without
+//! A local "'08cord demo" conversation with sample embeds and links, for checking rendering without
 //! touching real conversations. Enabled with `SWIFTCORD_DEMO=1`; nothing is sent to Discord.
 
 use swiftcord_core::events::parse_lenient_list;
@@ -18,7 +18,7 @@ pub fn install(state: &mut State) {
     state.add_channel(Channel {
         id: CHANNEL,
         kind: ChannelType::Dm,
-        name: Some("Swiftcord demo".into()),
+        name: Some("'08cord demo".into()),
         recipients: vec![bot],
         // Sorts first in the DM list.
         last_message_id: Some(swiftcord_core::nonce_now()),

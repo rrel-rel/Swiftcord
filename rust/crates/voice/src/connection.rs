@@ -1473,7 +1473,7 @@ fn check_video_codec(d: &Value, events: &Arc<dyn Fn(Event) + Send + Sync>) {
     if let Some(codec) = d["video_codec"].as_str() {
         tracing::info!("stream video codec: {codec}");
         if !codec.eq_ignore_ascii_case("H264") {
-            events(Event::Error(format!("This stream uses {codec} video, which Swiftcord can't play yet (only H.264).")));
+            events(Event::Error(format!("This stream uses {codec} video, which '08cord can't play yet (only H.264).")));
         }
     }
 }

@@ -204,7 +204,7 @@ fn button(ui: &mut Ui, c: &Component, msg: &Message, cx: &mut Ctx) {
         }
         // Premium buttons open a store page, which Swiftcord doesn't have.
         (_, 6) => {
-            r.on_hover_text("Purchases aren't available in Swiftcord.");
+            r.on_hover_text("Purchases aren't available in '08cord.");
         }
         _ => {
             if r.clicked() {

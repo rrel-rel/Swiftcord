@@ -53,7 +53,7 @@ pub fn run_child() -> ! {
     let title = args.next().filter(|t| !t.is_empty()).unwrap_or_else(|| "Video".into());
     let home = site(&url).unwrap_or_default().to_owned();
 
-    super::webview_window::run(&format!("{title} — Swiftcord"), (854.0, 480.0), |window, _| {
+    super::webview_window::run(&format!("{title} — {}", super::APP_NAME), (854.0, 480.0), |window, _| {
         let data_dir = crate::platform::data_dir().join("WebView2-video");
         let mut context = wry::WebContext::new(Some(data_dir));
         // Players refuse to load without a page embedding them (YouTube's "Error 153"), so the player goes in

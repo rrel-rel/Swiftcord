@@ -111,7 +111,7 @@ impl CommandDraft {
                 }
                 ty::BOOLEAN => f.flag.map(|b| json!(b)),
                 ty::USER | ty::CHANNEL | ty::ROLE | ty::MENTIONABLE => f.picked.as_ref().map(|(id, _)| json!(id)),
-                ty::ATTACHMENT if o.required => return Err(format!("“{}” needs a file, which Swiftcord can't attach to commands yet.", o.name)),
+                ty::ATTACHMENT if o.required => return Err(format!("“{}” needs a file, which '08cord can't attach to commands yet.", o.name)),
                 _ => None,
             };
             match value {

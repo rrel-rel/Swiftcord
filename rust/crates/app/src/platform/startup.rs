@@ -37,7 +37,7 @@ pub fn refresh() {
 }
 
 fn write_command() -> Result<(), String> {
-    let command = command().ok_or("couldn't find Swiftcord's exe")?;
+    let command = command().ok_or("couldn't find '08cord's exe")?;
     let command: Vec<u16> = command.encode_utf16().chain([0]).collect();
     unsafe { RegSetKeyValueW(HKEY_CURRENT_USER, RUN, NAME, REG_SZ.0, Some(command.as_ptr().cast()), (command.len() * 2) as u32) }
         .ok()

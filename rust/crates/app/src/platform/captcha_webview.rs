@@ -53,7 +53,7 @@ pub fn run_child() -> ! {
     // Keep "</script>" in the data from ending the script early.
     let page = PAGE.replace("__PARAMS__", &params.to_string().replace("</", "<\\/"));
 
-    let answer = super::webview_window::run("Captcha — Swiftcord", (520.0, 640.0), |window, proxy| {
+    let answer = super::webview_window::run("Captcha — '08cord", (520.0, 640.0), |window, proxy| {
         // Kept between runs: hCaptcha goes easier on a browser it has seen before.
         let mut context = wry::WebContext::new(Some(super::data_dir().join("WebView2-captcha")));
         let webview = WebViewBuilder::new_with_web_context(&mut context)

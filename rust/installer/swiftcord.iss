@@ -1,15 +1,16 @@
-; Swiftcord installer (Inno Setup 6). Build with tools\build-installer.ps1, which compiles the release exes
+; '08cord installer (Inno Setup 6). Build with tools\build-installer.ps1, which compiles the release exes
 ; for x64 and ARM64 first; this installs whichever matches the PC.
 ;
-; It installs per user, without administrator rights, to %LOCALAPPDATA%\Programs\Swiftcord. Settings, the
-; sign-in and caches live in %LOCALAPPDATA%\Swiftcord and are kept when uninstalling.
+; It installs per user, without administrator rights, to %LOCALAPPDATA%\Programs\'08cord (or where an earlier
+; version went: it was Swiftcord). Settings, the sign-in and caches live in %LOCALAPPDATA%\Swiftcord, under the
+; app's first name, and are kept when uninstalling.
 
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
-#define AppName "Swiftcord"
+#define AppName "'08cord"
 #define ExeName "swiftcord.exe"
-; Must match APP_ID in crates/app/src/platform/mod.rs, so notifications show under Swiftcord.
+; Must match APP_ID in crates/app/src/platform/mod.rs, so notifications show under '08cord.
 #define AppUserModelId "Swiftcord.Rust"
 
 [Setup]
@@ -17,7 +18,7 @@ AppId={{6F3C2B1E-9A4D-4E8B-B2C7-5D1A0F7E3C91}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion} (test build)
-AppPublisher=Swiftcord
+AppPublisher='08cord
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -27,7 +28,7 @@ ArchitecturesAllowed=x64compatible or arm64
 ArchitecturesInstallIn64BitMode=x64compatible or arm64
 MinVersion=10.0.17763
 OutputDir=..\target\installer
-OutputBaseFilename=Swiftcord-Setup-{#AppVersion}
+OutputBaseFilename=08cord-Setup-{#AppVersion}
 SetupIconFile=..\crates\app\assets\icon.ico
 InfoBeforeFile=TESTERS.txt
 UninstallDisplayIcon={app}\{#ExeName}
@@ -49,6 +50,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; The native build for the PC: ARM64 on ARM devices, x64 everywhere else.
 Source: "..\target\aarch64-pc-windows-msvc\release\{#ExeName}"; DestDir: "{app}"; Check: IsArm64; Flags: ignoreversion
 Source: "..\target\x86_64-pc-windows-msvc\release\{#ExeName}"; DestDir: "{app}"; Check: not IsArm64; Flags: ignoreversion
+
+[InstallDelete]
+; The shortcuts from when it was called Swiftcord.
+Type: files; Name: "{autoprograms}\Swiftcord.lnk"
+Type: files; Name: "{autodesktop}\Swiftcord.lnk"
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#ExeName}"; AppUserModelID: "{#AppUserModelId}"
@@ -74,7 +80,7 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if (CurStep = ssPostInstall) and not WebView2Installed and not WizardSilent then
-    MsgBox('Microsoft Edge WebView2 doesn''t seem to be installed. Swiftcord will still work, but signing in ' +
+    MsgBox('Microsoft Edge WebView2 doesn''t seem to be installed. ''08cord will still work, but signing in ' +
       'through the browser and playing YouTube videos need it. You can get it from ' +
       'https://developer.microsoft.com/microsoft-edge/webview2/ (the "Evergreen Bootstrapper").', mbInformation, MB_OK);
 end;

@@ -1,4 +1,4 @@
-# Swiftcord for Windows (Rust)
+# '08cord for Windows (Rust)
 
 A lightweight native Discord client for Windows 11, written in Rust with [egui](https://github.com/emilk/egui).
 
@@ -42,5 +42,5 @@ cargo run -p swiftcord-voice --example devices   # check audio devices
 
 ## Notes
 
-Swiftcord is an unofficial client and uses your user token; that's against Discord's Terms of Service, so use it
+'08cord is an unofficial client and uses your user token; that's against Discord's Terms of Service, so use it
 at your own risk.
