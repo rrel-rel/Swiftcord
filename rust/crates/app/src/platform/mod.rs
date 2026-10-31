@@ -5,6 +5,7 @@ pub mod d3d11;
 pub mod discord_install;
 pub mod inline_player;
 pub mod login_webview;
+pub mod tray;
 pub mod video_window;
 pub mod webview_window;
 pub mod wic;

@@ -1,0 +1,140 @@
+//! The notification-area (tray) icon: closing the window hides it there, and the icon brings it back (a
+//! click) or quits (its menu). The icon's messages go to a hidden window of ours, dispatched by winit's own
+//! message loop; what they ask for is picked up with [`Tray::take_events`].
+
+use std::sync::{Mutex, OnceLock};
+
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Shell::{
+    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION, NIN_SELECT, NOTIFYICON_VERSION_4,
+    NOTIFYICONDATAW, Shell_NotifyIconW,
+};
+use windows::Win32::UI::WindowsAndMessaging::*;
+use windows::core::{PCWSTR, w};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrayEvent {
+    /// Bring the window back.
+    Show,
+    Quit,
+}
+
+static EVENTS: Mutex<Vec<TrayEvent>> = Mutex::new(Vec::new());
+/// The message the icon sends its window.
+const CALLBACK: u32 = WM_APP + 1;
+const MENU_OPEN: usize = 1;
+const MENU_QUIT: usize = 2;
+/// Enter on the icon (`NIN_SELECT | NINF_KEY`, which the bindings don't name).
+const NIN_KEYSELECT: u32 = NIN_SELECT | 1;
+
+pub struct Tray {
+    hwnd: HWND,
+}
+
+impl Tray {
+    /// Adds the icon; `None` if the shell wouldn't have it.
+    pub fn new() -> Option<Tray> {
+        unsafe {
+            let instance: HINSTANCE = GetModuleHandleW(None).ok()?.into();
+            let class = w!("SwiftcordTrayWindow");
+            let wc = WNDCLASSW { lpfnWndProc: Some(window_proc), hInstance: instance, lpszClassName: class, ..Default::default() };
+            RegisterClassW(&wc);
+            // A plain hidden window rather than a message-only one: the menu needs one that can come to the front.
+            let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), class, w!("Swiftcord"), WS_POPUP, 0, 0, 0, 0, None, None, Some(instance), None).ok()?;
+            add_icon(hwnd).then_some(Tray { hwnd })
+        }
+    }
+
+    /// What the icon has been asked for since last time.
+    pub fn take_events() -> Vec<TrayEvent> {
+        std::mem::take(&mut *EVENTS.lock().unwrap())
+    }
+}
+
+impl Drop for Tray {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_DELETE, &icon_data(self.hwnd));
+            let _ = DestroyWindow(self.hwnd);
+        }
+    }
+}
+
+fn icon_data(hwnd: HWND) -> NOTIFYICONDATAW {
+    NOTIFYICONDATAW { cbSize: size_of::<NOTIFYICONDATAW>() as u32, hWnd: hwnd, uID: 1, ..Default::default() }
+}
+
+/// Puts the icon in the notification area (again, after Explorer restarts).
+fn add_icon(hwnd: HWND) -> bool {
+    unsafe {
+        let mut data = icon_data(hwnd);
+        data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+        data.uCallbackMessage = CALLBACK;
+        // The exe's icon (resource 1), at the size the notification area uses.
+        let instance: Option<HINSTANCE> = GetModuleHandleW(None).ok().map(Into::into);
+        let (cx, cy) = (GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
+        if let Ok(icon) = LoadImageW(instance, PCWSTR(1 as *const u16), IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR) {
+            data.hIcon = HICON(icon.0);
+        }
+        for (slot, c) in data.szTip.iter_mut().zip("Swiftcord".encode_utf16()) {
+            *slot = c;
+        }
+        if !Shell_NotifyIconW(NIM_ADD, &data).as_bool() {
+            return false;
+        }
+        // Version 4: clicks arrive as NIN_SELECT, the menu key and right-clicks as WM_CONTEXTMENU.
+        data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+        let _ = Shell_NotifyIconW(NIM_SETVERSION, &data);
+        true
+    }
+}
+
+/// Explorer's broadcast when the taskbar is (re)created, when icons have to be added again.
+fn taskbar_created() -> u32 {
+    static MSG: OnceLock<u32> = OnceLock::new();
+    *MSG.get_or_init(|| unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) })
+}
+
+fn push(event: TrayEvent) {
+    EVENTS.lock().unwrap().push(event);
+}
+
+unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if msg == CALLBACK {
+        match lparam.0 as u32 & 0xFFFF {
+            NIN_SELECT | NIN_KEYSELECT => push(TrayEvent::Show),
+            WM_CONTEXTMENU => menu(hwnd),
+            _ => {}
+        }
+        return LRESULT(0);
+    }
+    if msg == taskbar_created() {
+        add_icon(hwnd);
+        return LRESULT(0);
+    }
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+/// The icon's menu, at the pointer.
+fn menu(hwnd: HWND) {
+    unsafe {
+        let Ok(menu) = CreatePopupMenu() else { return };
+        let _ = AppendMenuW(menu, MF_STRING, MENU_OPEN, w!("Open Swiftcord"));
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        let _ = AppendMenuW(menu, MF_STRING, MENU_QUIT, w!("Quit Swiftcord"));
+        let _ = SetMenuDefaultItem(menu, MENU_OPEN as u32, 0);
+        let mut at = POINT::default();
+        let _ = GetCursorPos(&mut at);
+        // Without coming to the front, the menu wouldn't close when clicking elsewhere.
+        let _ = SetForegroundWindow(hwnd);
+        let chosen = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, at.x, at.y, None, hwnd, None);
+        let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
+        let _ = DestroyMenu(menu);
+        match chosen.0 as usize {
+            MENU_OPEN => push(TrayEvent::Show),
+            MENU_QUIT => push(TrayEvent::Quit),
+            _ => {}
+        }
+    }
+}

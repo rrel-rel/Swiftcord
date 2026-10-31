@@ -52,7 +52,7 @@ pub fn run(
         }
     });
     let app = create_app(&ctx);
-    let mut shell = Shell { ctx, viewport, app, window: None, next_repaint: None };
+    let mut shell = Shell { ctx, viewport, app, window: None, next_repaint: None, tray: None };
     event_loop.run_app(&mut shell)
 }
 
@@ -62,6 +62,8 @@ struct Shell {
     app: Box<dyn App>,
     window: Option<AppWindow>,
     next_repaint: Option<Instant>,
+    /// The notification-area icon the window hides to when closed.
+    tray: Option<crate::platform::tray::Tray>,
 }
 
 struct AppWindow {
@@ -71,6 +73,8 @@ struct AppWindow {
     info: ViewportInfo,
     actions: Vec<ActionRequested>,
     shown: bool,
+    /// Closed to the tray.
+    hidden: bool,
     modifiers: ModifiersState,
 }
 
@@ -86,7 +90,13 @@ impl ApplicationHandler<Instant> for Shell {
         match AppWindow::new(&self.ctx, event_loop, self.viewport.clone()) {
             // The first frame is drawn right away: a hidden window gets no redraw events, and it's shown once drawn.
             Ok(mut w) => match w.frame(&self.ctx, self.app.as_mut()) {
-                Ok(()) => self.window = Some(w),
+                Ok(()) => {
+                    self.window = Some(w);
+                    self.tray = crate::platform::tray::Tray::new();
+                    if self.tray.is_none() {
+                        tracing::warn!("couldn't add the tray icon; closing the window will quit");
+                    }
+                }
                 Err(e) => {
                     tracing::error!("couldn't draw the window: {e}");
                     event_loop.exit();
@@ -99,11 +109,9 @@ impl ApplicationHandler<Instant> for Shell {
         }
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, when: Instant) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, when: Instant) {
         if when <= Instant::now() {
-            if let Some(w) = &self.window {
-                w.window.request_redraw();
-            }
+            self.repaint(event_loop);
         } else if self.next_repaint.is_none_or(|t| when < t) {
             self.next_repaint = Some(when);
         }
@@ -112,6 +120,8 @@ impl ApplicationHandler<Instant> for Shell {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         let Some(w) = &mut self.window else { return };
         match event {
+            // Closing hides to the tray (quitting is in its menu), unless there's no tray icon.
+            WindowEvent::CloseRequested if self.tray.is_some() => w.hide(),
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
                 if let Err(e) = w.frame(&self.ctx, self.app.as_mut()) {
@@ -142,12 +152,20 @@ impl ApplicationHandler<Instant> for Shell {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        for event in crate::platform::tray::Tray::take_events() {
+            match event {
+                crate::platform::tray::TrayEvent::Show => {
+                    if let Some(w) = &mut self.window {
+                        w.show();
+                    }
+                }
+                crate::platform::tray::TrayEvent::Quit => event_loop.exit(),
+            }
+        }
         match self.next_repaint {
             Some(t) if t <= Instant::now() => {
                 self.next_repaint = None;
-                if let Some(w) = &self.window {
-                    w.window.request_redraw();
-                }
+                self.repaint(event_loop);
                 event_loop.set_control_flow(ControlFlow::Wait);
             }
             Some(t) => event_loop.set_control_flow(ControlFlow::WaitUntil(t)),
@@ -156,7 +174,36 @@ impl ApplicationHandler<Instant> for Shell {
     }
 }
 
+impl Shell {
+    /// Draws a frame soon; hidden or minimized, Windows sends no redraws, so the app's logic (gateway events,
+    /// notifications, voice) runs right away instead.
+    fn repaint(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(w) = &mut self.window else { return };
+        if w.hidden || w.window.is_minimized() == Some(true) {
+            if let Err(e) = w.frame(&self.ctx, self.app.as_mut()) {
+                tracing::error!("drawing failed: {e}");
+                event_loop.exit();
+            }
+        } else {
+            w.window.request_redraw();
+        }
+    }
+}
+
 impl AppWindow {
+    fn hide(&mut self) {
+        self.window.set_visible(false);
+        self.hidden = true;
+    }
+
+    fn show(&mut self) {
+        self.hidden = false;
+        self.window.set_visible(true);
+        self.window.set_minimized(false);
+        self.window.focus_window();
+        self.window.request_redraw();
+    }
+
     fn new(ctx: &egui::Context, event_loop: &ActiveEventLoop, viewport: egui::ViewportBuilder) -> anyhow::Result<Self> {
         let window = Arc::new(egui_winit::create_window(ctx, event_loop, &viewport.with_visible(false))?);
         // The exe's own icon (resource 1, embedded by build.rs).
@@ -179,10 +226,10 @@ impl AppWindow {
         );
         let mut info = ViewportInfo::default();
         egui_winit::update_viewport_info(&mut info, ctx, &window, true);
-        Ok(Self { window, egui_winit, painter, info, actions: Vec::new(), shown: false, modifiers: ModifiersState::empty() })
+        Ok(Self { window, egui_winit, painter, info, actions: Vec::new(), shown: false, hidden: false, modifiers: ModifiersState::empty() })
     }
 
-    /// One frame: input in, the app's logic and UI, then drawing. Minimized, only the logic runs.
+    /// One frame: input in, the app's logic and UI, then drawing. Minimized or hidden, only the logic runs.
     fn frame(&mut self, ctx: &egui::Context, app: &mut dyn App) -> anyhow::Result<()> {
         let mut frame = Frame { window: self.window.clone() };
         egui_winit::update_viewport_info(&mut self.info, ctx, &self.window, false);
@@ -191,7 +238,7 @@ impl AppWindow {
         self.info.events.clear();
 
         let size = self.window.inner_size();
-        if self.shown && (self.window.is_minimized() == Some(true) || size.width == 0 || size.height == 0) {
+        if self.shown && (self.hidden || self.window.is_minimized() == Some(true) || size.width == 0 || size.height == 0) {
             let output = ctx.run_logic(&input, |ctx| app.logic(ctx, &mut frame));
             self.handle_platform_output(output.platform_output);
             for (id, commands) in output.viewport_commands {
