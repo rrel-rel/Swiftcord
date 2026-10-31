@@ -17,7 +17,6 @@ use crate::Snowflake;
 
 const API_BASE: &str = "https://discord.com/api/v10/";
 const MAX_RATE_LIMIT_RETRIES: u32 = 3;
-pub const USER_AGENT: &str = concat!("Swiftcord-rs/", env!("CARGO_PKG_VERSION"));
 /// Recent mentions asked for at a time.
 pub const MENTIONS_PAGE: usize = 25;
 
@@ -163,8 +162,13 @@ impl Rest {
         }
         headers.insert("X-Discord-Locale", HeaderValue::from_static("en-US"));
         headers.insert("Accept-Language", HeaderValue::from_static("en-US"));
+        // As the official desktop client describes itself (see `identity`).
+        if let Ok(v) = HeaderValue::from_str(&crate::identity::super_properties("en-US")) {
+            headers.insert("X-Super-Properties", v);
+        }
+        headers.insert("X-Debug-Options", HeaderValue::from_static("bugReporterEnabled"));
         let http = reqwest::Client::builder()
-            .user_agent(USER_AGENT)
+            .user_agent(crate::identity::user_agent())
             .default_headers(headers)
             .timeout(Duration::from_secs(120))
             .build()

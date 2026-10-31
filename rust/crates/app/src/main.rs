@@ -68,6 +68,8 @@ fn main() -> anyhow::Result<()> {
 
     init_logging();
     tracing::info!("Swiftcord {} starting", env!("CARGO_PKG_VERSION"));
+    // Before anything connects: Swiftcord identifies as the desktop client installed here.
+    platform::discord_install::apply();
     platform::register_app_id();
 
     // Two workers are plenty for a chat client's network I/O.

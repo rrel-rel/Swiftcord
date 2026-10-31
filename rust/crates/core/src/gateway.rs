@@ -258,7 +258,9 @@ async fn run_session(
     let resuming = session.id.is_some();
     let base = session.resume_url.as_deref().filter(|_| resuming).unwrap_or(&config.url);
     let url = format!("{}/?v=10&encoding=json&compress=zlib-stream", base.trim_end_matches('/'));
-    let (mut ws, _) = tokio_tungstenite::connect_async(url.as_str()).await?;
+    let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(url.as_str())?;
+    request.headers_mut().insert("User-Agent", crate::identity::user_agent().parse()?);
+    let (mut ws, _) = tokio_tungstenite::connect_async(request).await?;
 
     let mut inflate = Inflater::new();
     let mut interval: Option<Duration> = None;
@@ -379,12 +381,7 @@ fn identify_payload(config: &GatewayConfig) -> String {
             "token": config.token,
             "capabilities": 0,
             "compress": false,
-            "properties": {
-                "os": "Windows",
-                "browser": "Swiftcord",
-                "device": "Swiftcord",
-                "system_locale": config.locale,
-            },
+            "properties": crate::identity::properties(&config.locale),
             // "unknown" lets Discord apply the saved status (idle, do not disturb, invisible) rather than forcing online.
             "presence": { "status": "unknown", "since": 0, "activities": [], "afk": false },
             "client_state": { "guild_versions": {} },

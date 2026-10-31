@@ -34,6 +34,8 @@ rfd = "0.17"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 directories = "6"
 memmap2 = "0.9"
+# Finding version strings in Discord's executable (platform::discord_install).
+memchr = "2"
 tauri-winrt-notification = "0.8"
 wry = "0.57"
 # The captcha window answers a discord.com request itself, which needs WebView2 directly (same version as wry's).

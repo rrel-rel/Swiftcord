@@ -77,6 +77,7 @@ where
     let mut request = URL.into_client_request()?;
     // The gateway rejects connections that don't come from Discord's web origin.
     request.headers_mut().insert("Origin", "https://discord.com".parse()?);
+    request.headers_mut().insert("User-Agent", crate::identity::user_agent().parse()?);
     let (mut ws, _) = tokio_tungstenite::connect_async(request).await?;
 
     let mut heartbeat = interval_at(Instant::now() + Duration::from_secs(3600), Duration::from_secs(3600));

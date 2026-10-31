@@ -4,6 +4,7 @@ pub mod cdn;
 pub mod commands;
 pub mod events;
 pub mod gateway;
+pub mod identity;
 pub mod interactions;
 pub mod links;
 pub mod markdown;

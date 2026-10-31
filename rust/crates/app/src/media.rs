@@ -31,7 +31,7 @@ impl MediaLoader {
 
     pub fn new(rt: tokio::runtime::Handle, disk: PathBuf) -> Self {
         let http = reqwest::Client::builder()
-            .user_agent(swiftcord_core::rest::USER_AGENT)
+            .user_agent(swiftcord_core::identity::user_agent())
             .build()
             .expect("HTTP client");
         let _ = std::fs::create_dir_all(&disk);

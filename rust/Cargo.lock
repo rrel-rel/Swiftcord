@@ -4629,6 +4629,7 @@ dependencies = [
  "directories",
  "egui",
  "egui-winit",
+ "memchr",
  "memmap2",
  "parking_lot 0.12.5",
  "qrcode",
