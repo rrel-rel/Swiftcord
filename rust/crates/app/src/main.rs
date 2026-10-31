@@ -67,8 +67,15 @@ fn main() -> anyhow::Result<()> {
         platform::video_window::run_child();
     }
 
+    // Already running: its window comes back instead.
+    if !platform::single_instance::claim() {
+        return Ok(());
+    }
+
     init_logging();
     tracing::info!("Swiftcord {} starting", env!("CARGO_PKG_VERSION"));
+    platform::startup::refresh();
+    let start_in_tray = std::env::args().any(|a| a == platform::startup::ARG) && settings::Settings::load().start_minimized;
     // Before anything connects: Swiftcord identifies as the desktop client installed here.
     platform::discord_install::apply();
     platform::register_app_id();
@@ -87,7 +94,7 @@ fn main() -> anyhow::Result<()> {
         .with_min_inner_size([760.0, 460.0]);
     let handle = rt.handle().clone();
     let _ = clip::RUNTIME.set(handle.clone());
-    let result = window::run(viewport, move |ctx| Box::new(app::App::new(ctx, handle)));
+    let result = window::run(viewport, start_in_tray, move |ctx| Box::new(app::App::new(ctx, handle)));
     tracing::info!("exiting");
     rt.shutdown_timeout(std::time::Duration::from_millis(500));
     Ok(result?)

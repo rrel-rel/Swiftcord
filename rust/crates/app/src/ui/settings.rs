@@ -90,6 +90,7 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
         ui.add_space(12.0);
         ui.label(RichText::new("STARTUP").font(theme::font_semibold(12.0)).color(theme::MUTED()));
         ui.checkbox(&mut draft.launch_at_startup, "Launch Swiftcord when Windows starts");
+        ui.add_enabled(draft.launch_at_startup, egui::Checkbox::new(&mut draft.settings.start_minimized, "Start in the tray"));
         ui.label(RichText::new("Opens when you sign in to Windows. Also listed in Task Manager under Startup apps.").small().color(theme::FAINT()));
 
         ui.add_space(12.0);

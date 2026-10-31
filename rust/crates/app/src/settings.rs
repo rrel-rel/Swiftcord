@@ -28,6 +28,8 @@ pub struct Settings {
     pub user_volumes: std::collections::HashMap<u64, f32>,
     /// People muted for us alone in calls.
     pub muted_users: std::collections::HashSet<u64>,
+    /// Launched at sign-in, open in the tray rather than with the window up.
+    pub start_minimized: bool,
 }
 
 impl Default for Settings {
@@ -46,6 +48,7 @@ impl Default for Settings {
             call_sounds: true,
             user_volumes: Default::default(),
             muted_users: Default::default(),
+            start_minimized: true,
         }
     }
 }

@@ -484,6 +484,11 @@ impl State {
         out
     }
 
+    /// Total mentions everywhere (DM messages count as mentions), for the taskbar and tray badges.
+    pub fn total_mentions(&self) -> u32 {
+        self.channels.values().map(|c| self.mention_count(c.id)).sum()
+    }
+
     /// Total mentions across DMs, for the Home button.
     pub fn dm_mentions(&self) -> u32 {
         self.channels.values().filter(|c| c.is_private()).map(|c| self.mention_count(c.id)).sum()
@@ -1176,6 +1181,11 @@ impl State {
     }
 
     /// Our status: `Offline` when invisible.
+    /// The status chosen in the settings (not the session's, which is Idle while away).
+    pub fn chosen_status(&self) -> PresenceStatus {
+        self.own_settings.status.as_deref().map_or_else(|| self.own_status(), PresenceStatus::parse)
+    }
+
     pub fn own_status(&self) -> PresenceStatus {
         self.me.as_ref().map_or(PresenceStatus::Offline, |m| self.presence(m.id))
     }

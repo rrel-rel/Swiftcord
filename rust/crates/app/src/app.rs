@@ -385,6 +385,11 @@ pub struct App {
     images_checked: Instant,
     /// When the user last typed, clicked or moved the mouse.
     last_input: Instant,
+    /// The mentions and window visibility last shown on the taskbar and tray badges.
+    badge: Option<(u32, bool)>,
+    /// Since when (ms since the epoch) the user has been away from the computer, as told to Discord.
+    away_since: Option<u64>,
+    away_checked: Instant,
 }
 
 impl App {
@@ -421,6 +426,9 @@ impl App {
             images,
             images_checked: Instant::now(),
             last_input: Instant::now(),
+            badge: None,
+            away_since: None,
+            away_checked: Instant::now(),
         };
         app.ui.hide_members = app.settings.hide_members;
         app.ui.stream_audio = (app.settings.stream_volume, app.settings.stream_audio_when_deafened);
@@ -828,6 +836,10 @@ impl App {
 
     fn on_ready(&mut self) {
         self.members_requested.clear();
+        // A new connection starts out present; still away, say so again.
+        if self.away_since.is_some() {
+            self.send_presence();
+        }
         let Some(s) = &mut self.session else { return };
         if crate::demo::enabled() {
             crate::demo::install(&mut s.state);
@@ -885,9 +897,7 @@ impl App {
             Notice::FrecencyChanged => self.load_frecency(),
             Notice::OwnStatusChanged => {
                 // Chosen on another device: this session follows.
-                if let Some(s) = &self.session {
-                    s.gateway.update_presence(s.state.own_status(), s.state.own_custom_status());
-                }
+                self.send_presence();
             }
             Notice::OwnVoiceState | Notice::VoiceServer(_) | Notice::Other(..) => {
                 crate::voice_glue::on_notice(self, notice);
@@ -983,6 +993,52 @@ impl App {
             crate::notifications::Toast::Pop { count: n } => platform::toast::show(tag, count(n), body, true, m.channel_id.0),
             crate::notifications::Toast::Update { count: n } => platform::toast::update(tag, count(n), body, n, m.channel_id.0),
         }
+    }
+
+    /// The session's presence: the chosen status, and whether the user is away (see `check_away`).
+    fn send_presence(&self) {
+        if let Some(s) = self.session.as_ref().filter(|s| s.ready) {
+            s.gateway.update_presence(s.state.chosen_status(), s.state.own_custom_status(), self.away_since);
+        }
+    }
+
+    /// Tells Discord when the user has been away from the computer for a while, and when they're back, as
+    /// the desktop client does: away, Online shows as Idle, and Discord sends notifications to the phone.
+    fn check_away(&mut self, ctx: &egui::Context) {
+        const AWAY_AFTER: Duration = Duration::from_secs(10 * 60);
+        const CHECK_EVERY: Duration = Duration::from_secs(15);
+        // Checked even while nothing else happens (hidden in the tray, say).
+        ctx.request_repaint_after(CHECK_EVERY);
+        if self.away_checked.elapsed() < CHECK_EVERY {
+            return;
+        }
+        self.away_checked = Instant::now();
+        let idle = platform::idle_time();
+        let away = idle >= AWAY_AFTER;
+        if away == self.away_since.is_some() {
+            return;
+        }
+        self.away_since = away.then(|| {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+            now.saturating_sub(idle).as_millis() as u64
+        });
+        tracing::info!("{}", if away { "away from the computer" } else { "back at the computer" });
+        self.send_presence();
+    }
+
+    /// Unread mentions on the taskbar button and the tray icon, as Discord shows them.
+    fn update_badges(&mut self, frame: &crate::window::Frame) {
+        let mentions = self.session.as_ref().map_or(0, |s| s.state.total_mentions());
+        // The taskbar button is new each time the window comes back from the tray, without its overlay.
+        let state = (mentions, frame.is_visible());
+        if self.badge == Some(state) {
+            return;
+        }
+        self.badge = Some(state);
+        if let Some(hwnd) = frame.hwnd() {
+            platform::badge::set_taskbar(hwnd, mentions);
+        }
+        platform::tray::set_mentions(mentions);
     }
 
     /// Takes away the toasts of channels that have been read since (here or elsewhere), or that the window is
@@ -1499,7 +1555,7 @@ impl App {
             Action::SetStatus(status) => {
                 let Some(s) = &mut self.session else { return };
                 // The gateway update shows it right away; the settings write keeps it across sessions and devices.
-                s.gateway.update_presence(status, s.state.own_custom_status());
+                s.gateway.update_presence(status, s.state.own_custom_status(), self.away_since);
                 s.state.set_own_status(status);
                 let rest = s.rest.clone();
                 self.spawn(async move {
@@ -1890,7 +1946,7 @@ impl crate::window::App for App {
         }
     }
 
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut crate::window::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut crate::window::Frame) {
         // Bounded so a flood of events can't starve a frame.
         for _ in 0..512 {
             match self.rx.try_recv() {
@@ -1901,6 +1957,8 @@ impl crate::window::App for App {
         if self.ui.banner.as_ref().is_some_and(|(t, at)| t.is_empty() || at.elapsed() > Duration::from_secs(6)) {
             self.ui.banner = None;
         }
+        self.update_badges(frame);
+        self.check_away(ctx);
         // A clicked toast opens its channel (the tray has brought the window back).
         for channel in platform::toast::take_clicked() {
             self.apply(Action::SelectChannel(Snowflake(channel)));

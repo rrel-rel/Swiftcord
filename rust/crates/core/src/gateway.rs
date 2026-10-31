@@ -170,8 +170,18 @@ impl Gateway {
 
     /// Sets this session's status (`Offline` means invisible). `activities` replace the session's own, so pass
     /// the custom status along to keep it.
-    pub fn update_presence(&self, status: PresenceStatus, activities: &[Activity]) {
-        self.send(op::PRESENCE_UPDATE, json!({ "status": status.as_str(), "since": 0, "activities": activities, "afk": false }));
+    /// Sets this session's presence. `away_since` (ms since the epoch) marks it away from the keyboard, as the
+    /// desktop client does after a while without input: Discord then sends push notifications to the phone,
+    /// and shows Online as Idle.
+    pub fn update_presence(&self, status: PresenceStatus, activities: &[Activity], away_since: Option<u64>) {
+        let status = match (status, away_since) {
+            (PresenceStatus::Online, Some(_)) => PresenceStatus::Idle,
+            (status, _) => status,
+        };
+        self.send(
+            op::PRESENCE_UPDATE,
+            json!({ "status": status.as_str(), "since": away_since.unwrap_or(0), "activities": activities, "afk": away_since.is_some() }),
+        );
     }
 }
 

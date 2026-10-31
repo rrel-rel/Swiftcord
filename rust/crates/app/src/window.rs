@@ -37,9 +37,29 @@ impl HasWindowHandle for Frame {
     }
 }
 
-/// Opens the window (hidden until the first frame is drawn, then centered) and runs until it's closed.
+impl Frame {
+    pub fn hwnd(&self) -> Option<windows::Win32::Foundation::HWND> {
+        hwnd(&self.window).ok()
+    }
+
+    /// Shown (not hidden in the tray), even if minimized: it has a taskbar button.
+    pub fn is_visible(&self) -> bool {
+        self.window.is_visible().unwrap_or(true)
+    }
+}
+
+fn hwnd(window: &Window) -> anyhow::Result<windows::Win32::Foundation::HWND> {
+    let RawWindowHandle::Win32(handle) = window.window_handle()?.as_raw() else {
+        anyhow::bail!("not a Win32 window");
+    };
+    Ok(windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _))
+}
+
+/// Opens the window (hidden until the first frame is drawn, where it was last time or centred) and runs
+/// until it's closed. `start_in_tray`: it stays hidden in the tray until its icon is clicked.
 pub fn run(
     viewport: egui::ViewportBuilder,
+    start_in_tray: bool,
     create_app: impl FnOnce(&egui::Context) -> Box<dyn App>,
 ) -> Result<(), winit::error::EventLoopError> {
     let event_loop = EventLoop::<Instant>::with_user_event().build()?;
@@ -52,7 +72,7 @@ pub fn run(
         }
     });
     let app = create_app(&ctx);
-    let mut shell = Shell { ctx, viewport, app, window: None, next_repaint: None, tray: None };
+    let mut shell = Shell { ctx, viewport, app, window: None, next_repaint: None, tray: None, start_in_tray };
     event_loop.run_app(&mut shell)
 }
 
@@ -64,6 +84,7 @@ struct Shell {
     next_repaint: Option<Instant>,
     /// The notification-area icon the window hides to when closed.
     tray: Option<crate::platform::tray::Tray>,
+    start_in_tray: bool,
 }
 
 struct AppWindow {
@@ -75,11 +96,18 @@ struct AppWindow {
     shown: bool,
     /// Closed to the tray.
     hidden: bool,
+    /// Kept hidden when first drawn (started in the tray).
+    start_hidden: bool,
+    /// It was maximized when last closed: it is again when first shown.
+    maximize: bool,
     modifiers: ModifiersState,
 }
 
 impl ApplicationHandler<Instant> for Shell {
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(w) = &self.window {
+            save_placement(&w.window);
+        }
         self.app.on_exit();
     }
 
@@ -87,21 +115,23 @@ impl ApplicationHandler<Instant> for Shell {
         if self.window.is_some() {
             return;
         }
+        self.tray = crate::platform::tray::Tray::new();
+        if self.tray.is_none() {
+            tracing::warn!("couldn't add the tray icon; closing the window will quit");
+        }
         match AppWindow::new(&self.ctx, event_loop, self.viewport.clone()) {
             // The first frame is drawn right away: a hidden window gets no redraw events, and it's shown once drawn.
-            Ok(mut w) => match w.frame(&self.ctx, self.app.as_mut()) {
-                Ok(()) => {
-                    self.window = Some(w);
-                    self.tray = crate::platform::tray::Tray::new();
-                    if self.tray.is_none() {
-                        tracing::warn!("couldn't add the tray icon; closing the window will quit");
+            Ok(mut w) => {
+                // Without a tray icon, there'd be no way to it.
+                w.start_hidden = self.start_in_tray && self.tray.is_some();
+                match w.frame(&self.ctx, self.app.as_mut()) {
+                    Ok(()) => self.window = Some(w),
+                    Err(e) => {
+                        tracing::error!("couldn't draw the window: {e}");
+                        event_loop.exit();
                     }
                 }
-                Err(e) => {
-                    tracing::error!("couldn't draw the window: {e}");
-                    event_loop.exit();
-                }
-            },
+            }
             Err(e) => {
                 tracing::error!("couldn't open the window: {e}");
                 event_loop.exit();
@@ -199,6 +229,9 @@ impl AppWindow {
     fn show(&mut self) {
         self.hidden = false;
         self.window.set_visible(true);
+        if std::mem::take(&mut self.maximize) {
+            self.window.set_maximized(true);
+        }
         self.window.set_minimized(false);
         self.window.focus_window();
         self.window.request_redraw();
@@ -208,11 +241,14 @@ impl AppWindow {
         let window = Arc::new(egui_winit::create_window(ctx, event_loop, &viewport.with_visible(false))?);
         // The exe's own icon (resource 1, embedded by build.rs).
         window.set_window_icon(winit::window::Icon::from_resource(1, None).ok());
-        center(&window);
-        let RawWindowHandle::Win32(handle) = window.window_handle()?.as_raw() else {
-            anyhow::bail!("not a Win32 window");
+        let hwnd = hwnd(&window)?;
+        let maximize = match restore_placement(hwnd) {
+            Some(maximized) => maximized,
+            None => {
+                center(&window);
+                false
+            }
         };
-        let hwnd = windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _);
         let size = window.inner_size();
         title_bar(hwnd);
         let painter = Painter::new(hwnd, [size.width, size.height])?;
@@ -226,7 +262,18 @@ impl AppWindow {
         );
         let mut info = ViewportInfo::default();
         egui_winit::update_viewport_info(&mut info, ctx, &window, true);
-        Ok(Self { window, egui_winit, painter, info, actions: Vec::new(), shown: false, hidden: false, modifiers: ModifiersState::empty() })
+        Ok(Self {
+            window,
+            egui_winit,
+            painter,
+            info,
+            actions: Vec::new(),
+            shown: false,
+            hidden: false,
+            start_hidden: false,
+            maximize,
+            modifiers: ModifiersState::empty(),
+        })
     }
 
     /// One frame: input in, the app's logic and UI, then drawing. Minimized or hidden, only the logic runs.
@@ -268,7 +315,11 @@ impl AppWindow {
         if !self.shown {
             // Shown only once there's something in it, so it doesn't flash white.
             self.shown = true;
-            self.window.set_visible(true);
+            if self.start_hidden {
+                self.hidden = true;
+            } else {
+                self.show();
+            }
         }
 
         if let Some(root) = output.viewport_output.get(&ViewportId::ROOT) {
@@ -358,6 +409,55 @@ fn wheel_notch_points(ctx: &egui::Context) -> f32 {
     } else {
         lines as f32 * 100.0 / 3.0
     }
+}
+
+/// Where the window was and whether it was maximized, kept between runs.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Placement {
+    /// Its restored (not maximized) bounds, in Windows' workspace coordinates.
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    maximized: bool,
+}
+
+fn placement_path() -> std::path::PathBuf {
+    crate::platform::data_dir().join("window.json")
+}
+
+fn save_placement(window: &Window) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowPlacement, IsIconic, IsZoomed, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED};
+    let Ok(hwnd) = hwnd(window) else { return };
+    let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+    if unsafe { GetWindowPlacement(hwnd, &mut wp) }.is_err() {
+        return;
+    }
+    let r = wp.rcNormalPosition;
+    let maximized = unsafe { IsZoomed(hwnd).as_bool() || (IsIconic(hwnd).as_bool() && wp.flags.contains(WPF_RESTORETOMAXIMIZED)) };
+    let placement = Placement { left: r.left, top: r.top, right: r.right, bottom: r.bottom, maximized };
+    if let Ok(json) = serde_json::to_vec(&placement) {
+        let _ = std::fs::write(placement_path(), json);
+    }
+}
+
+/// Puts the (still hidden) window where it was last time; whether it was maximized, or `None` if there's no
+/// saved placement. Windows moves it back on screen if that monitor is gone.
+fn restore_placement(hwnd: windows::Win32::Foundation::HWND) -> Option<bool> {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPlacement, SW_HIDE, WINDOWPLACEMENT};
+    let p: Placement = serde_json::from_slice(&std::fs::read(placement_path()).ok()?).ok()?;
+    if p.right - p.left < 200 || p.bottom - p.top < 150 {
+        return None;
+    }
+    let wp = WINDOWPLACEMENT {
+        length: size_of::<WINDOWPLACEMENT>() as u32,
+        showCmd: SW_HIDE.0 as u32,
+        rcNormalPosition: RECT { left: p.left, top: p.top, right: p.right, bottom: p.bottom },
+        ..Default::default()
+    };
+    unsafe { SetWindowPlacement(hwnd, &wp) }.ok()?;
+    Some(p.maximized)
 }
 
 /// Centers the window on its monitor.

@@ -1,3 +1,4 @@
+pub mod badge;
 pub mod captcha_webview;
 pub mod clipboard;
 pub mod credentials;
@@ -5,6 +6,7 @@ pub mod d3d11;
 pub mod discord_install;
 pub mod inline_player;
 pub mod login_webview;
+pub mod single_instance;
 pub mod startup;
 pub mod toast;
 pub mod tray;
@@ -26,6 +28,18 @@ pub fn open_url(url: &str) {
     if url.starts_with("https://") || url.starts_with("http://") {
         let _ = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn();
     }
+}
+
+/// How long since the user last used the keyboard or mouse (anywhere, not just in Swiftcord).
+pub fn idle_time() -> std::time::Duration {
+    use windows::Win32::System::SystemInformation::GetTickCount;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+    let mut info = LASTINPUTINFO { cbSize: size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
+    if !unsafe { GetLastInputInfo(&mut info) }.as_bool() {
+        return std::time::Duration::ZERO;
+    }
+    // Both wrap after 49 days; the difference doesn't.
+    std::time::Duration::from_millis(unsafe { GetTickCount() }.wrapping_sub(info.dwTime) as u64)
 }
 
 const APP_ID: &str = "Swiftcord.Rust";
