@@ -576,6 +576,7 @@ const FIELD_BUTTON_MARGIN: f32 = 3.0;
 const FIELD_BUTTON: f32 = FIELD_HEIGHT - 2.0 - 2.0 * FIELD_BUTTON_MARGIN;
 /// The header's buttons and search box are this tall.
 const HEADER_CONTROL: f32 = 26.0;
+const SEARCH_WIDTH: f32 = 200.0;
 
 fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &Channel, perms: u64, actions: &mut Vec<Action>) {
     let state = &s.state;
@@ -805,19 +806,29 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
                     r.request_focus();
                     uis.focus_composer = false;
                 }
-                let gr = widgets::vgui_button(ui, Vec2::splat(FIELD_BUTTON), false, |ui, rect| {
+                // Square buttons on whole pixels, so their gaps (and margins from the field's edges) match.
+                let (area, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), FIELD_HEIGHT - 2.0), Sense::hover());
+                // Measured from inside the field's sunken edge (a pixel wide, drawn within its rect).
+                let ppp = ui.ctx().pixels_per_point();
+                let area = area.with_max_x(area.right() - ppp.floor().max(1.0) / ppp);
+                let slots = widgets::pixel_row(ui, area, 3, FIELD_BUTTON, FIELD_BUTTON_MARGIN);
+                let id = |name: &str| egui::Id::unique(("composer-button", name, c.id));
+                let gr = widgets::vgui_button_at(ui, id("gif"), slots[0], false, |ui, rect| {
                     ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "GIF", theme::font_bold(9.5), theme::HEADER());
                 });
                 let gif_at = gr.rect.right_top();
                 if gr.on_hover_text("GIFs").clicked() {
                     actions.push(Action::OpenGifPicker { channel: c.id, at: gif_at });
                 }
-                let sr = sticker_button(ui);
+                let sr = widgets::vgui_button_at(ui, id("sticker"), slots[1], false, sticker_icon);
                 let sticker_at = sr.rect.right_top();
                 if sr.on_hover_text("Stickers").clicked() {
                     actions.push(Action::OpenStickerPicker { channel: c.id, at: sticker_at });
                 }
-                let er = widgets::icon_button_sized(ui, icon::EMOJI, "Emoji", FIELD_BUTTON);
+                let er = widgets::vgui_button_at(ui, id("emoji"), slots[2], false, |ui, rect| {
+                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::EMOJI, theme::icon_font(15.0), theme::HEADER());
+                });
+                let er = er.on_hover_text("Emoji");
                 if er.clicked() {
                     uis.emoji_picker = Some(PickerTarget::Composer { channel: c.id, at: er.rect.left_top() });
                 }
@@ -869,13 +880,19 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
 /// The header's search box: Enter searches the whole server (or this DM); filters like `from:` and `in:`
 /// narrow it.
 fn search_field(ui: &mut Ui, c: &Channel, text: &mut String, actions: &mut Vec<Action>) {
-    // Styled as the message field: a dark sunken box, as tall as the header's buttons.
+    // Styled as the message field: a dark sunken box. Given a slot exactly as tall as the header's buttons
+    // and placed like them, so their tops and bottoms line up.
+    let (slot, _) = ui.allocate_exact_size(Vec2::new(SEARCH_WIDTH, HEADER_CONTROL), Sense::hover());
+    let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(slot).layout(Layout::left_to_right(Align::Min)));
+    let ui = &mut ui;
     let field = egui::Frame::new().fill(theme::INPUT()).inner_margin(egui::Margin { left: 6, right: 6, top: 1, bottom: 1 }).show(ui, |ui| {
-        ui.horizontal(|ui| {
+        ui.set_width(SEARCH_WIDTH - 12.0);
+        // The magnifier at the right, the text filling the rest.
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.set_height(HEADER_CONTROL - 2.0);
             ui.label(RichText::new(icon::SEARCH).font(theme::icon_font(12.0)).color(theme::MUTED()));
             let hint = if c.guild_id.is_some() { "Search" } else { "Search this chat" };
-            let r = ui.add(egui::TextEdit::singleline(text).hint_text(RichText::new(hint).color(theme::FAINT())).frame(egui::Frame::NONE).margin(egui::Margin::symmetric(2, 2)).desired_width(170.0));
+            let r = ui.add(egui::TextEdit::singleline(text).hint_text(RichText::new(hint).color(theme::FAINT())).frame(egui::Frame::NONE).margin(egui::Margin::symmetric(2, 2)).desired_width(ui.available_width()));
             let r = r.on_hover_text("Search messages. Filters: from:name, in:channel, has:image, mentions:name, before:2024-01-31, after:, during:");
             if r.lost_focus() {
                 if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {
@@ -889,12 +906,7 @@ fn search_field(ui: &mut Ui, c: &Channel, text: &mut String, actions: &mut Vec<A
     widgets::sunken_edge(ui.painter(), field.response.rect);
 }
 
-/// The composer's sticker button: a rounded square with a peeled corner (there's no sticker icon in the font).
-fn sticker_button(ui: &mut Ui) -> egui::Response {
-    widgets::vgui_button(ui, Vec2::splat(FIELD_BUTTON), false, |ui, rect| sticker_icon(ui, rect))
-}
-
-/// A sticker (a square with a folded corner), drawn as no icon font has one.
+/// A sticker for the composer's sticker button (a square with a folded corner), drawn as no icon font has one.
 fn sticker_icon(ui: &Ui, rect: Rect) {
     let color = theme::HEADER();
     let b = Rect::from_center_size(rect.center(), Vec2::splat(14.0));

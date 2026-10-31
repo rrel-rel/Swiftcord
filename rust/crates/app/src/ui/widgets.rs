@@ -166,6 +166,28 @@ pub fn vgui_button(ui: &mut Ui, size: Vec2, held: bool, paint: impl FnOnce(&Ui, 
     r
 }
 
+/// A VGUI button placed at `rect` rather than laid out (see [`vgui_button`]).
+pub fn vgui_button_at(ui: &Ui, id: egui::Id, rect: egui::Rect, held: bool, paint: impl FnOnce(&Ui, egui::Rect)) -> Response {
+    let r = ui.interact(rect, id, Sense::click());
+    paint_vgui_button(ui, &r, held, paint);
+    r
+}
+
+/// Places `n` squares of `side` points in a row at the right of `area`, `gap` apart and `gap` in from its
+/// right edge, centred down it. On whole pixels: laid out in points, the gaps would round to different widths.
+pub fn pixel_row(ui: &Ui, area: egui::Rect, n: usize, side: f32, gap: f32) -> Vec<egui::Rect> {
+    let ppp = ui.ctx().pixels_per_point();
+    let (s, g) = ((side * ppp).round(), (gap * ppp).round());
+    let right = (area.right() * ppp).round() - g;
+    let top = (area.center().y * ppp - s / 2.0).round();
+    (0..n)
+        .map(|i| {
+            let x1 = right - (n - 1 - i) as f32 * (s + g);
+            egui::Rect::from_min_max(egui::pos2((x1 - s) / ppp, top / ppp), egui::pos2(x1 / ppp, (top + s) / ppp))
+        })
+        .collect()
+}
+
 /// Draws a VGUI button over `r` (see `theme::button_frame`). VGUI buttons keep the arrow cursor.
 fn paint_vgui_button(ui: &Ui, r: &Response, held: bool, paint: impl FnOnce(&Ui, egui::Rect)) {
     plain_cursor(r);
