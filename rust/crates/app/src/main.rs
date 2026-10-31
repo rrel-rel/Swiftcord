@@ -11,6 +11,7 @@ mod interactions_glue;
 mod lottie;
 mod stickers;
 mod media;
+mod notifications;
 mod session_cache;
 mod settings;
 mod window;

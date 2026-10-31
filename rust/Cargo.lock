@@ -4639,7 +4639,6 @@ dependencies = [
  "serde_json",
  "swiftcord-core",
  "swiftcord-voice",
- "tauri-winrt-notification",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4778,17 +4777,6 @@ name = "target-lexicon"
 version = "0.12.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
-
-[[package]]
-name = "tauri-winrt-notification"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f37a6c354fd28fc9e322ed9bd47e3959576dad28c9d58ea1cf888cce1c7ccb36"
-dependencies = [
- "thiserror 2.0.21",
- "windows",
- "windows-version",
-]
 
 [[package]]
 name = "tempfile"

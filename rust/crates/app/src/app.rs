@@ -375,6 +375,8 @@ pub struct App {
     /// The frecency settings as last read or written, so favourites can be edited without touching the rest.
     frecency: Option<String>,
     pub sounds: crate::sounds::Sounds,
+    /// Which channels have message toasts up, and when the message sound last played.
+    notifications: crate::notifications::Notifications,
     perf: crate::perf::Perf,
     /// Images shown lately, so those that haven't been can be forgotten.
     images: std::sync::Arc<crate::image_cache::ImageCache>,
@@ -412,6 +414,7 @@ impl App {
             members_requested: HashSet::new(),
             frecency: None,
             sounds: Default::default(),
+            notifications: Default::default(),
             perf: Default::default(),
             images,
             images_checked: Instant::now(),
@@ -862,17 +865,19 @@ impl App {
                 if current == Some(message.channel_id) && focused && self.ui.kept_unread != current {
                     self.queue_ack(message.channel_id, message.id);
                 } else if notify && !dnd {
+                    let now = Instant::now();
                     if self.settings.notifications {
-                        self.toast(&message);
+                        self.toast(&message, now);
                     }
-                    if self.settings.message_sounds && !self.ui.self_deaf {
+                    // A burst of messages plays the sound once (see `notifications`).
+                    if self.settings.message_sounds && !self.ui.self_deaf && self.notifications.sound(now) {
                         self.sounds.play(crate::sounds::Sound::Message, &self.settings.output_device);
                     }
                 }
             }
             Notice::Ring(channel) => {
                 let caller = s.state.channel(channel).map(|c| c.label()).unwrap_or_default();
-                platform::notify(format!("{caller} is calling you"), "Open Swiftcord to answer.".into());
+                platform::notify(&format!("call-{}", channel.0), format!("{caller} is calling you"), "Open Swiftcord to answer.".into());
             }
             Notice::RingStopped(_) => {}
             Notice::FrecencyChanged => self.load_frecency(),
@@ -954,7 +959,8 @@ impl App {
         self.sounds.tick();
     }
 
-    fn toast(&self, m: &Message) {
+    /// The message's channel's toast: popped up, or updated in place during a burst.
+    fn toast(&mut self, m: &Message, now: Instant) {
         let Some(s) = &self.session else { return };
         let author = s.state.display_name(m.author.id, m.guild_id);
         let title = match s.state.channel(m.channel_id) {
@@ -969,7 +975,24 @@ impl App {
         if body.is_empty() && !m.attachments.is_empty() {
             body = format!("Sent {} attachment(s)", m.attachments.len());
         }
-        platform::notify(title, body);
+        let tag = crate::notifications::tag(m.channel_id);
+        let count = |n: u32| if n > 1 { format!("{title} · {n} new messages") } else { title.clone() };
+        match self.notifications.message(m.channel_id, m.id, now) {
+            crate::notifications::Toast::Pop { count: n } => platform::toast::show(tag, count(n), body, true),
+            crate::notifications::Toast::Update { count: n } => platform::toast::update(tag, count(n), body, n),
+        }
+    }
+
+    /// Takes away the toasts of channels that have been read since (here or elsewhere), or that the window is
+    /// focused on, as Discord does.
+    fn clear_read_toasts(&mut self, ctx: &egui::Context) {
+        let Some(s) = &self.session else { return };
+        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        let current = self.ui.channel();
+        let read = |c: Snowflake, latest: Snowflake| (focused && current == Some(c)) || s.state.last_read(c).is_some_and(|r| r >= latest);
+        for channel in self.notifications.take_read(read) {
+            platform::toast::remove(crate::notifications::tag(channel));
+        }
     }
 
     fn queue_ack(&mut self, channel: Snowflake, message: Snowflake) {
@@ -1859,6 +1882,7 @@ impl crate::window::App for App {
         if self.ui.banner.as_ref().is_some_and(|(t, at)| t.is_empty() || at.elapsed() > Duration::from_secs(6)) {
             self.ui.banner = None;
         }
+        self.clear_read_toasts(ctx);
         for sound in crate::sounds::take_pending() {
             self.sounds.play(sound, &self.settings.output_device);
         }

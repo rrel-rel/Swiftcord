@@ -36,12 +36,11 @@ directories = "6"
 memmap2 = "0.9"
 # Finding version strings in Discord's executable (platform::discord_install).
 memchr = "2"
-tauri-winrt-notification = "0.8"
 wry = "0.57"
 # The captcha window answers a discord.com request itself, which needs WebView2 directly (same version as wry's).
 webview2-com = "0.39"
 
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_WindowsAndMessaging", "Win32_System_Console", "Win32_System_Registry", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_Media_MediaFoundation", "Win32_UI_Shell", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Imaging", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_WindowsAndMessaging", "Win32_System_Console", "Win32_System_Registry", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_Media_MediaFoundation", "Win32_UI_Shell", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Imaging", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "UI_Notifications", "Data_Xml_Dom", "Foundation_Collections"] }
 
 [target.'cfg(windows)'.build-dependencies]
 # The exe's icon and version details (shown in Explorer and the taskbar).

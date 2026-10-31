@@ -5,6 +5,7 @@ pub mod d3d11;
 pub mod discord_install;
 pub mod inline_player;
 pub mod login_webview;
+pub mod toast;
 pub mod tray;
 pub mod video_window;
 pub mod webview_window;
@@ -46,13 +47,7 @@ pub fn register_app_id() {
     }
 }
 
-/// A Windows toast. Runs on a worker thread because the WinRT call can block briefly.
-pub fn notify(title: String, body: String) {
-    std::thread::spawn(move || {
-        let _ = tauri_winrt_notification::Toast::new(APP_ID)
-            .title(&title)
-            .text1(&body)
-            .sound(Some(tauri_winrt_notification::Sound::Default))
-            .show();
-    });
+/// A one-off Windows toast (message toasts are kept per channel; see `crate::notifications`).
+pub fn notify(tag: &str, title: String, body: String) {
+    toast::show(tag, title, body, true);
 }
