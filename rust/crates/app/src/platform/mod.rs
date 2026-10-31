@@ -48,7 +48,8 @@ pub fn register_app_id() {
     }
 }
 
-/// A one-off Windows toast (message toasts are kept per channel; see `crate::notifications`).
-pub fn notify(tag: &str, title: String, body: String) {
-    toast::show(tag, title, body, true);
+/// A one-off Windows toast (message toasts are kept per channel; see `crate::notifications`). Clicking it
+/// opens `channel`.
+pub fn notify(tag: &str, title: String, body: String, channel: u64) {
+    toast::show(tag, title, body, true, channel);
 }

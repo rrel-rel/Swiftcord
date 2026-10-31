@@ -879,7 +879,7 @@ impl App {
             }
             Notice::Ring(channel) => {
                 let caller = s.state.channel(channel).map(|c| c.label()).unwrap_or_default();
-                platform::notify(&format!("call-{}", channel.0), format!("{caller} is calling you"), "Open Swiftcord to answer.".into());
+                platform::notify(&format!("call-{}", channel.0), format!("{caller} is calling you"), "Open Swiftcord to answer.".into(), channel.0);
             }
             Notice::RingStopped(_) => {}
             Notice::FrecencyChanged => self.load_frecency(),
@@ -980,8 +980,8 @@ impl App {
         let tag = crate::notifications::tag(m.channel_id);
         let count = |n: u32| if n > 1 { format!("{title} · {n} new messages") } else { title.clone() };
         match self.notifications.message(m.channel_id, m.id, now) {
-            crate::notifications::Toast::Pop { count: n } => platform::toast::show(tag, count(n), body, true),
-            crate::notifications::Toast::Update { count: n } => platform::toast::update(tag, count(n), body, n),
+            crate::notifications::Toast::Pop { count: n } => platform::toast::show(tag, count(n), body, true, m.channel_id.0),
+            crate::notifications::Toast::Update { count: n } => platform::toast::update(tag, count(n), body, n, m.channel_id.0),
         }
     }
 
@@ -1900,6 +1900,10 @@ impl crate::window::App for App {
         }
         if self.ui.banner.as_ref().is_some_and(|(t, at)| t.is_empty() || at.elapsed() > Duration::from_secs(6)) {
             self.ui.banner = None;
+        }
+        // A clicked toast opens its channel (the tray has brought the window back).
+        for channel in platform::toast::take_clicked() {
+            self.apply(Action::SelectChannel(Snowflake(channel)));
         }
         self.clear_read_toasts(ctx);
         for sound in crate::sounds::take_pending() {

@@ -2,6 +2,7 @@
 //! click) or quits (its menu). The icon's messages go to a hidden window of ours, dispatched by winit's own
 //! message loop; what they ask for is picked up with [`Tray::take_events`].
 
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -23,6 +24,10 @@ pub enum TrayEvent {
 static EVENTS: Mutex<Vec<TrayEvent>> = Mutex::new(Vec::new());
 /// The message the icon sends its window.
 const CALLBACK: u32 = WM_APP + 1;
+/// Sent by [`show_window`], from any thread.
+const SHOW: u32 = WM_APP + 2;
+/// The tray's window, for [`show_window`] (0 without one).
+static WINDOW: AtomicIsize = AtomicIsize::new(0);
 const MENU_OPEN: usize = 1;
 const MENU_QUIT: usize = 2;
 /// Enter on the icon (`NIN_SELECT | NINF_KEY`, which the bindings don't name).
@@ -42,6 +47,7 @@ impl Tray {
             RegisterClassW(&wc);
             // A plain hidden window rather than a message-only one: the menu needs one that can come to the front.
             let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), class, w!("Swiftcord"), WS_POPUP, 0, 0, 0, 0, None, None, Some(instance), None).ok()?;
+            WINDOW.store(hwnd.0 as isize, Ordering::Relaxed);
             add_icon(hwnd).then_some(Tray { hwnd })
         }
     }
@@ -54,6 +60,7 @@ impl Tray {
 
 impl Drop for Tray {
     fn drop(&mut self) {
+        WINDOW.store(0, Ordering::Relaxed);
         unsafe {
             let _ = Shell_NotifyIconW(NIM_DELETE, &icon_data(self.hwnd));
             let _ = DestroyWindow(self.hwnd);
@@ -96,6 +103,15 @@ fn taskbar_created() -> u32 {
     *MSG.get_or_init(|| unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) })
 }
 
+/// Brings the window back (from the tray, minimized or behind others), as clicking the icon does. From any
+/// thread: it goes through the tray window's messages, which wakes the event loop.
+pub fn show_window() {
+    let hwnd = WINDOW.load(Ordering::Relaxed);
+    if hwnd != 0 {
+        let _ = unsafe { PostMessageW(Some(HWND(hwnd as _)), SHOW, WPARAM(0), LPARAM(0)) };
+    }
+}
+
 fn push(event: TrayEvent) {
     EVENTS.lock().unwrap().push(event);
 }
@@ -107,6 +123,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             WM_CONTEXTMENU => menu(hwnd),
             _ => {}
         }
+        return LRESULT(0);
+    }
+    if msg == SHOW {
+        push(TrayEvent::Show);
         return LRESULT(0);
     }
     if msg == taskbar_created() {
