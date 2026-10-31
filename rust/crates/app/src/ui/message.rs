@@ -120,7 +120,10 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
         widgets::plain_cursor(r);
     }
 
-    ui.add_space(if compact { 1.0 } else { 14.0 });
+    // The space between messages, split so a hovered row's highlight has even room above and below what's in
+    // it: a full message's avatar, or a follow-on line's text (whose line has a little room above the letters).
+    let (above, below) = if compact { (4.0, 3.0) } else { (10.0, 10.0) };
+    ui.add_space(above);
     let alpha = match msg.pending {
         Some(PendingState::Sending) => 0.5,
         _ => 1.0,
@@ -133,7 +136,9 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
     if !msg.is_regular() {
         system_line(ui, msg, cx);
     } else {
+        let gap = std::mem::replace(&mut ui.spacing_mut().item_spacing.y, 0.0);
         ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.y = gap;
             ui.add_space(16.0);
             if compact {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(40.0, 20.0), Sense::hover());
@@ -160,6 +165,7 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
                 body(ui, msg, cx);
             });
         });
+        ui.spacing_mut().item_spacing.y = gap;
     }
     if msg.pending == Some(PendingState::Failed) {
         ui.horizontal(|ui| {
@@ -173,7 +179,7 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
             }
         });
     }
-    ui.add_space(2.0);
+    ui.add_space(below);
 
     let rect = Rect::from_min_max(egui::pos2(ui.max_rect().left(), top), egui::pos2(ui.max_rect().left() + width, ui.cursor().top()));
     ui.ctx().memory_mut(|m| m.data.insert_temp(row_id, rect));
@@ -1025,26 +1031,35 @@ fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, row_id: egui::Id, cx: &mut Ctx
     // The reactions used most, one click each, as in the official client's hover bar.
     let quick: Vec<swiftcord_core::models::Emoji> =
         if cx.perms & perm::ADD_REACTIONS != 0 { cx.uis.quick_reactions.1.iter().take(3).cloned().collect() } else { Vec::new() };
-    let divider = if quick.is_empty() { 0.0 } else { 9.0 };
-    let w = (buttons.len() + quick.len()) as f32 * 32.0 + divider + 8.0;
-    let rect = Rect::from_min_size(egui::pos2(row.right() - w - 16.0, row.top() - 14.0), Vec2::new(w, 32.0));
-    let rect = rect.translate(Vec2::new(0.0, (ui.clip_rect().top() - rect.top()).max(0.0)));
+    // Buttons GAP apart and GAP in from every edge; the divider is a pixel line with GAP either side of it.
+    // All whole pixels at 100/125/150/200%, from a toolbar placed on whole pixels.
+    const GAP: f32 = 4.0;
+    let ppp = ui.ctx().pixels_per_point();
+    let line = ppp.floor().max(1.0) / ppp;
+    let n = (buttons.len() + quick.len()) as f32;
+    let divider = if quick.is_empty() { 0.0 } else { line + GAP };
+    let w = n * TOOLBAR_BUTTON + (n - 1.0) * GAP + divider + 2.0 * GAP;
+    let h = TOOLBAR_BUTTON + 2.0 * GAP;
+    let snap = |v: f32| (v * ppp).round() / ppp;
+    let top = (row.top() - 14.0).max(ui.clip_rect().top());
+    let rect = Rect::from_min_size(egui::pos2(snap(row.right() - w - 16.0), snap(top)), Vec2::new(w, h));
     let pass = ui.ctx().cumulative_pass_nr();
     ui.ctx().memory_mut(|m| m.data.insert_temp(ToolbarSpot::key(), ToolbarSpot { row: row_id, rect, pass }));
     ui.painter().rect(rect, 6, theme::SIDEBAR(), egui::Stroke::new(1.0, theme::RAIL()), egui::StrokeKind::Inside);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(4.0)).layout(Layout::left_to_right(Align::Center)));
-    child.spacing_mut().item_spacing.x = 4.0;
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(GAP)).layout(Layout::left_to_right(Align::Center)));
+    child.spacing_mut().item_spacing.x = GAP;
     for e in &quick {
-        quick_reaction(&mut child, msg, e, cx);
+        quick_reaction(&mut child, msg, e, TOOLBAR_BUTTON, cx);
     }
     if !quick.is_empty() {
-        let x = child.cursor().left() + 2.0;
-        child.painter().vline(x, rect.y_range().shrink(8.0), egui::Stroke::new(1.0, theme::RAIL()));
-        child.add_space(5.0);
+        // After the last reaction's GAP; the line, then another GAP (item spacing isn't added after space).
+        let x = child.cursor().left();
+        child.painter().rect_filled(Rect::from_x_y_ranges(x..=x + line, rect.y_range().shrink(GAP + 2.0)), 0, theme::RAIL());
+        child.add_space(line + GAP);
     }
     for (glyph, tip, kind) in buttons {
         let color = if kind == 3 { theme::RED() } else { theme::MUTED() };
-        let r = widgets::vgui_button(&mut child, Vec2::splat(28.0), false, |ui, cell| {
+        let r = widgets::vgui_button(&mut child, Vec2::splat(TOOLBAR_BUTTON), false, |ui, cell| {
             ui.painter().text(cell.center(), egui::Align2::CENTER_CENTER, glyph, theme::icon_font(15.0), color);
         });
         let r = r.on_hover_text(tip);
@@ -1059,12 +1074,15 @@ fn toolbar(ui: &mut Ui, msg: &Message, row: Rect, row_id: egui::Id, cx: &mut Ctx
     }
 }
 
+/// The hover toolbar's square buttons.
+const TOOLBAR_BUTTON: f32 = 24.0;
+
 /// A one-click reaction: adds it, or takes ours back if we've already reacted with it.
-fn quick_reaction(ui: &mut Ui, msg: &Message, e: &swiftcord_core::models::Emoji, cx: &mut Ctx) -> bool {
+fn quick_reaction(ui: &mut Ui, msg: &Message, e: &swiftcord_core::models::Emoji, side: f32, cx: &mut Ctx) -> bool {
     let mine = msg.reactions.iter().any(|r| r.me && r.emoji.same_as(e));
-    // A button the size of the toolbar's others, held in while we've reacted with it.
-    let r = widgets::vgui_button(ui, Vec2::splat(28.0), mine, |ui, rect| {
-        crate::emoji_sheet::any(ui.ctx(), e, Vec2::splat(20.0)).paint_at(ui, rect.shrink(4.0));
+    // A button the size of the others beside it, held in while we've reacted with it.
+    let r = widgets::vgui_button(ui, Vec2::splat(side), mine, |ui, rect| {
+        crate::emoji_sheet::any(ui.ctx(), e, Vec2::splat(side - 6.0)).paint_at(ui, rect.shrink(3.0));
     });
     let name = e.name.clone().unwrap_or_default();
     let shown = if e.id.is_some() { format!(":{name}:") } else { name };
@@ -1091,7 +1109,7 @@ fn context_menu(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             for e in &quick {
-                picked |= quick_reaction(ui, msg, e, cx);
+                picked |= quick_reaction(ui, msg, e, 28.0, cx);
             }
             let more = widgets::icon_button(ui, icon::EMOJI, "Add Reaction");
             if more.clicked() {

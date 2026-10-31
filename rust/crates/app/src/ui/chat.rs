@@ -577,11 +577,54 @@ const FIELD_HEIGHT: f32 = 32.0;
 /// each other: 3 + 24 + 3 fills the 30 inside its 1 pt edge.
 const FIELD_BUTTON_MARGIN: f32 = 3.0;
 const FIELD_BUTTON: f32 = FIELD_HEIGHT - 2.0 - 2.0 * FIELD_BUTTON_MARGIN;
+/// The space before the text in the message box (and the reply bar's).
+const FIELD_TEXT_INSET: f32 = 6.0;
+/// The reply bar's mention toggle.
+const PING_WIDTH: f32 = 48.0;
 /// The space around the message box, the same on every side (the typing indicator goes in the top).
 const COMPOSER_PADDING: f32 = 16.0;
 /// The header's buttons and search box are this tall.
 const HEADER_CONTROL: f32 = 26.0;
 const SEARCH_WIDTH: f32 = 200.0;
+
+/// "Replying to …" across the top of the message box: as tall as its text row, with its buttons the size and
+/// spacing of that row's (the close button sits over the emoji button).
+fn reply_bar(ui: &mut Ui, state: &swiftcord_core::state::State, c: &Channel, rid: Snowflake, ping: bool, uis: &mut UiState) {
+    let (bar, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), FIELD_HEIGHT - 2.0), Sense::hover());
+    ui.painter().rect_filled(bar, 0, theme::SIDEBAR());
+    // Inside the field's sunken edge, as the text row measures its buttons.
+    let ppp = ui.ctx().pixels_per_point();
+    let inner = bar.with_max_x(bar.right() - ppp.floor().max(1.0) / ppp);
+    let close = widgets::pixel_row(ui, inner, 1, FIELD_BUTTON, FIELD_BUTTON_MARGIN)[0];
+    let gap = (FIELD_BUTTON_MARGIN * ppp).round() / ppp;
+    let ping_right = close.left() - gap;
+    let ping_rect = Rect::from_min_max(egui::pos2(((ping_right - PING_WIDTH) * ppp).round() / ppp, close.top()), egui::pos2(ping_right, close.bottom()));
+    let id = |name: &str| egui::Id::unique(("reply-bar", name, c.id));
+
+    let label = Rect::from_min_max(egui::pos2(bar.left() + FIELD_TEXT_INSET, bar.top()), egui::pos2(ping_rect.left() - gap, bar.bottom()));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(label).layout(Layout::left_to_right(Align::Center)), |ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let name = state.message(c.id, rid).map(|m| state.display_name(m.author.id, c.guild_id)).unwrap_or_default();
+        ui.label(RichText::new("Replying to ").color(theme::MUTED()));
+        ui.add(egui::Label::new(RichText::new(name).font(theme::font_semibold(14.0)).color(theme::HEADER())).truncate());
+    });
+
+    let (text, color) = if ping { ("@ ON", theme::ACCENT()) } else { ("@ OFF", theme::MUTED()) };
+    let r = widgets::vgui_button_at(ui, id("ping"), ping_rect, false, |ui, rect| {
+        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, text, theme::font_bold(12.0), color);
+    });
+    if r.on_hover_text("Mention the author").clicked() {
+        if let Some(r) = &mut uis.drafts.entry(c.id).or_default().reply {
+            r.1 = !r.1;
+        }
+    }
+    let r = widgets::vgui_button_at(ui, id("close"), close, false, |ui, rect| {
+        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::CLOSE, theme::icon_font(15.0), theme::HEADER());
+    });
+    if r.on_hover_text("Cancel reply").clicked() {
+        uis.drafts.entry(c.id).or_default().reply = None;
+    }
+}
 
 fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &Channel, perms: u64, actions: &mut Vec<Action>) {
     let state = &s.state;
@@ -701,143 +744,132 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
     let attach = perms & perm::ATTACH_FILES != 0;
     let row = ui.horizontal_top(|ui| {
         let slot = attach.then(|| ui.allocate_exact_size(Vec2::splat(FIELD_HEIGHT), Sense::hover()).0);
-        let field = egui::Frame::new().fill(theme::INPUT()).inner_margin(egui::Margin { left: 6, right: 0, top: 1, bottom: 1 }).show(ui, |ui| {
+        // The field's insides start at its edge; the text row puts its own space before the text.
+        let field = egui::Frame::new().fill(theme::INPUT()).inner_margin(egui::Margin { left: 0, right: 0, top: 1, bottom: 1 }).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            if let Some((rid, ping)) = reply {
-                egui::Frame::new().fill(theme::SIDEBAR()).corner_radius(egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }).inner_margin(egui::Margin::symmetric(14, 6)).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        let name = state.message(c.id, rid).map(|m| state.display_name(m.author.id, c.guild_id)).unwrap_or_default();
-                        ui.label(RichText::new("Replying to ").color(theme::MUTED()));
-                        ui.label(RichText::new(name).font(theme::font_semibold(14.0)).color(theme::HEADER()));
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if widgets::icon_button(ui, icon::CLOSE, "Cancel reply").clicked() {
-                                uis.drafts.entry(c.id).or_default().reply = None;
-                            }
-                            let label = RichText::new(if ping { "@ ON" } else { "@ OFF" }).font(theme::font_bold(12.0)).color(if ping { theme::ACCENT() } else { theme::MUTED() });
-                            if ui.add(egui::Button::new(label)).on_hover_text("Mention the author").clicked() {
-                                if let Some(r) = &mut uis.drafts.entry(c.id).or_default().reply {
-                                    r.1 = !r.1;
-                                }
-                            }
-                        });
-                    });
-                });
-            }
-            if !files.is_empty() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.add_space(12.0);
-                    for (i, (name, size)) in files.iter().enumerate() {
-                        egui::Frame::new().fill(theme::SIDEBAR()).corner_radius(6).inner_margin(8).show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(icon::FILE).font(theme::icon_font(18.0)).color(theme::ACCENT()));
-                                ui.vertical(|ui| {
-                                    ui.add(egui::Label::new(RichText::new(name).size(13.0)).truncate());
-                                    ui.label(RichText::new(widgets::human_size(*size as u64)).size(11.0).color(theme::MUTED()));
-                                });
-                                if widgets::icon_button(ui, icon::DELETE, "Remove").clicked() {
-                                    let d = uis.drafts.entry(c.id).or_default();
-                                    if i < d.files.len() {
-                                        d.files.remove(i);
+            // Stacked: the row it's in would put the reply bar and the text box side by side.
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                if let Some((rid, ping)) = reply {
+                    reply_bar(ui, state, c, rid, ping, uis);
+                }
+                if !files.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(FIELD_TEXT_INSET + 12.0);
+                        for (i, (name, size)) in files.iter().enumerate() {
+                            egui::Frame::new().fill(theme::SIDEBAR()).corner_radius(6).inner_margin(8).show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(icon::FILE).font(theme::icon_font(18.0)).color(theme::ACCENT()));
+                                    ui.vertical(|ui| {
+                                        ui.add(egui::Label::new(RichText::new(name).size(13.0)).truncate());
+                                        ui.label(RichText::new(widgets::human_size(*size as u64)).size(11.0).color(theme::MUTED()));
+                                    });
+                                    if widgets::icon_button(ui, icon::DELETE, "Remove").clicked() {
+                                        let d = uis.drafts.entry(c.id).or_default();
+                                        if i < d.files.len() {
+                                            d.files.remove(i);
+                                        }
                                     }
-                                }
+                                });
                             });
-                        });
-                    }
-                });
-            }
+                        }
+                    });
+                }
 
-            // A slash command being filled in takes the text box's place.
-            if let Some(cmd) = uis.drafts.entry(c.id).or_default().command.as_mut() {
-                match crate::ui::commands::form(ui, state, c, cmd) {
-                    crate::ui::commands::FormResult::Run => actions.push(Action::RunCommand(c.id)),
-                    crate::ui::commands::FormResult::Cancel => {
-                        uis.drafts.entry(c.id).or_default().command = None;
-                        uis.focus_composer = true;
+                // A slash command being filled in takes the text box's place.
+                if let Some(cmd) = uis.drafts.entry(c.id).or_default().command.as_mut() {
+                    let form = egui::Frame::new().inner_margin(egui::Margin { left: FIELD_TEXT_INSET as i8, ..Default::default() }).show(ui, |ui| crate::ui::commands::form(ui, state, c, cmd));
+                    match form.inner {
+                        crate::ui::commands::FormResult::Run => actions.push(Action::RunCommand(c.id)),
+                        crate::ui::commands::FormResult::Cancel => {
+                            uis.drafts.entry(c.id).or_default().command = None;
+                            uis.focus_composer = true;
+                        }
+                        crate::ui::commands::FormResult::Nothing => {}
                     }
-                    crate::ui::commands::FormResult::Nothing => {}
+                    return;
                 }
-                return;
-            }
-            let line = Layout::left_to_right(Align::Center);
-            ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), FIELD_HEIGHT - 2.0), line, |ui| {
-                ui.set_min_height(FIELD_HEIGHT - 2.0);
-                // The buttons on the right, and the gaps before, between and after them.
-                ui.spacing_mut().item_spacing.x = FIELD_BUTTON_MARGIN;
-                let emoji_w = 3.0 * FIELD_BUTTON + 4.0 * FIELD_BUTTON_MARGIN;
-                let draft = uis.drafts.entry(c.id).or_default();
-                let hint = match c.kind {
-                    ChannelType::Dm | ChannelType::GroupDm => format!("Message @{}", c.label()),
-                    _ => format!("Message #{}", c.label()),
-                };
-                let before = draft.text.len();
-                let out = egui::TextEdit::multiline(&mut draft.text)
-                    .id(edit_id)
-                    .hint_text(RichText::new(hint).color(theme::FAINT()))
-                    .font(theme::font(15.5))
-                    .frame(egui::Frame::NONE)
-                    .desired_rows(1)
-                    .desired_width(ui.available_width() - emoji_w)
-                    // Tahoma's line has room above its capitals; a little more margin on top centres the text.
-                    .margin(egui::Margin { left: 4, right: 4, top: 7, bottom: 3 })
-                    // Tab completes suggestions rather than moving focus.
-                    .lock_focus(true)
-                    .show(ui);
-                if let Some(range) = out.cursor_range {
-                    if draft.caret != range.primary.index.0 {
-                        // Suggestions are worked out from the caret before drawing, so take another look now.
-                        draft.caret = range.primary.index.0;
-                        ui.ctx().request_repaint();
-                    }
-                }
-                if draft.text.is_empty() {
-                    draft.mentions.clear();
-                }
-                let r = out.response.response;
-                if draft.text.len() != before && !draft.text.is_empty() {
-                    actions.push(Action::Typing(c.id));
-                }
-                // An image on the clipboard (a screenshot, say) is pasted as an attachment.
-                if r.has_focus() {
-                    let pasted = ui.input(|i| i.events.iter().find_map(|e| if let egui::Event::PasteImage(image) = e { Some(image.clone()) } else { None }));
-                    if let Some(image) = pasted {
-                        if perms & perm::ATTACH_FILES != 0 {
-                            actions.push(Action::PasteImage { channel: c.id, image });
-                        } else {
-                            actions.push(Action::Notice("You can't upload files in this channel".into()));
+                let line = Layout::left_to_right(Align::Center);
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), FIELD_HEIGHT - 2.0), line, |ui| {
+                    ui.set_min_height(FIELD_HEIGHT - 2.0);
+                    ui.add_space(FIELD_TEXT_INSET);
+                    // The buttons on the right, and the gaps before, between and after them.
+                    ui.spacing_mut().item_spacing.x = FIELD_BUTTON_MARGIN;
+                    let emoji_w = 3.0 * FIELD_BUTTON + 4.0 * FIELD_BUTTON_MARGIN;
+                    let draft = uis.drafts.entry(c.id).or_default();
+                    let hint = match c.kind {
+                        ChannelType::Dm | ChannelType::GroupDm => format!("Message @{}", c.label()),
+                        _ => format!("Message #{}", c.label()),
+                    };
+                    let before = draft.text.len();
+                    let out = egui::TextEdit::multiline(&mut draft.text)
+                        .id(edit_id)
+                        .hint_text(RichText::new(hint).color(theme::FAINT()))
+                        .font(theme::font(15.5))
+                        .frame(egui::Frame::NONE)
+                        .desired_rows(1)
+                        .desired_width(ui.available_width() - emoji_w)
+                        // Tahoma's line has room above its capitals; a little more margin on top centres the text.
+                        .margin(egui::Margin { left: 4, right: 4, top: 7, bottom: 3 })
+                        // Tab completes suggestions rather than moving focus.
+                        .lock_focus(true)
+                        .show(ui);
+                    if let Some(range) = out.cursor_range {
+                        if draft.caret != range.primary.index.0 {
+                            // Suggestions are worked out from the caret before drawing, so take another look now.
+                            draft.caret = range.primary.index.0;
+                            ui.ctx().request_repaint();
                         }
                     }
-                }
-                if uis.focus_composer {
-                    r.request_focus();
-                    uis.focus_composer = false;
-                }
-                // Square buttons on whole pixels, so their gaps (and margins from the field's edges) match.
-                let (area, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), FIELD_HEIGHT - 2.0), Sense::hover());
-                // Measured from inside the field's sunken edge (a pixel wide, drawn within its rect).
-                let ppp = ui.ctx().pixels_per_point();
-                let area = area.with_max_x(area.right() - ppp.floor().max(1.0) / ppp);
-                let slots = widgets::pixel_row(ui, area, 3, FIELD_BUTTON, FIELD_BUTTON_MARGIN);
-                let id = |name: &str| egui::Id::unique(("composer-button", name, c.id));
-                let gr = widgets::vgui_button_at(ui, id("gif"), slots[0], false, |ui, rect| {
-                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "GIF", theme::font_bold(9.5), theme::HEADER());
+                    if draft.text.is_empty() {
+                        draft.mentions.clear();
+                    }
+                    let r = out.response.response;
+                    if draft.text.len() != before && !draft.text.is_empty() {
+                        actions.push(Action::Typing(c.id));
+                    }
+                    // An image on the clipboard (a screenshot, say) is pasted as an attachment.
+                    if r.has_focus() {
+                        let pasted = ui.input(|i| i.events.iter().find_map(|e| if let egui::Event::PasteImage(image) = e { Some(image.clone()) } else { None }));
+                        if let Some(image) = pasted {
+                            if perms & perm::ATTACH_FILES != 0 {
+                                actions.push(Action::PasteImage { channel: c.id, image });
+                            } else {
+                                actions.push(Action::Notice("You can't upload files in this channel".into()));
+                            }
+                        }
+                    }
+                    if uis.focus_composer {
+                        r.request_focus();
+                        uis.focus_composer = false;
+                    }
+                    // Square buttons on whole pixels, so their gaps (and margins from the field's edges) match.
+                    let (area, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), FIELD_HEIGHT - 2.0), Sense::hover());
+                    // Measured from inside the field's sunken edge (a pixel wide, drawn within its rect).
+                    let ppp = ui.ctx().pixels_per_point();
+                    let area = area.with_max_x(area.right() - ppp.floor().max(1.0) / ppp);
+                    let slots = widgets::pixel_row(ui, area, 3, FIELD_BUTTON, FIELD_BUTTON_MARGIN);
+                    let id = |name: &str| egui::Id::unique(("composer-button", name, c.id));
+                    let gr = widgets::vgui_button_at(ui, id("gif"), slots[0], false, |ui, rect| {
+                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "GIF", theme::font_bold(9.5), theme::HEADER());
+                    });
+                    let gif_at = gr.rect.right_top();
+                    if gr.on_hover_text("GIFs").clicked() {
+                        actions.push(Action::OpenGifPicker { channel: c.id, at: gif_at });
+                    }
+                    let sr = widgets::vgui_button_at(ui, id("sticker"), slots[1], false, sticker_icon);
+                    let sticker_at = sr.rect.right_top();
+                    if sr.on_hover_text("Stickers").clicked() {
+                        actions.push(Action::OpenStickerPicker { channel: c.id, at: sticker_at });
+                    }
+                    let er = widgets::vgui_button_at(ui, id("emoji"), slots[2], false, |ui, rect| {
+                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::EMOJI, theme::icon_font(15.0), theme::HEADER());
+                    });
+                    let er = er.on_hover_text("Emoji");
+                    if er.clicked() {
+                        uis.emoji_picker = Some(PickerTarget::Composer { channel: c.id, at: er.rect.left_top() });
+                    }
                 });
-                let gif_at = gr.rect.right_top();
-                if gr.on_hover_text("GIFs").clicked() {
-                    actions.push(Action::OpenGifPicker { channel: c.id, at: gif_at });
-                }
-                let sr = widgets::vgui_button_at(ui, id("sticker"), slots[1], false, sticker_icon);
-                let sticker_at = sr.rect.right_top();
-                if sr.on_hover_text("Stickers").clicked() {
-                    actions.push(Action::OpenStickerPicker { channel: c.id, at: sticker_at });
-                }
-                let er = widgets::vgui_button_at(ui, id("emoji"), slots[2], false, |ui, rect| {
-                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::EMOJI, theme::icon_font(15.0), theme::HEADER());
-                });
-                let er = er.on_hover_text("Emoji");
-                if er.clicked() {
-                    uis.emoji_picker = Some(PickerTarget::Composer { channel: c.id, at: er.rect.left_top() });
-                }
             });
         });
         if let Some(slot) = slot {
