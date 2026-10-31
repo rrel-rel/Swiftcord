@@ -31,11 +31,13 @@ pub struct ChatView {
     /// A message to scroll to, and how many frames we have tried.
     jump: Option<(Snowflake, u8)>,
     highlight: Option<(Snowflake, Instant)>,
+    /// Opened with unread messages: show the first of them (the NEW line) once the history is in.
+    to_unread: bool,
 }
 
 impl Default for ChatView {
     fn default() -> Self {
-        Self { heights: HashMap::new(), anchor: None, at_bottom: true, scroll_y: 0.0, jump: None, highlight: None }
+        Self { heights: HashMap::new(), anchor: None, at_bottom: true, scroll_y: 0.0, jump: None, highlight: None, to_unread: false }
     }
 }
 
@@ -47,6 +49,11 @@ impl ChatView {
 
     pub fn jump_to(&mut self, id: Snowflake) {
         self.jump = Some((id, 0));
+    }
+
+    /// Opens at the NEW line rather than the bottom, if the unread messages don't all fit on screen.
+    pub fn show_unread(&mut self) {
+        self.to_unread = true;
     }
 }
 
@@ -267,6 +274,16 @@ fn message_list(ui: &mut Ui, s: &Session, uis: &mut UiState, channel: &Channel, 
         y += height_of(&view, r);
     }
     let total = y + 16.0;
+
+    // Opened with more unread messages than fit: start at the first of them, as Discord does. Scrolled like a
+    // jump (retried while heights are measured), without the highlight.
+    if std::mem::take(&mut view.to_unread) {
+        if let Some(i) = first_unread.and_then(|id| rows.iter().position(|r| r.id == id)) {
+            if tops[i] < total - ui.available_height() {
+                view.jump = Some((rows[i].id, 1));
+            }
+        }
+    }
 
     // Keep the anchor row still if anything above it changed.
     let mut scroll_to = None;

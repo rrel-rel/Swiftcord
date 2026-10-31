@@ -995,6 +995,21 @@ impl App {
         }
     }
 
+    /// Opens the unread channel after (`step` 1) or before (-1) the open one, in the order they're listed,
+    /// going round past the end. Nothing happens if there are none.
+    fn jump_to_unread(&mut self, step: isize) {
+        let Some(s) = &self.session else { return };
+        let order = s.state.listed_channels();
+        let n = order.len() as isize;
+        let current = self.ui.channel();
+        // From the open channel's place; with none, from just before the start (or after the end).
+        let start = current.and_then(|c| order.iter().position(|(id, _)| *id == c)).map_or(if step > 0 { -1 } else { n }, |i| i as isize);
+        let next = (1..=n).map(|k| order[(start + step * k).rem_euclid(n.max(1)) as usize]).find(|&(id, unread)| unread && Some(id) != current);
+        if let Some((channel, _)) = next {
+            self.apply(Action::SelectChannel(channel));
+        }
+    }
+
     /// The session's presence: the chosen status, and whether the user is away (see `check_away`).
     fn send_presence(&self) {
         if let Some(s) = self.session.as_ref().filter(|s| s.ready) {
@@ -1133,6 +1148,7 @@ impl App {
         self.ui.unread_marker.retain(|c, _| *c == channel);
         if let Some(read) = self.session.as_ref().filter(|s| s.state.is_unread(channel)).and_then(|s| s.state.last_read(channel)) {
             self.ui.unread_marker.insert(channel, read);
+            self.ui.chat.entry(channel).or_default().show_unread();
         }
         self.mark_viewed(channel);
     }
@@ -1983,6 +1999,21 @@ impl crate::window::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut crate::window::Frame) {
         let started = Instant::now();
         self.caret_timeout(ui.ctx());
+        // Alt+Shift+Down/Up: the next or previous unread channel, as in Discord. Taken before the text box
+        // could use the arrows.
+        let jump = ui.input_mut(|i| {
+            let mods = egui::Modifiers::ALT | egui::Modifiers::SHIFT;
+            if i.consume_key(mods, egui::Key::ArrowDown) {
+                Some(1)
+            } else if i.consume_key(mods, egui::Key::ArrowUp) {
+                Some(-1)
+            } else {
+                None
+            }
+        });
+        if let Some(step) = jump {
+            self.jump_to_unread(step);
+        }
         self.ui.web_player_slot = None;
         let mut actions = Vec::new();
         if let Some(s) = &self.session {

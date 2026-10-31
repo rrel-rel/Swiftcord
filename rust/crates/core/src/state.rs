@@ -484,6 +484,29 @@ impl State {
         out
     }
 
+    /// Every channel in the order the app lists them, with whether each counts as unread: direct messages
+    /// (newest first), then each server down the rail, its channels down the sidebar. For jumping between
+    /// unread channels. Muted ones count only with a mention, as their badges do.
+    pub fn listed_channels(&self) -> Vec<(Snowflake, bool)> {
+        let mut out: Vec<(Snowflake, bool)> = self.private_channels().iter().map(|c| (c.id, self.is_unread(c.id) && !self.is_channel_muted(c))).collect();
+        for entry in self.rail() {
+            let guilds = match entry {
+                RailItem::Guild(g) => vec![g],
+                RailItem::Folder { guilds, .. } => guilds,
+            };
+            for g in guilds {
+                let muted = self.is_guild_muted(g);
+                for (_, channels) in self.channel_tree(g) {
+                    for c in channels {
+                        let unread = c.is_text_based() && self.is_unread(c.id) && !muted && !self.is_channel_muted(c);
+                        out.push((c.id, unread || self.mention_count(c.id) > 0));
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Total mentions everywhere (DM messages count as mentions), for the taskbar and tray badges.
     pub fn total_mentions(&self) -> u32 {
         self.channels.values().map(|c| self.mention_count(c.id)).sum()
