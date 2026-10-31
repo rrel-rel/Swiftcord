@@ -60,6 +60,7 @@ fn item(
     paint: impl FnOnce(&mut Ui, Rect, bool),
 ) -> egui::Response {
     let (rect, r) = ui.allocate_exact_size(Vec2::splat(ICON), Sense::click());
+    theme::register_list_item(ui, rect);
     let hovered = r.hovered();
     paint(ui, rect, hovered);
 

@@ -96,6 +96,9 @@ impl Lists {
 
 /// The sidebar's left edge for text and icons: the header, section labels, and row content.
 const INSET: f32 = 16.0;
+/// The user panel's buttons (mute, deafen, settings), and the gap between them.
+const PANEL_BUTTON: f32 = 24.0;
+const PANEL_BUTTON_GAP: f32 = 4.0;
 /// Rows' highlight is inset this much from the sidebar's sides; their content as much again.
 const ROW_MARGIN: f32 = 8.0;
 
@@ -107,6 +110,7 @@ fn row(ui: &mut Ui, selected: bool, height: f32, add: impl FnOnce(&mut Ui, bool)
         ui.add_space(2.0);
         return r;
     }
+    theme::register_list_item(ui, r.rect);
     let rect = rect.translate(Vec2::new(ROW_MARGIN, 0.0));
     // contains_pointer, not hovered: buttons inside the row would otherwise un-hover it and hide themselves.
     let hovered = r.contains_pointer();
@@ -415,14 +419,16 @@ fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Actio
         egui::Popup::menu(&avatar).show(|ui| status_menu(ui, actions));
         avatar.on_hover_text("Set Status");
         ui.vertical(|ui| {
-            ui.set_max_width(ui.available_width() - 100.0);
+            // Leaves room for the buttons and their margins.
+            ui.set_max_width(ui.available_width() - (3.0 * PANEL_BUTTON + 2.0 * PANEL_BUTTON_GAP + INSET + 8.0));
             ui.add(egui::Label::new(RichText::new(me.display_name()).font(theme::font_semibold(14.0)).color(theme::HEADER())).truncate());
             let subtitle = state.activity(me.id).map_or_else(|| me.tag(), str::to_owned);
             ui.add(egui::Label::new(RichText::new(subtitle).size(12.0).color(theme::MUTED())).truncate());
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = PANEL_BUTTON_GAP;
             ui.add_space(INSET);
-            let settings = widgets::icon_button(ui, icon::SETTINGS, "Settings");
+            let settings = widgets::icon_button_sized(ui, icon::SETTINGS, "Settings", PANEL_BUTTON);
             egui::Popup::menu(&settings).show(|ui| {
                 ui.set_min_width(160.0);
                 if ui.button("Settings…").clicked() {
@@ -440,10 +446,10 @@ fn user_panel(ui: &mut Ui, state: &State, uis: &UiState, actions: &mut Vec<Actio
                     actions.push(Action::LogOut);
                 }
             });
-            if widgets::toggle_icon(ui, if uis.self_deaf { icon::DEAFENED } else { icon::HEADPHONES }, uis.self_deaf, "Deafen").clicked() {
+            if widgets::toggle_icon_sized(ui, if uis.self_deaf { icon::DEAFENED } else { icon::HEADPHONES }, uis.self_deaf, theme::RED(), "Deafen", PANEL_BUTTON).clicked() {
                 actions.push(Action::ToggleDeafen);
             }
-            if widgets::toggle_icon(ui, if uis.self_mute { icon::MIC_OFF } else { icon::MIC }, uis.self_mute, "Mute").clicked() {
+            if widgets::toggle_icon_sized(ui, if uis.self_mute { icon::MIC_OFF } else { icon::MIC }, uis.self_mute, theme::RED(), "Mute", PANEL_BUTTON).clicked() {
                 actions.push(Action::ToggleMute);
             }
         });

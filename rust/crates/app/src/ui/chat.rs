@@ -94,10 +94,11 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
         return;
     }
 
-    // As in Discord: the box, then the typing indicator in the space beneath it.
-    egui::Panel::bottom(("composer", channel.id)).show_separator_line(false).frame(egui::Frame::new().fill(theme::CHAT()).inner_margin(egui::Margin { left: 16, right: 16, top: 0, bottom: 0 })).show(ui, |ui| {
+    // The same padding all round the box; the typing indicator goes in the strip above it.
+    let pad = COMPOSER_PADDING as i8;
+    egui::Panel::bottom(("composer", channel.id)).show_separator_line(false).frame(egui::Frame::new().fill(theme::CHAT()).inner_margin(egui::Margin { left: pad, right: pad, top: 0, bottom: pad })).show(ui, |ui| {
+        typing_line(ui, s, channel, COMPOSER_PADDING);
         composer(ui, s, uis, catalog, channel, perms, actions);
-        typing_line(ui, s, channel);
     });
 
     let searching = uis.search.as_ref().is_some_and(|q| q.applies_to(channel.id, channel.guild_id));
@@ -132,8 +133,8 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, acti
 /// Just a channel's messages and composer, for a column beside something else (a voice channel's screen).
 pub fn column(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, channel: &Channel, actions: &mut Vec<Action>) {
     let perms = s.state.permissions(channel.id);
-    egui::Panel::bottom(("composer", channel.id)).show_separator_line(false).frame(egui::Frame::new().fill(theme::CHAT()).inner_margin(egui::Margin { left: 12, right: 12, top: 0, bottom: 0 })).show(ui, |ui| {
-        typing_line(ui, s, channel);
+    egui::Panel::bottom(("composer", channel.id)).show_separator_line(false).frame(egui::Frame::new().fill(theme::CHAT()).inner_margin(egui::Margin { left: 12, right: 12, top: 0, bottom: 12 })).show(ui, |ui| {
+        typing_line(ui, s, channel, 12.0);
         composer(ui, s, uis, catalog, channel, perms, actions);
     });
     egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CHAT())).show(ui, |ui| {
@@ -506,7 +507,8 @@ fn day_divider(ui: &mut Ui, m: &Message, date: bool, new: bool) {
     ui.add_space(4.0);
 }
 
-fn typing_line(ui: &mut Ui, s: &Session, c: &Channel) {
+/// Who's typing, in the strip of `height` above the message box (its top padding).
+fn typing_line(ui: &mut Ui, s: &Session, c: &Channel, height: f32) {
     let users = s.state.typing_users(c.id);
     let text = match users.len() {
         0 => String::new(),
@@ -520,9 +522,10 @@ fn typing_line(ui: &mut Ui, s: &Session, c: &Channel) {
         ),
         _ => "Several people are typing…".to_owned(),
     };
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
+    // Less the spacing that follows it, so the gap above the box is `height` exactly.
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height - ui.spacing().item_spacing.y), Sense::hover());
     if !text.is_empty() {
-        ui.painter().text(rect.left_center() + Vec2::new(4.0, 0.0), egui::Align2::LEFT_CENTER, text, theme::font_semibold(12.5), theme::TEXT());
+        ui.painter().text(rect.left_center(), egui::Align2::LEFT_CENTER, text, theme::font_semibold(11.5), theme::TEXT());
         // Typing indicators expire on a timer, so keep repainting while one is shown.
         ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
     }
@@ -574,6 +577,8 @@ const FIELD_HEIGHT: f32 = 32.0;
 /// each other: 3 + 24 + 3 fills the 30 inside its 1 pt edge.
 const FIELD_BUTTON_MARGIN: f32 = 3.0;
 const FIELD_BUTTON: f32 = FIELD_HEIGHT - 2.0 - 2.0 * FIELD_BUTTON_MARGIN;
+/// The space around the message box, the same on every side (the typing indicator goes in the top).
+const COMPOSER_PADDING: f32 = 16.0;
 /// The header's buttons and search box are this tall.
 const HEADER_CONTROL: f32 = 26.0;
 const SEARCH_WIDTH: f32 = 200.0;
@@ -773,7 +778,8 @@ fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &
                     .frame(egui::Frame::NONE)
                     .desired_rows(1)
                     .desired_width(ui.available_width() - emoji_w)
-                    .margin(egui::Margin::symmetric(4, 5))
+                    // Tahoma's line has room above its capitals; a little more margin on top centres the text.
+                    .margin(egui::Margin { left: 4, right: 4, top: 7, bottom: 3 })
                     // Tab completes suggestions rather than moving focus.
                     .lock_focus(true)
                     .show(ui);
@@ -892,7 +898,7 @@ fn search_field(ui: &mut Ui, c: &Channel, text: &mut String, actions: &mut Vec<A
             ui.set_height(HEADER_CONTROL - 2.0);
             ui.label(RichText::new(icon::SEARCH).font(theme::icon_font(12.0)).color(theme::MUTED()));
             let hint = if c.guild_id.is_some() { "Search" } else { "Search this chat" };
-            let r = ui.add(egui::TextEdit::singleline(text).hint_text(RichText::new(hint).color(theme::FAINT())).frame(egui::Frame::NONE).margin(egui::Margin::symmetric(2, 2)).desired_width(ui.available_width()));
+            let r = ui.add(egui::TextEdit::singleline(text).hint_text(RichText::new(hint).color(theme::FAINT())).frame(egui::Frame::NONE).margin(egui::Margin { left: 2, right: 2, top: 4, bottom: 0 }).desired_width(ui.available_width()));
             let r = r.on_hover_text("Search messages. Filters: from:name, in:channel, has:image, mentions:name, before:2024-01-31, after:, during:");
             if r.lost_focus() {
                 if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {

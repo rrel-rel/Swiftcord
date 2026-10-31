@@ -1859,6 +1859,9 @@ impl crate::window::App for App {
         if self.ui.banner.as_ref().is_some_and(|(t, at)| t.is_empty() || at.elapsed() > Duration::from_secs(6)) {
             self.ui.banner = None;
         }
+        for sound in crate::sounds::take_pending() {
+            self.sounds.play(sound, &self.settings.output_device);
+        }
         crate::voice_glue::tick(self);
         self.ring_sounds();
         crate::interactions_glue::tick(self);

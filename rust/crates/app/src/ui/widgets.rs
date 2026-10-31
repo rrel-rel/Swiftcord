@@ -145,13 +145,18 @@ pub fn icon_button_sized(ui: &mut Ui, icon: &str, tooltip: &str, side: f32) -> R
 
 /// A VGUI icon button that stays pressed in while `active` (e.g. mute), its icon red then.
 pub fn toggle_icon(ui: &mut Ui, icon: &str, active: bool, tooltip: &str) -> Response {
-    toggle_icon_colored(ui, icon, active, theme::RED(), tooltip)
+    toggle_icon_sized(ui, icon, active, theme::RED(), tooltip, 30.0)
 }
 
 /// As [`toggle_icon`], with the icon in `active_color` while active.
 pub fn toggle_icon_colored(ui: &mut Ui, icon: &str, active: bool, active_color: Color32, tooltip: &str) -> Response {
+    toggle_icon_sized(ui, icon, active, active_color, tooltip, 30.0)
+}
+
+/// As [`toggle_icon_colored`], `side` points square.
+pub fn toggle_icon_sized(ui: &mut Ui, icon: &str, active: bool, active_color: Color32, tooltip: &str, side: f32) -> Response {
     let color = if active { active_color } else { theme::HEADER() };
-    vgui_button(ui, Vec2::splat(30.0), active, |ui, rect| glyph(ui, rect, icon, color)).on_hover_text(tooltip)
+    vgui_button(ui, Vec2::splat(side), active, |ui, rect| glyph(ui, rect, icon, color)).on_hover_text(tooltip)
 }
 
 fn glyph(ui: &Ui, rect: egui::Rect, icon: &str, color: Color32) {
@@ -191,6 +196,7 @@ pub fn pixel_row(ui: &Ui, area: egui::Rect, n: usize, side: f32, gap: f32) -> Ve
 /// Draws a VGUI button over `r` (see `theme::button_frame`). VGUI buttons keep the arrow cursor.
 fn paint_vgui_button(ui: &Ui, r: &Response, held: bool, paint: impl FnOnce(&Ui, egui::Rect)) {
     plain_cursor(r);
+    theme::register_button(ui.ctx(), r.rect);
     let ppp = ui.ctx().pixels_per_point();
     let look = if r.is_pointer_button_down_on() || held {
         theme::ButtonLook::Pressed

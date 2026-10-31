@@ -433,6 +433,27 @@ pub fn button_frame(rect: egui::Rect, look: ButtonLook, ppp: f32) -> egui::Shape
     egui::Shape::mesh(mesh)
 }
 
+/// The VGUI buttons drawn by hand this frame (egui's are found by their markers), for their sounds.
+#[derive(Clone, Default)]
+struct HandDrawnButtons(Vec<egui::Rect>);
+
+/// Notes a hand-drawn VGUI button, so it clicks like the rest (see `sounds::button_feedback`).
+pub fn register_button(ctx: &egui::Context, rect: egui::Rect) {
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<HandDrawnButtons>(egui::Id::NULL).0.push(rect));
+}
+
+/// The list items (DMs, channels, servers) drawn this frame, for their sounds.
+#[derive(Clone, Default)]
+struct ListItems(Vec<egui::Rect>);
+
+/// Notes a list item (the visible part of it), so it sounds as the pointer rolls over and selects it.
+pub fn register_list_item(ui: &egui::Ui, rect: egui::Rect) {
+    let rect = rect.intersect(ui.clip_rect());
+    if rect.is_positive() {
+        ui.ctx().data_mut(|d| d.get_temp_mut_or_default::<ListItems>(egui::Id::NULL).0.push(rect));
+    }
+}
+
 /// Last touches before drawing: VGUI has no rounded corners, so every rectangle is squared off (panels,
 /// highlights, avatars), and egui buttons get VGUI bevelled frames, their labels nudged when pressed and
 /// darkened when disabled. True if the pointer is over one of those buttons (which keep the arrow cursor).
@@ -448,6 +469,8 @@ pub fn post_process(ctx: &egui::Context, shapes: &mut [egui::epaint::ClippedShap
     let (pointer, down) = ctx.input(|i| (i.pointer.interact_pos(), i.pointer.primary_down()));
     let hover = ctx.input(|i| i.pointer.hover_pos());
     let mut over_button = false;
+    // Every enabled VGUI button this frame, for their sounds.
+    let mut buttons = ctx.data_mut(|d| std::mem::take(&mut d.get_temp_mut_or_default::<HandDrawnButtons>(egui::Id::NULL).0));
     let mut i = 0;
     while i < shapes.len() {
         let button = match &shapes[i].shape {
@@ -463,6 +486,9 @@ pub fn post_process(ctx: &egui::Context, shapes: &mut [egui::epaint::ClippedShap
             continue;
         };
         over_button |= hover.is_some_and(|p| shapes[i].clip_rect.contains(p) && rect.contains(p));
+        if look != ButtonLook::Disabled {
+            buttons.push(rect.intersect(shapes[i].clip_rect));
+        }
         shapes[i].shape = button_frame(rect, look, ppp);
         // The label is drawn next, inside the frame.
         let mut j = i + 1;
@@ -482,6 +508,8 @@ pub fn post_process(ctx: &egui::Context, shapes: &mut [egui::epaint::ClippedShap
         }
         i = j;
     }
+    let items = ctx.data_mut(|d| std::mem::take(&mut d.get_temp_mut_or_default::<ListItems>(egui::Id::NULL).0));
+    crate::sounds::button_feedback(ctx, &buttons, &items);
     over_button
 }
 
