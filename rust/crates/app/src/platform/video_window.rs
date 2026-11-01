@@ -36,7 +36,7 @@ pub(crate) fn site(url: &str) -> Option<&str> {
 
 /// Opens the video window for a player URL. Only web links are opened.
 pub fn open(url: &str, title: &str) {
-    if !url.starts_with("https://") {
+    if !url.starts_with("https://") || swiftcord_core::offline::is_on() {
         return;
     }
     let Ok(exe) = std::env::current_exe() else { return };

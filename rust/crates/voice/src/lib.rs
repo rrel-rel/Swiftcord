@@ -5,6 +5,7 @@ pub mod audio;
 pub mod camera;
 pub mod capture;
 pub mod codec;
+pub mod diag;
 mod connection;
 pub mod ogg;
 pub mod rtp;
@@ -19,6 +20,13 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 pub use audio::{list_devices, play, AudioIo, Devices};
+
+static OFFLINE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Offline mode (the app's `SWIFTCORD_OFFLINE`): voice connections fail at once instead of connecting.
+pub fn go_offline() {
+    OFFLINE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
 
 /// Everything needed to connect, from the main gateway's VOICE_STATE_UPDATE and VOICE_SERVER_UPDATE.
 #[derive(Debug, Clone)]
@@ -248,6 +256,82 @@ impl MicTest {
 }
 
 impl Drop for MicTest {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+/// Plays speech as if someone in a call were saying it, without connecting anywhere: encoded to Opus as a
+/// Discord client sends it, delivered in real time (optionally with network jitter and loss), and played
+/// through the same jitter buffer, decoder, mixer and speakers as a call. For hearing (and recording, see
+/// `diag`) what incoming audio sounds like.
+pub struct IncomingTest {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    errors: std::sync::mpsc::Receiver<String>,
+    _io: audio::AudioIo,
+}
+
+impl IncomingTest {
+    /// `speech` is mono at 48 kHz, played on a loop. `rough`: 0-40 ms of jitter and 2% of packets lost.
+    pub fn start(devices: Devices, speech: Vec<f32>, rough: bool) -> IncomingTest {
+        use std::sync::atomic::AtomicBool;
+        let mixer = Arc::new(audio::Mixer::default());
+        let (io, errors) = audio::start(devices, None, mixer.clone(), Arc::new(AtomicBool::new(false)));
+        let stop = Arc::new(AtomicBool::new(false));
+        let s = stop.clone();
+        let thread = std::thread::spawn(move || {
+            if speech.len() < codec::FRAME {
+                return;
+            }
+            // As Discord's clients send voice: Opus for VoIP at 64 kbps, with error correction.
+            let Some(mut enc) = codec::Encoder::new(64_000) else { return };
+            let start = std::time::Instant::now();
+            // Packets on their way: when each arrives, its sequence number and data.
+            let mut in_flight: Vec<(std::time::Instant, u16, Vec<u8>)> = Vec::new();
+            let mut random = 0x2545_F491_u32;
+            let mut next = || {
+                random ^= random << 13;
+                random ^= random >> 17;
+                random ^= random << 5;
+                random
+            };
+            let mut packet = [0u8; 1500];
+            let mut frame = 0usize;
+            while !s.load(Ordering::Relaxed) {
+                let now = std::time::Instant::now();
+                // A frame every 20 ms, as captured.
+                while start + Duration::from_millis(20 * frame as u64) <= now {
+                    let at = (frame * codec::FRAME) % (speech.len() - speech.len() % codec::FRAME);
+                    if let Some(n) = enc.encode(&speech[at..at + codec::FRAME], &mut packet) {
+                        let lost = rough && next() % 100 < 2;
+                        let delay = if rough { Duration::from_millis(next() as u64 % 41) } else { Duration::ZERO };
+                        if !lost {
+                            in_flight.push((now + delay, frame as u16, packet[..n].to_vec()));
+                        }
+                    }
+                    frame += 1;
+                }
+                in_flight.sort_by_key(|p| p.0);
+                while in_flight.first().is_some_and(|p| p.0 <= now) {
+                    let (_, seq, p) = in_flight.remove(0);
+                    mixer.push(1, seq, p);
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+        IncomingTest { stop, thread: Some(thread), errors, _io: io }
+    }
+
+    pub fn errors(&self) -> Vec<String> {
+        self.errors.try_iter().collect()
+    }
+}
+
+impl Drop for IncomingTest {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(t) = self.thread.take() {

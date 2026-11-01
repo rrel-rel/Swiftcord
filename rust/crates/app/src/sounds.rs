@@ -40,6 +40,24 @@ pub enum Sound {
     ButtonRelease,
 }
 
+/// The two kinds of sound, each with its own volume.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// Buttons and list rollovers.
+    Menu,
+    /// Messages and calls.
+    Notification,
+}
+
+impl Sound {
+    pub fn kind(self) -> Kind {
+        match self {
+            Sound::ButtonRollover | Sound::ButtonPress | Sound::ButtonRelease => Kind::Menu,
+            Sound::Message | Sound::Join | Sound::Leave | Sound::Ring | Sound::Ringback => Kind::Notification,
+        }
+    }
+}
+
 /// Notes as (start in seconds, frequency in Hz, length in seconds), mixed with a soft bell envelope.
 fn notes(notes: &[(f32, f32, f32)], total: f32, volume: f32) -> Vec<f32> {
     let len = (total * RATE) as usize;
@@ -131,7 +149,7 @@ fn load(sound: Sound) -> Vec<f32> {
 
 /// A WAV file (PCM at 8, 16, 24 or 32 bits, or 32-bit float; any number of channels, the first two used;
 /// any rate) as interleaved stereo at [`RATE`].
-fn decode_wav(bytes: &[u8]) -> Option<Vec<f32>> {
+pub(crate) fn decode_wav(bytes: &[u8]) -> Option<Vec<f32>> {
     if bytes.get(0..4)? != b"RIFF" || bytes.get(8..12)? != b"WAVE" {
         return None;
     }
@@ -274,13 +292,23 @@ pub struct Sounds {
     cache: HashMap<Sound, (Option<SystemTime>, Arc<Vec<f32>>)>,
     io: Option<(swiftcord_voice::AudioIo, Option<String>)>,
     idle_since: Option<Instant>,
-    /// The volume set (0 to 1), as f32 bits: the mixer reads it, so a change applies to what's playing too.
-    volume: Arc<AtomicU32>,
+    /// The volumes set (0 to 1) for menu and notification sounds, as f32 bits: the mixer reads them, so a
+    /// change applies to what's playing too.
+    volumes: Arc<[AtomicU32; 2]>,
 }
 
 impl Default for Sounds {
     fn default() -> Self {
-        Self { voices: Default::default(), cache: HashMap::new(), io: None, idle_since: None, volume: Arc::new(AtomicU32::new(1f32.to_bits())) }
+        let full = || AtomicU32::new(1f32.to_bits());
+        Self { voices: Default::default(), cache: HashMap::new(), io: None, idle_since: None, volumes: Arc::new([full(), full()]) }
+    }
+}
+
+/// Where a kind's volume is kept in [`Sounds::volumes`].
+fn slot(kind: Kind) -> usize {
+    match kind {
+        Kind::Menu => 0,
+        Kind::Notification => 1,
     }
 }
 
@@ -298,9 +326,9 @@ impl Sounds {
         }
     }
 
-    /// The volume for every sound, 0 to 1 (the setting).
-    pub fn set_volume(&self, volume: f32) {
-        self.volume.store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    /// The volume for one kind of sound, 0 to 1 (the settings).
+    pub fn set_volume(&self, kind: Kind, volume: f32) {
+        self.volumes[slot(kind)].store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
     }
 
     /// Plays a sound once at `volume` rather than the one set: hearing a new setting before it's saved.
@@ -326,14 +354,14 @@ impl Sounds {
             return;
         }
         let voices = self.voices.clone();
-        let volume = self.volume.clone();
+        let volumes = self.volumes.clone();
         let fill = move |out: &mut [f32]| {
             out.fill(0.0);
-            let set = f32::from_bits(volume.load(Ordering::Relaxed));
+            let set = |kind: Kind| f32::from_bits(volumes[slot(kind)].load(Ordering::Relaxed));
             let mut voices = voices.lock();
             for v in voices.iter_mut() {
                 // Perceived loudness is about logarithmic: squared, the slider's middle sounds like half.
-                let gain = v.volume.unwrap_or(set).powi(2);
+                let gain = v.volume.unwrap_or_else(|| set(v.sound.kind())).powi(2);
                 let mut i = 0;
                 while i < out.len() {
                     let n = (out.len() - i).min(v.pcm.len() - v.pos);

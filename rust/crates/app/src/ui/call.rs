@@ -134,7 +134,7 @@ fn participant(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, u: &U
                 let r = widgets::user_avatar(ui, u, 80.0);
                 if !joined {
                     // Not in the call (yet): dimmed.
-                    ui.painter().circle_filled(r.rect.center(), 40.0, theme::RAIL().gamma_multiply(0.6));
+                    ui.painter().rect_filled(r.rect, 0, theme::RAIL().gamma_multiply(0.6));
                 }
                 if uis.speaking.contains(&u.id) && joined {
                     ui.painter().circle_stroke(r.rect.center(), 42.0, egui::Stroke::new(3.0, theme::GREEN()));
@@ -198,7 +198,7 @@ pub fn incoming(ui: &Ui, s: &Session, uis: &UiState, actions: &mut Vec<Action>) 
                             }
                             None => {
                                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), Sense::hover());
-                                ui.painter().circle_filled(rect.center(), 24.0, theme::ACCENT());
+                                ui.painter().rect_filled(rect, 0, theme::ACCENT());
                                 ui.painter().text(rect.center(), Align2::CENTER_CENTER, icon::PEOPLE, theme::icon_font(20.0), Color32::WHITE);
                             }
                         }

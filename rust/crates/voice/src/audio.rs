@@ -221,7 +221,9 @@ impl Stream {
     fn push(&mut self, seq: u16, opus: Vec<u8>) {
         let ext = self.unwrap_seq(seq);
         self.last_arrival = Instant::now();
+        crate::diag::add(&crate::diag::stats().packets, 1);
         if ext < self.next {
+            crate::diag::add(&crate::diag::stats().late, 1);
             return; // Too late: already concealed or faded past.
         }
         self.highest = Some(self.highest.map_or(ext, |h| h.max(ext)));
@@ -229,6 +231,7 @@ impl Stream {
         if self.packets.len() > self.target + MAX_BACKLOG {
             // Far behind (e.g. after a long stall): fade out what's playing, drop down to the target and carry
             // on from there (the next packet starts afresh and fades in).
+            crate::diag::add(&crate::diag::stats().stalls, 1);
             while self.packets.len() > self.target {
                 self.packets.pop_first();
             }
@@ -293,6 +296,8 @@ impl Stream {
                 if self.last_arrival.elapsed() < Duration::from_millis(60) {
                     self.target = (self.target + 1).min(MAX_TARGET);
                     self.last_underrun = Instant::now();
+                    crate::diag::add(&crate::diag::stats().underruns, 1);
+                    crate::diag::stats().max_target.fetch_max(self.target as u64, Ordering::Relaxed);
                 }
                 if self.quiet {
                     return false;
@@ -314,6 +319,7 @@ impl Stream {
         // play this frame a pitch period or two shorter, which keeps the delay steady without a jump.
         if self.packets.len() > self.target + CATCH_UP_AT && self.since_merge >= MERGE_EVERY && shorten(&mut frame) {
             self.since_merge = 0;
+            crate::diag::add(&crate::diag::stats().shortened, 1);
         }
         self.emit(&mut frame);
         true
@@ -351,6 +357,7 @@ impl Stream {
             let n = self.decoder.decode_fec(next, &mut scratch[..FRAME * 2]);
             let peak = |s: &[f32]| s.iter().fold(0f32, |m, v| m.max(v.abs()));
             if n > 0 && peak(&scratch[..n]) <= (peak(&self.last_frame) * 1.3).max(0.05) {
+                crate::diag::add(&crate::diag::stats().fec_recovered, 1);
                 self.concealed = 0;
                 self.last_frame.clear();
                 self.last_frame.extend_from_slice(&scratch[..n]);
@@ -362,12 +369,14 @@ impl Stream {
         }
         self.concealed += 1;
         if self.concealed > 3 || self.last_frame.is_empty() {
+            crate::diag::add(&crate::diag::stats().skipped, 1);
             // Faded away: skip to what's there, which starts afresh and fades in.
             self.fade_out();
             self.next = *self.packets.keys().next().unwrap();
             self.concealed = 0;
             return usize::MAX;
         }
+        crate::diag::add(&crate::diag::stats().covered, 1);
         // The last real sound's pitch period, repeated (carrying on from where the last stand-in stopped), ramping
         // down a third of the way to silence each time: a voice holds its note rather than stuttering.
         let (cycle, phase) = self.cover.get_or_insert_with(|| (pitch_cycle(&self.last_frame), 0));
@@ -519,16 +528,20 @@ impl Mixer {
                 *o += v * g;
             }
         }
+        crate::diag::mix(out, KNEE);
         for o in out.iter_mut() {
             *o = soft_clip(*o);
         }
+        crate::diag::PLAYED.add(out);
     }
 }
+
+/// Where [`soft_clip`] starts bending.
+const KNEE: f32 = 0.8;
 
 /// Leaves normal levels alone and bends loud peaks (several people talking at once, or volume above 100%)
 /// smoothly towards ±1, instead of squaring them off into crackle.
 fn soft_clip(x: f32) -> f32 {
-    const KNEE: f32 = 0.8;
     let a = x.abs();
     if a <= KNEE {
         x
@@ -545,6 +558,8 @@ fn device_errors(what: &'static str, errors: SyncSender<String>) -> impl FnMut(c
     move |e: cpal::Error| {
         if e.kind() == cpal::ErrorKind::Xrun {
             xruns += 1;
+            let s = crate::diag::stats();
+            crate::diag::add(if what == "Microphone" { &s.capture_xruns } else { &s.render_xruns }, 1);
             // In the log (1st, 2nd, 4th, 8th… time), so a tester's log shows whether glitches they heard were the
             // system falling behind rather than the network.
             if xruns.is_power_of_two() {
@@ -623,9 +638,11 @@ pub fn start(devices: Devices, mic: Option<SyncSender<Vec<f32>>>, mixer: Arc<Mix
             }
             while !s.load(Ordering::Relaxed) {
                 std::thread::park_timeout(Duration::from_millis(100));
+                crate::diag::report(false);
             }
             drop(input);
             drop(output);
+            crate::diag::report(true);
         })
         .expect("audio thread");
     (AudioIo { stop, thread: Some(thread) }, err_rx)
@@ -639,22 +656,20 @@ fn build_input(device: &cpal::Device, mic: SyncSender<Vec<f32>>, errors: SyncSen
     let rate = config.sample_rate;
     tracing::info!("microphone: {} ch @ {rate} Hz ({format:?})", channels);
     let mut resampler = Resampler::new(rate, SAMPLE_RATE, 1);
-    let mut mono = Vec::new();
+    let (mut raw, mut mono) = (Vec::new(), Vec::new());
     let mut dropped = 0u64;
     let mut process = move |samples: &mut dyn Iterator<Item = f32>| {
+        raw.clear();
+        raw.extend(samples);
+        crate::diag::mic(&raw);
         mono.clear();
-        let mut acc = 0.0;
-        for (i, s) in samples.enumerate() {
-            acc += s;
-            if i % channels == channels - 1 {
-                mono.push(acc / channels as f32);
-                acc = 0.0;
-            }
-        }
+        mono.extend(raw.chunks_exact(channels).map(|f| f.iter().sum::<f32>() / channels as f32));
         let mut out = Vec::with_capacity(mono.len() * 2);
         resampler.process(&mono, &mut out);
+        crate::diag::MIC.add(&out);
         // If the sender falls behind, drop audio rather than block the device thread.
         if mic.try_send(out).is_err() {
+            crate::diag::add(&crate::diag::stats().mic_dropped, 1);
             dropped += 1;
             if dropped % 50 == 1 {
                 tracing::warn!("microphone audio dropped ({dropped} chunks): the sender is falling behind");
@@ -1067,6 +1082,79 @@ mod tests {
         let worst = worst_step(&b[skip..]).0;
         let rms = |s: &[f32]| (s.iter().map(|v| v * v).sum::<f32>() / s.len().max(1) as f32).sqrt();
         (worst / base, rms(&b[skip..]) / rms(&a[skip..]))
+    }
+
+    /// Distortion through the jitter buffer (diagnostic; prints): a steady 150 Hz voice-like tone (harmonics,
+    /// no vibrato, so its frequencies are known) as Opus packets, played through the mixer in 10 ms callbacks
+    /// as the speakers ask, with packets arriving on time or with network jitter.
+    #[test]
+    #[ignore]
+    fn diag_jitter_buffer_distortion() {
+        let freqs: Vec<f32> = (1..=10).map(|h| 150.0 * h as f32).collect();
+        let tau = std::f32::consts::TAU;
+        let mut enc = crate::codec::Encoder::new(64_000).unwrap();
+        let mut buf = [0u8; 1400];
+        let n = 500;
+        let packets: Vec<Vec<u8>> = (0..n)
+            .map(|f| {
+                let pcm: Vec<f32> = (0..FRAME).map(|i| freqs.iter().enumerate().map(|(h, fr)| ((f * FRAME + i) as f32 * fr * tau / 48_000.0).sin() * 0.25 / (h + 1) as f32).sum()).collect();
+                let k = enc.encode(&pcm, &mut buf).unwrap();
+                buf[..k].to_vec()
+            })
+            .collect();
+        // Arrival time (in 10 ms ticks) of each packet, given its jitter in ticks.
+        let run = |name: &str, jitter: &dyn Fn(usize) -> usize| {
+            let m = Mixer::default();
+            let mut arrivals: Vec<(usize, usize)> = (0..n).map(|i| (2 * i + jitter(i), i)).collect();
+            arrivals.sort();
+            let mut left = Vec::new();
+            let mut out = vec![0.0; FRAME];
+            let mut next = 0;
+            for tick in 0..2 * n + 40 {
+                while next < arrivals.len() && arrivals[next].0 <= tick {
+                    let i = arrivals[next].1;
+                    m.push(1, i as u16, packets[i].clone());
+                    next += 1;
+                }
+                m.mix(&mut out);
+                left.extend(out.chunks(2).map(|f| f[0]));
+            }
+            // From when it's playing, a second at a time.
+            let start = left.iter().position(|v| v.abs() > 0.01).unwrap_or(0) + 48_000 / 2;
+            let worst = (0..6)
+                .map(|k| crate::codec::tests_support::thd_n(&left[start + k * 48_000..start + (k + 1) * 48_000], &freqs))
+                .fold(f32::MIN, f32::max);
+            let played = left.iter().filter(|v| v.abs() > 0.01).count() as f32 / 48_000.0;
+            println!("{name:<34} worst second THD+N {worst:6.1} dB, {played:.2} s of sound (sent {:.2} s)", n as f32 * 0.02);
+        };
+        run("on time", &|_| 0);
+        // Jitter of 0-20 ms, a fixed pattern that looks random.
+        run("0-20 ms jitter", &|i| (i * 7919 % 13) % 3);
+        run("0-40 ms jitter", &|i| (i * 7919 % 13) % 5);
+        // Mostly on time, every so often a 60 ms stall then a burst.
+        run("stall every 2 s", &|i| if i % 100 < 3 { 6 - 2 * (i % 100) } else { 0 });
+    }
+
+    /// The devices' formats (diagnostic; prints, opens nothing).
+    #[test]
+    #[ignore]
+    fn diag_device_formats() {
+        let host = cpal::default_host();
+        for (kind, devices, default) in [
+            ("input", host.input_devices().unwrap().collect::<Vec<_>>(), host.default_input_device()),
+            ("output", host.output_devices().unwrap().collect::<Vec<_>>(), host.default_output_device()),
+        ] {
+            let default_id = default.as_ref().and_then(|d| d.description().ok()).map(|d| d.name().to_owned());
+            for d in devices {
+                let name = d.description().map(|n| n.name().to_owned()).unwrap_or_default();
+                let config = if kind == "input" { d.default_input_config() } else { d.default_output_config() };
+                let mark = if Some(&name) == default_id.as_ref() { "*" } else { " " };
+                match config {
+                    Ok(c) => println!("{mark} {kind:<6} {name}: {} ch @ {} Hz {:?}", c.channels(), c.sample_rate(), c.sample_format()),
+                    Err(e) => println!("{mark} {kind:<6} {name}: {e}"),
+                }
+            }
+        }
     }
 
     #[test]

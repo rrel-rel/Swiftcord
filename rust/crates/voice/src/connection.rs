@@ -280,6 +280,10 @@ pub(crate) async fn run(
     cmd_tx: mpsc::UnboundedSender<Cmd>,
     events: Arc<dyn Fn(Event) + Send + Sync>,
 ) {
+    if crate::OFFLINE.load(Ordering::Relaxed) {
+        events(Event::Error("Offline mode: calls are off.".into()));
+        return;
+    }
     events(Event::Connecting);
     let mut media: Option<Media> = None;
     let mut running = Running::default();
@@ -782,6 +786,16 @@ fn spawn_sender(
         .name("swiftcord-voice-send".into())
         .spawn(move || {
             let Some(mut tx) = Transmitter::new(64_000) else { return };
+            // When recording a call (diagnostics), what's sent is decoded as a listener would hear it.
+            let mut monitor = crate::diag::recording().then(codec::Decoder::new).flatten();
+            let mut hear = move |opus: &[u8]| {
+                if let Some(d) = monitor.as_mut() {
+                    let mut out = vec![0f32; FRAME * 2];
+                    let n = d.decode(Some(opus), &mut out);
+                    let left: Vec<f32> = out[..n].chunks_exact(2).map(|c| if opus == codec::SILENCE { 0.0 } else { c[0] }).collect();
+                    crate::diag::SENT.add(&left);
+                }
+            };
             let mut pending: Vec<f32> = Vec::with_capacity(FRAME * 4);
             // The RTP timestamp advances with every captured frame, sent or not, so receivers see real time.
             let (mut seq, mut ts) = (rand::random::<u16>(), rand::random::<u32>());
@@ -830,6 +844,7 @@ fn spawn_sender(
                         Output::Audio(packets) => {
                             let first_ts = ts.wrapping_sub(FRAME as u32 * (packets.len() as u32 - 1));
                             for (i, opus) in packets.iter().enumerate() {
+                                hear(opus);
                                 let mut dave = shared.dave.lock();
                                 let protected = if dave.active() {
                                     match dave.session.as_mut().filter(|s| s.is_ready()).map(|s| s.encrypt_opus(opus)) {
@@ -847,8 +862,12 @@ fn spawn_sender(
                                 }
                             }
                         }
-                        Output::Silence => send(&codec::SILENCE, ts),
-                        Output::Nothing => {}
+                        Output::Silence => {
+                            hear(&codec::SILENCE);
+                            send(&codec::SILENCE, ts);
+                        }
+                        // Not sent: nothing for a listener either.
+                        Output::Nothing => crate::diag::SENT.add(&[0.0; FRAME]),
                     }
                 }
             }

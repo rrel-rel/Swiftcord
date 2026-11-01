@@ -55,6 +55,10 @@ where
     F: Fn(Captcha) -> Fut,
     Fut: Future<Output = Option<String>>,
 {
+    if crate::offline::is_on() {
+        let _ = tx.send(RemoteAuthEvent::Failed("Offline mode: signing in is off.".into()));
+        return;
+    }
     let result = session(&tx, solve).await;
     if let Err(e) = result {
         let _ = tx.send(RemoteAuthEvent::Failed(e.to_string()));

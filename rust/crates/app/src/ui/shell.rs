@@ -26,7 +26,8 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Ca
 
     if !matches!(s.conn, ConnectionState::Connected) {
         egui::Panel::top("connection").frame(egui::Frame::new().fill(theme::YELLOW().gamma_multiply(0.85)).inner_margin(4)).show(ui, |ui| {
-            ui.vertical_centered(|ui| ui.label(RichText::new("Reconnecting…").color(Color32::BLACK)));
+            let text = if swiftcord_core::offline::is_on() { "Offline mode: showing the last session, nothing connects" } else { "Reconnecting…" };
+            ui.vertical_centered(|ui| ui.label(RichText::new(text).color(Color32::BLACK)));
         });
     }
 

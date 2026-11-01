@@ -289,7 +289,7 @@ fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel, actions
                 None => ui.allocate_exact_size(Vec2::splat(22.0), Sense::click()).1,
             };
             if speaking {
-                ui.painter().circle_stroke(r.rect.center(), 12.0, egui::Stroke::new(2.0, theme::GREEN()));
+                ui.painter().rect_stroke(r.rect, 0, egui::Stroke::new(2.0, theme::GREEN()), egui::StrokeKind::Outside);
             }
             person_clicks(state, uis, c, vs.user_id, &r, actions);
             // The badges are laid out from the right first, so a long name is cut short instead of pushing
@@ -348,7 +348,7 @@ fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Acti
                     }
                     None => {
                         let (rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
-                        ui.painter().circle_filled(rect.center(), 16.0, theme::SELECTED());
+                        ui.painter().rect_filled(rect, 0, theme::SELECTED());
                         ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::PEOPLE, theme::icon_font(15.0), Color32::WHITE);
                     }
                 }

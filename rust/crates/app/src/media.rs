@@ -106,6 +106,10 @@ async fn fetch(http: &reqwest::Client, uri: &str, disk: Option<PathBuf>) -> Resu
             return Ok(File { bytes: bytes.into(), mime });
         }
     }
+    // Offline mode: only what's on disk.
+    if swiftcord_core::offline::is_on() {
+        return Err("offline".into());
+    }
     let derived = if let Some(real) = uri.strip_prefix(KEEP) {
         Some(Box::pin(fetch(http, real, None)).await?)
     } else if let Some(real) = uri.strip_prefix(STILL) {

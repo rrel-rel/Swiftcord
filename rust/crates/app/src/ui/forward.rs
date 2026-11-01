@@ -128,7 +128,7 @@ fn destination_row(ui: &mut Ui, state: &State, c: &Channel, picked: bool) -> egu
             egui::Image::from_uri(swiftcord_core::cdn::avatar(u, 64)).corner_radius(14).show_loading_spinner(false).paint_at(ui, icon);
         }
         None => {
-            p.circle_filled(icon.center(), 14.0, theme::RAIL());
+            p.rect_filled(icon, 0, theme::RAIL());
             let glyph = if c.is_private() { theme::icon::PEOPLE } else { "#" };
             let font = if c.is_private() { theme::icon_font(13.0) } else { theme::font_semibold(16.0) };
             p.text(icon.center(), egui::Align2::CENTER_CENTER, glyph, font, theme::MUTED());

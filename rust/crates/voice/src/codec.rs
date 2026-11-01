@@ -109,6 +109,36 @@ impl Drop for Decoder {
     }
 }
 
+/// Measurements shared by the tests.
+#[cfg(test)]
+pub(crate) mod tests_support {
+    /// What of `y` isn't made of the frequencies `freqs` (each fitted with any amplitude and phase), against
+    /// its whole power, in dB: distortion and noise (THD+N), whatever the delay.
+    pub(crate) fn thd_n(y: &[f32], freqs: &[f32]) -> f32 {
+        let n = y.len();
+        let tau = std::f64::consts::TAU;
+        // Least squares on sin/cos pairs (near-orthogonal over many periods): project, subtract, repeat.
+        let mut residual: Vec<f64> = y.iter().map(|&v| v as f64).collect();
+        for _ in 0..3 {
+            for &f in freqs {
+                let w = tau * f as f64 / 48_000.0;
+                let (mut s, mut c) = (0.0, 0.0);
+                for (i, r) in residual.iter().enumerate() {
+                    s += r * (w * i as f64).sin();
+                    c += r * (w * i as f64).cos();
+                }
+                let (s, c) = (2.0 * s / n as f64, 2.0 * c / n as f64);
+                for (i, r) in residual.iter_mut().enumerate() {
+                    *r -= s * (w * i as f64).sin() + c * (w * i as f64).cos();
+                }
+            }
+        }
+        let rest: f64 = residual.iter().map(|v| v * v).sum();
+        let all: f64 = y.iter().map(|&v| (v as f64).powi(2)).sum();
+        (10.0 * (rest / all).log10()) as f32
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,6 +161,127 @@ mod tests {
         assert!(energy > 0.05, "decoded energy {energy}");
         // Concealment produces a frame too.
         assert_eq!(dec.decode(None, &mut out), FRAME * 2);
+    }
+
+    /// Distortion through the codec alone (diagnostic; prints).
+    #[test]
+    #[ignore]
+    fn diag_codec_distortion() {
+        let run = |name: &str, freqs: &[f32], amp: f32, bitrate: i32| {
+            let tau = std::f32::consts::TAU;
+            let signal = |i: usize| freqs.iter().enumerate().map(|(h, f)| (i as f32 * f * tau / 48_000.0).sin() * amp / (h + 1) as f32).sum::<f32>();
+            let mut enc = Encoder::new(bitrate).unwrap();
+            let mut dec = Decoder::new().unwrap();
+            let mut packet = [0u8; 1500];
+            let mut out = vec![0f32; FRAME * 2];
+            let input: Vec<f32> = (0..100 * FRAME).map(signal).collect();
+            let mut decoded = Vec::new();
+            for f in 0..100 {
+                let n = enc.encode(&input[f * FRAME..(f + 1) * FRAME], &mut packet).unwrap();
+                let k = dec.decode(Some(&packet[..n]), &mut out);
+                decoded.extend(out[..k].chunks_exact(2).map(|c| c[0]));
+            }
+            let window = &decoded[20 * FRAME..80 * FRAME];
+            let thd_n = super::tests_support::thd_n;
+            println!("{name:<26} {bitrate:>6} bps: THD+N {:6.1} dB (input {:6.1} dB)", thd_n(window, freqs), thd_n(&input[20 * FRAME..80 * FRAME], freqs));
+        };
+        for bitrate in [32_000, 64_000] {
+            run("440 Hz sine, -6 dBFS", &[440.0], 0.5, bitrate);
+            run("1 kHz sine, -20 dBFS", &[1000.0], 0.1, bitrate);
+            run("3 kHz sine, -20 dBFS", &[3000.0], 0.1, bitrate);
+            let harmonics: Vec<f32> = (1..20).map(|h| 150.0 * h as f32).collect();
+            run("150 Hz + harmonics", &harmonics, 0.3, bitrate);
+        }
+    }
+
+    /// Decodes the official Opus test vectors (RFC 8251; the folder in OPUS_VECTORS) and compares with the
+    /// reference decoder: each packet's final range (bit-exact parsing) and the output (diagnostic; prints).
+    #[test]
+    #[ignore]
+    fn diag_conformance_vectors() {
+        let dir = std::path::PathBuf::from(std::env::var("OPUS_VECTORS").expect("OPUS_VECTORS"));
+        for v in 1..=12 {
+            let bits = std::fs::read(dir.join(format!("testvector{v:02}.bit"))).unwrap();
+            let reference = std::fs::read(dir.join(format!("testvector{v:02}.dec"))).unwrap();
+            let reference: Vec<i16> = reference.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+            let mut err = 0;
+            let dec = unsafe { opus::opus_decoder_create(48_000, 2, &mut err) };
+            let mut out = vec![0i16; 5760 * 2];
+            let mut decoded: Vec<i16> = Vec::new();
+            let (mut at, mut packets, mut range_mismatches) = (0, 0, 0);
+            while at + 8 <= bits.len() {
+                let len = u32::from_be_bytes(bits[at..at + 4].try_into().unwrap()) as usize;
+                let range = u32::from_be_bytes(bits[at + 4..at + 8].try_into().unwrap());
+                let data = &bits[at + 8..at + 8 + len];
+                at += 8 + len;
+                let n = unsafe { opus::opus_decode(dec, if len == 0 { std::ptr::null() } else { data.as_ptr() }, len as i32, out.as_mut_ptr(), 5760, 0) };
+                if n > 0 {
+                    decoded.extend_from_slice(&out[..n as usize * 2]);
+                }
+                let mut ours = 0u32;
+                unsafe { opus::opus_decoder_ctl!(dec, opus::OPUS_GET_FINAL_RANGE_REQUEST, &mut ours) };
+                packets += 1;
+                if len > 0 && ours != range {
+                    range_mismatches += 1;
+                }
+            }
+            unsafe { opus::opus_decoder_destroy(dec) };
+            let n = decoded.len().min(reference.len());
+            let (mut sig, mut diff) = (0f64, 0f64);
+            for i in 0..n {
+                sig += (reference[i] as f64).powi(2);
+                diff += (reference[i] as f64 - decoded[i] as f64).powi(2);
+            }
+            let snr = if diff == 0.0 { f64::INFINITY } else { 10.0 * (sig / diff).log10() };
+            println!("vector {v:02}: {packets:>5} packets, {range_mismatches:>4} final-range mismatches, SNR vs reference {snr:6.1} dB, length {} vs {}", decoded.len(), reference.len());
+        }
+    }
+
+    /// What restarting the encoder for each talk spurt does to how a listener (one decoder for the whole call)
+    /// hears the next spurt, against carrying the encoder on (diagnostic; prints).
+    #[test]
+    #[ignore]
+    fn diag_encoder_reset_between_spurts() {
+        let freqs: Vec<f32> = (1..=10).map(|h| 150.0 * h as f32).collect();
+        let tau = std::f32::consts::TAU;
+        let voice = |i: usize| freqs.iter().enumerate().map(|(h, f)| (i as f32 * f * tau / 48_000.0).sin() * 0.25 / (h + 1) as f32).sum::<f32>();
+        for reset in [false, true] {
+            let mut enc = Encoder::new(64_000).unwrap();
+            let mut dec = Decoder::new().unwrap();
+            let mut packet = [0u8; 1500];
+            let mut out = vec![0f32; FRAME * 2];
+            let mut decode = |dec: &mut Decoder, p: &[u8]| {
+                let k = dec.decode(Some(p), &mut out);
+                out[..k].chunks_exact(2).map(|c| c[0]).collect::<Vec<f32>>()
+            };
+            // A first spurt of a second, five silence frames (as sent), then the next spurt.
+            for f in 0..50 {
+                let pcm: Vec<f32> = (0..FRAME).map(|i| voice(f * FRAME + i)).collect();
+                let n = enc.encode(&pcm, &mut packet).unwrap();
+                decode(&mut dec, &packet[..n]);
+            }
+            for _ in 0..5 {
+                decode(&mut dec, &SILENCE);
+            }
+            if reset {
+                enc.reset();
+            }
+            let mut second = Vec::new();
+            for f in 0..25 {
+                let pcm: Vec<f32> = (0..FRAME).map(|i| voice((f + 100) * FRAME + i)).collect();
+                let n = enc.encode(&pcm, &mut packet).unwrap();
+                second.extend(decode(&mut dec, &packet[..n]));
+            }
+            let thd = |from: usize, to: usize| super::tests_support::thd_n(&second[from * FRAME..to * FRAME], &freqs);
+            let peak = second.iter().fold(0f32, |m, v| m.max(v.abs()));
+            println!(
+                "encoder {}: next spurt THD+N 20-100 ms {:6.1} dB, 100-200 ms {:6.1} dB, 200-500 ms {:6.1} dB, peak {peak:.2}",
+                if reset { "restarted " } else { "carried on" },
+                thd(1, 5),
+                thd(5, 10),
+                thd(10, 25)
+            );
+        }
     }
 
     #[test]

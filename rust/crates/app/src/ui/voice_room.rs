@@ -149,7 +149,7 @@ fn tile(ui: &Ui, s: &Session, uis: &UiState, channel: &Channel, vs: &VoiceState,
         let url = state.user(user).map(|u| state.avatar_url(u, channel.guild_id, 128)).unwrap_or_default();
         egui::Image::from_uri(url).corner_radius(side / 2.0).show_loading_spinner(false).paint_at(ui, at);
         if speaking {
-            painter.circle_stroke(at.center(), side / 2.0 + 3.0, egui::Stroke::new(3.0, theme::GREEN()));
+            painter.rect_stroke(at.expand(1.5), 0, egui::Stroke::new(3.0, theme::GREEN()), egui::StrokeKind::Outside);
         }
         name_label(ui, rect, &state.display_name(user, channel.guild_id));
     }

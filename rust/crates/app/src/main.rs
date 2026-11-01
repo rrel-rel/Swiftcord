@@ -75,6 +75,14 @@ fn main() -> anyhow::Result<()> {
     }
 
     init_logging();
+    let offline = std::env::var("SWIFTCORD_OFFLINE").is_ok_and(|v| v == "1");
+    if offline {
+        // Before anything could connect: see `swiftcord_core::offline`.
+        swiftcord_core::offline::enable();
+        swiftcord_voice::go_offline();
+        tracing::info!("offline mode: nothing connects to Discord or the internet");
+    }
+    swiftcord_voice::diag::set_folder(platform::data_dir().join("logs"));
     tracing::info!("Swiftcord {} starting", env!("CARGO_PKG_VERSION"));
     platform::startup::refresh();
     let start_in_tray = std::env::args().any(|a| a == platform::startup::ARG) && settings::Settings::load().start_minimized;
@@ -91,7 +99,7 @@ fn main() -> anyhow::Result<()> {
         .expect("Tokio runtime");
 
     let viewport = egui::ViewportBuilder::default()
-        .with_title("'08cord")
+        .with_title(if offline { format!("{} (offline)", platform::APP_NAME) } else { platform::APP_NAME.to_owned() })
         .with_inner_size([1100.0, 680.0])
         .with_min_inner_size([760.0, 460.0]);
     let handle = rt.handle().clone();

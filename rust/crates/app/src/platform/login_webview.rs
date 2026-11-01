@@ -63,6 +63,9 @@ pub fn run_child() -> ! {
 
 /// Starts the sign-in window and waits (on a blocking thread) for a token. `None` if the window was closed.
 pub fn sign_in_blocking() -> std::io::Result<Option<String>> {
+    if swiftcord_core::offline::is_on() {
+        return Err(std::io::Error::other("offline mode: signing in is off"));
+    }
     let exe = std::env::current_exe()?;
     let mut child = Command::new(exe).arg(ARG).stdout(Stdio::piped()).stdin(Stdio::null()).spawn()?;
     let stdout = child.stdout.take().expect("piped stdout");

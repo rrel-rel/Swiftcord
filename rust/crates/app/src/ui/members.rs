@@ -121,7 +121,7 @@ fn member_row(ui: &Ui, state: &State, guild: Snowflake, user_id: Snowflake, rect
 fn placeholder(ui: &Ui, rect: Rect) {
     let shade = theme::HOVER();
     let c = egui::pos2(rect.left() + 8.0 + AVATAR / 2.0, rect.center().y);
-    ui.painter().circle_filled(c, AVATAR / 2.0, shade);
+    ui.painter().rect_filled(Rect::from_center_size(c, Vec2::splat(AVATAR)), 0, shade);
     let bar = Rect::from_min_size(egui::pos2(c.x + AVATAR / 2.0 + 12.0, c.y - 5.0), Vec2::new(rect.width() * 0.45, 10.0));
     ui.painter().rect_filled(bar, 5, shade);
 }

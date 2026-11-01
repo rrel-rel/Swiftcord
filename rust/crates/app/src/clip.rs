@@ -129,6 +129,9 @@ impl Clips {
 }
 
 pub(crate) async fn download(url: &str) -> Option<Vec<u8>> {
+    if swiftcord_core::offline::is_on() {
+        return None;
+    }
     static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
     let http = HTTP.get_or_init(|| reqwest::Client::builder().user_agent(swiftcord_core::identity::user_agent()).build().expect("HTTP client"));
     let resp = http.get(url).send().await.ok()?;

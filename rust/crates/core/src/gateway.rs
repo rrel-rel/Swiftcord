@@ -87,8 +87,14 @@ pub struct Gateway {
 impl Gateway {
     /// Starts the connection on the current Tokio runtime. `sink` is called on a runtime thread for every
     /// event and state change.
+    /// In offline mode it never connects, and what's sent goes nowhere.
     pub fn spawn(config: GatewayConfig, sink: impl Fn(GatewayOutput) + Send + Sync + 'static) -> Gateway {
         let (tx, rx) = mpsc::unbounded_channel();
+        if crate::offline::is_on() {
+            tracing::info!("offline: not connecting to the gateway");
+            sink(GatewayOutput::State(ConnectionState::Disconnected));
+            return Gateway { tx };
+        }
         tokio::spawn(run(config, rx, sink));
         Gateway { tx }
     }

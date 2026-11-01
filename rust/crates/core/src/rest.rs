@@ -33,6 +33,9 @@ pub enum ApiError {
     /// Discord wants an hCaptcha solved; retry with [`Rest::with_captcha`].
     #[error("captcha required")]
     CaptchaRequired(Captcha),
+    /// Offline mode: nothing was sent (see `offline`).
+    #[error("offline")]
+    Offline,
 }
 
 /// A captcha challenge from a 400 response.
@@ -182,6 +185,9 @@ impl Rest {
     }
 
     async fn send(&self, method: Method, path: &str, body: Body<'_>) -> Result<reqwest::Response> {
+        if crate::offline::is_on() {
+            return Err(ApiError::Offline);
+        }
         let key = route_key(&method, path);
         let bucket = self.limiter.bucket(&key);
         for attempt in 0.. {

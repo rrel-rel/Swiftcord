@@ -38,6 +38,8 @@ pub enum AppEvent {
     TokenRejected(String),
     RemoteAuth(RemoteAuthEvent),
     FilesPicked { channel: Snowflake, files: Vec<FileUpload> },
+    /// The WAV file picked for the incoming test (empty: cancelled).
+    IncomingTestWav(Vec<u8>),
     Pins { channel: Snowflake, result: Result<Vec<Message>, String> },
     DmOpened(swiftcord_core::models::Channel),
     Folders(Option<Vec<swiftcord_core::models::GuildFolder>>),
@@ -205,10 +207,12 @@ pub enum Action {
     SaveSettings(crate::settings::Settings),
     /// Start (or stop starting) when the user signs in to Windows.
     SetLaunchAtStartup(bool),
-    /// Plays the message sound at this volume (trying a new setting).
-    PreviewSoundVolume(f32),
+    /// Plays a sound at this volume (trying a new setting).
+    PreviewSound(crate::sounds::Sound, f32),
     /// Shows the folder of replacement sounds in Explorer.
     OpenSoundsFolder,
+    /// Asks for a WAV file to play as a simulated incoming voice.
+    PickIncomingTestWav,
     /// Show the app in this palette and accent (while choosing in Settings; Cancel restores the saved one).
     OpenSettings,
     BrowserLogin,
@@ -435,7 +439,8 @@ impl App {
             away_checked: Instant::now(),
         };
         app.ui.hide_members = app.settings.hide_members;
-        app.sounds.set_volume(app.settings.sound_volume);
+        app.sounds.set_volume(crate::sounds::Kind::Menu, app.settings.menu_volume);
+        app.sounds.set_volume(crate::sounds::Kind::Notification, app.settings.notification_volume);
         crate::sounds::write_readme();
         app.ui.stream_audio = (app.settings.stream_volume, app.settings.stream_audio_when_deafened);
         app.ui.user_volumes = app.settings.user_volumes.iter().map(|(&u, &v)| (Snowflake(u), v)).collect();
@@ -654,6 +659,21 @@ impl App {
                 other => self.ui.login.on_remote_auth(&self.ctx, other),
             },
             AppEvent::FilesPicked { channel, files } => self.add_files(channel, files),
+            AppEvent::IncomingTestWav(bytes) => {
+                let Some(draft) = &mut self.ui.settings_draft else { return };
+                if bytes.is_empty() {
+                    return;
+                }
+                // Interleaved stereo at 48 kHz from the decoder; the left channel is the voice.
+                let Some(stereo) = crate::sounds::decode_wav(&bytes) else {
+                    self.banner("That file isn't a WAV file that can be played.");
+                    return;
+                };
+                let speech: Vec<f32> = stereo.chunks_exact(2).map(|f| f[0]).collect();
+                let devices = swiftcord_voice::Devices { input: draft.settings.input_device.clone(), output: draft.settings.output_device.clone() };
+                draft.mic_test = None;
+                draft.incoming_test = Some(swiftcord_voice::IncomingTest::start(devices, speech, draft.rough_network));
+            }
             AppEvent::Pins { channel, result } => match result {
                 Ok(p) => {
                     // Their authors may never have spoken since we connected; without this they're "Unknown User".
@@ -1885,6 +1905,8 @@ impl App {
                     outputs,
                     cameras,
                     mic_test: None,
+                    incoming_test: None,
+                    rough_network: false,
                     share_activity,
                     saved_share_activity: share_activity,
                     launch_at_startup,
@@ -1893,7 +1915,8 @@ impl App {
             }
             Action::SaveSettings(s) => {
                 let (vad, noise_suppression) = (s.vad_threshold_db, s.noise_suppression);
-                self.sounds.set_volume(s.sound_volume);
+                self.sounds.set_volume(crate::sounds::Kind::Menu, s.menu_volume);
+                self.sounds.set_volume(crate::sounds::Kind::Notification, s.notification_volume);
                 self.settings = s;
                 self.settings.save();
                 if let Some(v) = self.voice.as_ref().and_then(|c| c.voice()) {
@@ -1901,8 +1924,19 @@ impl App {
                     v.set_noise_suppression(noise_suppression);
                 }
             }
-            Action::PreviewSoundVolume(volume) => {
-                self.sounds.preview(crate::sounds::Sound::Message, volume, &self.settings.output_device);
+            Action::PreviewSound(sound, volume) => {
+                self.sounds.preview(sound, volume, &self.settings.output_device);
+            }
+            Action::PickIncomingTestWav => {
+                // The voice recordings (and A/B files) are kept with the logs.
+                let logs = platform::data_dir().join("logs");
+                self.spawn(async move {
+                    let picked = rfd::AsyncFileDialog::new().set_title("Speech to play as incoming audio").add_filter("WAV audio", &["wav"]).set_directory(&logs).pick_file().await;
+                    match picked {
+                        Some(f) => AppEvent::IncomingTestWav(f.read().await),
+                        None => AppEvent::IncomingTestWav(Vec::new()),
+                    }
+                });
             }
             Action::OpenSoundsFolder => {
                 crate::sounds::write_readme();
@@ -1963,8 +1997,9 @@ fn works_offline(action: &Action) -> bool {
             | Action::StartQrLogin
             | Action::SaveSettings(_)
             | Action::SetLaunchAtStartup(_)
-            | Action::PreviewSoundVolume(_)
+            | Action::PreviewSound(..)
             | Action::OpenSoundsFolder
+            | Action::PickIncomingTestWav
             | Action::OpenSettings
             | Action::BrowserLogin
             | Action::TokenLogin(_)

@@ -24,6 +24,9 @@ pub struct InlinePlayer {
 
 impl InlinePlayer {
     pub fn new(parent: &impl HasWindowHandle, url: &str) -> Result<InlinePlayer, String> {
+        if swiftcord_core::offline::is_on() {
+            return Err("offline".into());
+        }
         let mut context = wry::WebContext::new(Some(crate::platform::data_dir().join("WebView2-video")));
         // As in the video window: players refuse to load unless a page embeds them, so the player goes in an
         // iframe on a page of our own (https://swiftcord.localhost/).

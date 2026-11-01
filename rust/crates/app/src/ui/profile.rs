@@ -92,7 +92,7 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
         // Avatar, overlapping the banner, ringed with the card colour, with its decoration over it.
         let center = egui::pos2(banner.left() + 16.0 + AVATAR / 2.0, banner.bottom());
         let avatar = Rect::from_center_size(center, Vec2::splat(AVATAR));
-        ui.painter().circle_filled(center, AVATAR / 2.0 + 6.0, bg);
+        ui.painter().rect_filled(avatar.expand(6.0), 0, bg);
         widgets::paint_avatar_with_status(ui, state.avatar_url(&user, guild, 128), avatar, state.presence(user_id), state.on_mobile(user_id), bg);
         if let Some(asset) = &view.decoration {
             egui::Image::from_uri(cdn::avatar_decoration(asset)).show_loading_spinner(false).paint_at(ui, avatar.expand(AVATAR * 0.1));

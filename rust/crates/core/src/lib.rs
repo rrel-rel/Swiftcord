@@ -10,6 +10,7 @@ pub mod links;
 pub mod markdown;
 pub mod mentions;
 pub mod models;
+pub mod offline;
 pub mod permissions;
 pub mod proto;
 pub mod remote_auth;
