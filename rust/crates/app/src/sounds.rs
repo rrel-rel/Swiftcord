@@ -1,13 +1,19 @@
-//! Notification sounds: new messages, incoming calls (ringing), the ringback while a DM call we started
-//! rings, and people joining or leaving our call. These are synthesized here (soft sine chimes). Buttons
-//! click as Source's do, with its UI sounds when they're installed in `sounds\ui` in the data folder (they're
-//! Valve's, so they don't ship with the app). Everything is mixed on one output stream that's opened when a
-//! sound plays and closed after a few idle seconds.
+//! Sound effects: new messages, incoming calls (ringing), the ringback while a DM call we started rings,
+//! people joining or leaving our call, and Source's button sounds.
+//!
+//! Each can be replaced by a WAV file in the data folder's `sounds` folder (see [`FILES`]; a README there lists
+//! them), picked up the next time it plays. Without one, the chimes are synthesized here (soft sine notes)
+//! and the button sounds are silent: Source's are Valve's, so they don't ship with the app.
+//!
+//! Everything is mixed on one output stream, at the volume set in the settings, that's opened when a sound
+//! plays and closed after a few idle seconds.
 
 use std::collections::HashMap;
 use std::f32::consts::TAU;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use parking_lot::Mutex;
 
@@ -63,39 +69,84 @@ fn synth(sound: Sound) -> Vec<f32> {
         Sound::Ring => notes(&[(0.0, 783.99, 0.35), (0.15, 987.77, 0.35), (0.3, 1174.66, 0.5)], 2.0, 0.22),
         // Softer and lower: two long tones, then a pause.
         Sound::Ringback => notes(&[(0.0, 523.25, 0.6), (0.6, 659.25, 0.8)], 3.0, 0.12),
-        // Heard all the time, sweeping over lists: at half volume.
-        Sound::ButtonRollover => ui_sound("buttonrollover.wav").into_iter().map(|s| s * 0.5).collect(),
-        Sound::ButtonPress => ui_sound("buttonclick.wav"),
-        Sound::ButtonRelease => ui_sound("buttonclickrelease.wav"),
+        // Source's: silent unless installed.
+        Sound::ButtonRollover | Sound::ButtonPress | Sound::ButtonRelease => Vec::new(),
     }
 }
 
-/// One of Source's UI sounds from the data folder, as stereo at our rate; silent (empty) if it isn't there.
-fn ui_sound(file: &str) -> Vec<f32> {
-    let path = crate::platform::data_dir().join("sounds").join("ui").join(file);
-    match std::fs::read(&path).ok().and_then(|bytes| decode_wav(&bytes)) {
-        Some(pcm) => pcm,
-        None => {
-            tracing::debug!("no UI sound at {}", path.display());
-            Vec::new()
-        }
+/// Each sound's file in the sounds folder, and what it's for (for the README there).
+pub const FILES: &[(Sound, &str, &str)] = &[
+    (Sound::Message, "message.wav", "a new message (when a notification would show)"),
+    (Sound::Join, "join.wav", "someone joins your call (or you join one)"),
+    (Sound::Leave, "leave.wav", "someone leaves your call (or you leave)"),
+    (Sound::Ring, "ring.wav", "an incoming call (loops while it rings)"),
+    (Sound::Ringback, "ringback.wav", "a call you started, ringing the others (loops)"),
+    (Sound::ButtonRollover, r"ui\buttonrollover.wav", "the pointer moves onto a DM, channel or server (played at half volume)"),
+    (Sound::ButtonPress, r"ui\buttonclick.wav", "a button or list item is pressed"),
+    (Sound::ButtonRelease, r"ui\buttonclickrelease.wav", "the mouse button comes back up"),
+];
+
+/// The folder of replacement sounds.
+pub fn folder() -> PathBuf {
+    crate::platform::data_dir().join("sounds")
+}
+
+fn path(sound: Sound) -> PathBuf {
+    let file = FILES.iter().find(|(s, ..)| *s == sound).map_or("", |(_, f, _)| f);
+    folder().join(file)
+}
+
+/// Creates the sounds folder, with a README listing the files that replace the sounds.
+pub fn write_readme() {
+    let mut text = String::from(
+        "Sounds in this folder replace '08cord's own. Each is a WAV file (PCM at 8, 16, 24 or 32 bits, or 32-bit\r\n\
+         float; mono or stereo; any sample rate). A file that's added, changed or removed is used from the next\r\n\
+         time that sound plays. Without one, the built-in sound plays (the button sounds are silent).\r\n\r\n",
+    );
+    for (_, file, what) in FILES {
+        text.push_str(&format!("{file:<28} {what}\r\n"));
+    }
+    text.push_str("\r\nThe button sounds are named after Source's UI sounds (sound\\ui in a Source game), which fit as they are.\r\n");
+    let readme = folder().join("README.txt");
+    if std::fs::read_to_string(&readme).ok().as_deref() != Some(text.as_str()) {
+        let _ = std::fs::create_dir_all(folder().join("ui"));
+        let _ = std::fs::write(readme, text);
     }
 }
 
-/// A 16-bit PCM WAV, mono or stereo at any rate, as interleaved stereo at [`RATE`].
+/// A sound from its file if there's one (and it can be read), else the built-in one; at the level it plays at.
+fn load(sound: Sound) -> Vec<f32> {
+    let path = path(sound);
+    let pcm = match std::fs::read(&path) {
+        Ok(bytes) => decode_wav(&bytes).unwrap_or_else(|| {
+            tracing::warn!("{} isn't a WAV file that can be played; using the built-in sound", path.display());
+            synth(sound)
+        }),
+        Err(_) => synth(sound),
+    };
+    // Heard all the time, sweeping over lists: at half volume.
+    let gain = if sound == Sound::ButtonRollover { 0.5 } else { 1.0 };
+    if gain == 1.0 { pcm } else { pcm.into_iter().map(|s| s * gain).collect() }
+}
+
+/// A WAV file (PCM at 8, 16, 24 or 32 bits, or 32-bit float; any number of channels, the first two used;
+/// any rate) as interleaved stereo at [`RATE`].
 fn decode_wav(bytes: &[u8]) -> Option<Vec<f32>> {
     if bytes.get(0..4)? != b"RIFF" || bytes.get(8..12)? != b"WAVE" {
         return None;
     }
     let u16_at = |at: usize| bytes.get(at..at + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
     let u32_at = |at: usize| bytes.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
-    let (mut format, mut data) = (None, None);
+    let (mut format, mut data, mut extensible_kind) = (None, None, None);
     let mut at = 12;
     while at + 8 <= bytes.len() {
         let len = u32_at(at + 4)? as usize;
         let body = at + 8;
         match bytes.get(at..at + 4)? {
-            b"fmt " => format = Some((u16_at(body)?, u16_at(body + 2)?, u32_at(body + 4)?, u16_at(body + 14)?)),
+            b"fmt " => {
+                format = Some((u16_at(body)?, u16_at(body + 2)?, u32_at(body + 4)?, u16_at(body + 14)?));
+                extensible_kind = u16_at(body + 24);
+            }
             b"data" => data = bytes.get(body..(body + len).min(bytes.len())),
             _ => {}
         }
@@ -103,13 +154,26 @@ fn decode_wav(bytes: &[u8]) -> Option<Vec<f32>> {
         at = body + len + (len & 1);
     }
     let ((kind, channels, rate, bits), data) = (format?, data?);
-    if kind != 1 || bits != 16 || !(1..=2).contains(&channels) || rate == 0 {
+    // WAVE_FORMAT_EXTENSIBLE (what editors write for 24-bit and up): the real format leads its sub-format GUID.
+    let kind = if kind == 0xFFFE { extensible_kind? } else { kind };
+    const PCM: u16 = 1;
+    const FLOAT: u16 = 3;
+    let sample: fn(&[u8]) -> f32 = match (kind, bits) {
+        (PCM, 8) => |b| (b[0] as f32 - 128.0) / 128.0,
+        (PCM, 16) => |b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0,
+        (PCM, 24) => |b| i32::from_le_bytes([0, b[0], b[1], b[2]]) as f32 / 2_147_483_648.0,
+        (PCM, 32) => |b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32 / 2_147_483_648.0,
+        (FLOAT, 32) => |b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]).clamp(-1.0, 1.0),
+        _ => return None,
+    };
+    if channels == 0 || rate == 0 {
         return None;
     }
+    let width = bits as usize / 8;
     let frames: Vec<[f32; 2]> = data
-        .chunks_exact(2 * channels as usize)
+        .chunks_exact(width * channels as usize)
         .map(|f| {
-            let s = |i: usize| i16::from_le_bytes([f[2 * i], f[2 * i + 1]]) as f32 / 32768.0;
+            let s = |i: usize| sample(&f[width * i..width * (i + 1)]);
             if channels == 1 { [s(0), s(0)] } else { [s(0), s(1)] }
         })
         .collect();
@@ -183,6 +247,8 @@ struct Voice {
     pcm: Arc<Vec<f32>>,
     pos: usize,
     looping: bool,
+    /// Its own volume (a preview of a new setting), rather than the one set.
+    volume: Option<f32>,
 }
 
 /// Adds a sound to those playing.
@@ -199,20 +265,56 @@ fn queue(voices: &mut Vec<Voice>, sound: Sound, pcm: Arc<Vec<f32>>) {
         // The same sound twice at once (a burst of messages) just sounds louder; restart it instead.
         voices.retain(|v| v.sound != sound || v.looping);
     }
-    voices.push(Voice { sound, pcm, pos: 0, looping: false });
+    voices.push(Voice { sound, pcm, pos: 0, looping: false, volume: None });
 }
 
-#[derive(Default)]
 pub struct Sounds {
     voices: Arc<Mutex<Vec<Voice>>>,
-    cache: HashMap<Sound, Arc<Vec<f32>>>,
+    /// Each sound as loaded, and the modified time of its file then (none: there wasn't one).
+    cache: HashMap<Sound, (Option<SystemTime>, Arc<Vec<f32>>)>,
     io: Option<(swiftcord_voice::AudioIo, Option<String>)>,
     idle_since: Option<Instant>,
+    /// The volume set (0 to 1), as f32 bits: the mixer reads it, so a change applies to what's playing too.
+    volume: Arc<AtomicU32>,
+}
+
+impl Default for Sounds {
+    fn default() -> Self {
+        Self { voices: Default::default(), cache: HashMap::new(), io: None, idle_since: None, volume: Arc::new(AtomicU32::new(1f32.to_bits())) }
+    }
 }
 
 impl Sounds {
+    /// The sound, loaded again if its file has been added, changed or removed since.
     fn pcm(&mut self, sound: Sound) -> Arc<Vec<f32>> {
-        self.cache.entry(sound).or_insert_with(|| Arc::new(synth(sound))).clone()
+        let modified = std::fs::metadata(path(sound)).and_then(|m| m.modified()).ok();
+        match self.cache.get(&sound) {
+            Some((m, pcm)) if *m == modified => pcm.clone(),
+            _ => {
+                let pcm = Arc::new(load(sound));
+                self.cache.insert(sound, (modified, pcm.clone()));
+                pcm
+            }
+        }
+    }
+
+    /// The volume for every sound, 0 to 1 (the setting).
+    pub fn set_volume(&self, volume: f32) {
+        self.volume.store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    /// Plays a sound once at `volume` rather than the one set: hearing a new setting before it's saved.
+    pub fn preview(&mut self, sound: Sound, volume: f32, output: &Option<String>) {
+        let pcm = self.pcm(sound);
+        if pcm.is_empty() {
+            return;
+        }
+        self.ensure_output(output);
+        let mut voices = self.voices.lock();
+        queue(&mut voices, sound, pcm);
+        if let Some(v) = voices.last_mut() {
+            v.volume = Some(volume.clamp(0.0, 1.0));
+        }
     }
 
     /// Opens the output (on `output`, the chosen device) if it isn't already.
@@ -224,15 +326,19 @@ impl Sounds {
             return;
         }
         let voices = self.voices.clone();
+        let volume = self.volume.clone();
         let fill = move |out: &mut [f32]| {
             out.fill(0.0);
+            let set = f32::from_bits(volume.load(Ordering::Relaxed));
             let mut voices = voices.lock();
             for v in voices.iter_mut() {
+                // Perceived loudness is about logarithmic: squared, the slider's middle sounds like half.
+                let gain = v.volume.unwrap_or(set).powi(2);
                 let mut i = 0;
                 while i < out.len() {
                     let n = (out.len() - i).min(v.pcm.len() - v.pos);
                     for (o, s) in out[i..i + n].iter_mut().zip(&v.pcm[v.pos..v.pos + n]) {
-                        *o += s;
+                        *o += s * gain;
                     }
                     v.pos += n;
                     i += n;
@@ -269,7 +375,7 @@ impl Sounds {
         if on && !playing {
             let pcm = self.pcm(sound);
             self.ensure_output(output);
-            self.voices.lock().push(Voice { sound, pcm, pos: 0, looping: true });
+            self.voices.lock().push(Voice { sound, pcm, pos: 0, looping: true, volume: None });
         } else if !on && playing {
             self.voices.lock().retain(|v| !(v.sound == sound && v.looping));
         }
@@ -337,6 +443,42 @@ mod tests {
         let stereo = decode_wav(&wav(&[16384, -16384, 16384, -16384], 2, 48000)).unwrap();
         assert_eq!(&stereo[..2], &[0.5, -0.5]);
         assert!(decode_wav(b"not a wav").is_none());
+    }
+
+    /// The same samples in each format editors write: 8-bit, 24-bit (extensible), 32-bit float.
+    #[test]
+    fn other_wav_formats_decode_too() {
+        fn wav(kind: u16, bits: u16, extensible: bool, samples: &[u8]) -> Vec<u8> {
+            let fmt_len: u32 = if extensible { 40 } else { 16 };
+            let mut w = b"RIFF".to_vec();
+            w.extend((4 + 8 + fmt_len + 8 + samples.len() as u32).to_le_bytes());
+            w.extend(b"WAVEfmt ");
+            w.extend(fmt_len.to_le_bytes());
+            w.extend((if extensible { 0xFFFE } else { kind }).to_le_bytes());
+            w.extend(1u16.to_le_bytes());
+            w.extend(48000u32.to_le_bytes());
+            w.extend((48000 * bits as u32 / 8).to_le_bytes());
+            w.extend((bits / 8).to_le_bytes());
+            w.extend(bits.to_le_bytes());
+            if extensible {
+                w.extend(22u16.to_le_bytes());
+                w.extend(bits.to_le_bytes());
+                w.extend(4u32.to_le_bytes());
+                // The sub-format GUID starts with the real format.
+                w.extend(kind.to_le_bytes());
+                w.extend([0u8; 14]);
+            }
+            w.extend(b"data");
+            w.extend((samples.len() as u32).to_le_bytes());
+            w.extend(samples);
+            w
+        }
+        let half = |pcm: Vec<f32>| assert!((pcm[0] - 0.5).abs() < 0.01 && (pcm[1] - 0.5).abs() < 0.01, "{:?}", &pcm[..2]);
+        half(decode_wav(&wav(1, 8, false, &[192, 192])).unwrap());
+        half(decode_wav(&wav(1, 24, true, &[0, 0, 0x40, 0, 0, 0x40])).unwrap());
+        half(decode_wav(&wav(3, 32, false, &[0.5f32.to_le_bytes(), 0.5f32.to_le_bytes()].concat())).unwrap());
+        // An unknown format is refused, not played as noise.
+        assert!(decode_wav(&wav(2, 16, false, &[0, 0])).is_none());
     }
 
     #[test]

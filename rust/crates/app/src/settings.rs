@@ -30,6 +30,8 @@ pub struct Settings {
     pub muted_users: std::collections::HashSet<u64>,
     /// Launched at sign-in, open in the tray rather than with the window up.
     pub start_minimized: bool,
+    /// The volume of sound effects (messages, calls, buttons), 0 to 1.
+    pub sound_volume: f32,
 }
 
 impl Default for Settings {
@@ -49,6 +51,7 @@ impl Default for Settings {
             user_volumes: Default::default(),
             muted_users: Default::default(),
             start_minimized: true,
+            sound_volume: 1.0,
         }
     }
 }

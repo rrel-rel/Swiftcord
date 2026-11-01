@@ -55,6 +55,12 @@ pub fn idle_time() -> std::time::Duration {
 /// name it had first), so renaming it kept everyone's settings and sign-in.
 pub const APP_NAME: &str = "'08cord";
 
+/// Shows a folder in Explorer.
+pub fn open_folder(path: &std::path::Path) {
+    let _ = std::fs::create_dir_all(path);
+    let _ = std::process::Command::new("explorer").arg(path).spawn();
+}
+
 const APP_ID: &str = "Swiftcord.Rust";
 
 /// Unpackaged apps need their AppUserModelID registered for toasts to show under their own name and icon

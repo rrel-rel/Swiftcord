@@ -85,6 +85,22 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
         ui.checkbox(&mut draft.settings.notifications, "Desktop notifications for mentions and DMs");
         ui.checkbox(&mut draft.settings.message_sounds, "Message sounds");
         ui.checkbox(&mut draft.settings.call_sounds, "Call sounds (ringing, people joining and leaving)");
+        ui.horizontal(|ui| {
+            ui.label("Sound volume");
+            let mut percent = draft.settings.sound_volume * 100.0;
+            let r = ui.add(egui::Slider::new(&mut percent, 0.0..=100.0).suffix("%").integer());
+            draft.settings.sound_volume = percent / 100.0;
+            // Heard at the new level when let go (or changed with the keyboard).
+            if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                actions.push(Action::PreviewSoundVolume(draft.settings.sound_volume));
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Sounds can be replaced with your own WAV files.").small().color(theme::FAINT()));
+            if ui.button("Open sounds folder").clicked() {
+                actions.push(Action::OpenSoundsFolder);
+            }
+        });
         ui.label(RichText::new("Sounds are off while you're deafened or on Do Not Disturb.").small().color(theme::FAINT()));
 
         ui.add_space(12.0);

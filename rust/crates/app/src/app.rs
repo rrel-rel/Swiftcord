@@ -205,6 +205,10 @@ pub enum Action {
     SaveSettings(crate::settings::Settings),
     /// Start (or stop starting) when the user signs in to Windows.
     SetLaunchAtStartup(bool),
+    /// Plays the message sound at this volume (trying a new setting).
+    PreviewSoundVolume(f32),
+    /// Shows the folder of replacement sounds in Explorer.
+    OpenSoundsFolder,
     /// Show the app in this palette and accent (while choosing in Settings; Cancel restores the saved one).
     OpenSettings,
     BrowserLogin,
@@ -431,6 +435,8 @@ impl App {
             away_checked: Instant::now(),
         };
         app.ui.hide_members = app.settings.hide_members;
+        app.sounds.set_volume(app.settings.sound_volume);
+        crate::sounds::write_readme();
         app.ui.stream_audio = (app.settings.stream_volume, app.settings.stream_audio_when_deafened);
         app.ui.user_volumes = app.settings.user_volumes.iter().map(|(&u, &v)| (Snowflake(u), v)).collect();
         app.ui.muted_users = app.settings.muted_users.iter().map(|&u| Snowflake(u)).collect();
@@ -1887,12 +1893,20 @@ impl App {
             }
             Action::SaveSettings(s) => {
                 let (vad, noise_suppression) = (s.vad_threshold_db, s.noise_suppression);
+                self.sounds.set_volume(s.sound_volume);
                 self.settings = s;
                 self.settings.save();
                 if let Some(v) = self.voice.as_ref().and_then(|c| c.voice()) {
                     v.set_vad_threshold(vad);
                     v.set_noise_suppression(noise_suppression);
                 }
+            }
+            Action::PreviewSoundVolume(volume) => {
+                self.sounds.preview(crate::sounds::Sound::Message, volume, &self.settings.output_device);
+            }
+            Action::OpenSoundsFolder => {
+                crate::sounds::write_readme();
+                platform::open_folder(&crate::sounds::folder());
             }
             Action::SetLaunchAtStartup(on) => {
                 if let Err(e) = platform::startup::set(on) {
@@ -1949,6 +1963,8 @@ fn works_offline(action: &Action) -> bool {
             | Action::StartQrLogin
             | Action::SaveSettings(_)
             | Action::SetLaunchAtStartup(_)
+            | Action::PreviewSoundVolume(_)
+            | Action::OpenSoundsFolder
             | Action::OpenSettings
             | Action::BrowserLogin
             | Action::TokenLogin(_)
