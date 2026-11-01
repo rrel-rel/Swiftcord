@@ -67,6 +67,8 @@ fn main() -> anyhow::Result<()> {
         platform::video_window::run_child();
     }
 
+    platform::init_ui_thread();
+
     // Already running: its window comes back instead.
     if !platform::single_instance::claim() {
         return Ok(());

@@ -30,6 +30,15 @@ pub fn open_url(url: &str) {
     }
 }
 
+/// Puts the UI thread in a single-threaded COM apartment before anything else can. winit's window needs one
+/// for drag and drop (it calls OleInitialize) and panics if the thread has joined the multithreaded one
+/// first, which setting up WIC does (drawing the tray icon, before the window exists). In this apartment,
+/// those later attempts just fail harmlessly.
+pub fn init_ui_thread() {
+    use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+}
+
 /// How long since the user last used the keyboard or mouse (anywhere, not just in Swiftcord).
 pub fn idle_time() -> std::time::Duration {
     use windows::Win32::System::SystemInformation::GetTickCount;

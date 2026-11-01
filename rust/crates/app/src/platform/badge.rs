@@ -198,6 +198,28 @@ fn icon(size: usize, rgba: &[u8]) -> Option<HICON> {
 mod tests {
     use super::*;
 
+    /// The tray icon is drawn (with WIC) before the window exists; winit's OleInitialize must still work
+    /// after it, which it didn't before `init_ui_thread` (every start crashed).
+    #[test]
+    fn the_window_can_be_made_after_the_tray_icon() {
+        use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+        use windows::Win32::System::Ole::OleInitialize;
+        let ole_after_tray_icon = |prepare: bool| {
+            std::thread::spawn(move || {
+                if prepare {
+                    crate::platform::init_ui_thread();
+                }
+                assert!(tray_pixels(20, 0).is_some());
+                unsafe { OleInitialize(None) }
+            })
+            .join()
+            .unwrap()
+        };
+        // The crash, reproduced: without it, OLE refuses the thread.
+        assert_eq!(ole_after_tray_icon(false), Err(RPC_E_CHANGED_MODE.into()));
+        assert!(ole_after_tray_icon(true).is_ok());
+    }
+
     /// Draws the badges at 125% (20 px) and 100% (16 px), scaled up 8 times, into the temp folder to look at.
     #[test]
     #[ignore]

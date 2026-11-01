@@ -2,9 +2,11 @@ fn main() {
     // Only when building for Windows; the icon and version details go into the exe's resources.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut res = winresource::WindowsResource::new();
+        // The name with a typographic apostrophe: winresource escapes a plain one as \', which the resource
+        // compiler keeps, backslash and all (Task Manager would show "\'08cord").
         res.set_icon("assets/icon.ico")
-            .set("ProductName", "'08cord")
-            .set("FileDescription", "'08cord")
+            .set("ProductName", "’08cord")
+            .set("FileDescription", "’08cord")
             .set("LegalCopyright", "GPL-3.0-or-later");
         if let Err(e) = res.compile() {
             println!("cargo:warning=couldn't embed the icon: {e}");
