@@ -174,7 +174,11 @@ impl ApplicationHandler<Instant> for Shell {
                     let notch = wheel_notch_points(&self.ctx);
                     self.ctx.options_mut(|o| o.input_options.line_scroll_speed = notch);
                 }
-                if w.egui_winit.on_window_event(&w.window, &event).repaint {
+                // Moving the window changes nothing in it (Windows moves what's on screen), so it isn't drawn
+                // again: egui-winit asks for that on every move, and each frame waits for the display, which
+                // held up Windows' move loop and made dragging the window judder.
+                let moved = matches!(event, WindowEvent::Moved(_));
+                if w.egui_winit.on_window_event(&w.window, &event).repaint && !moved {
                     w.window.request_redraw();
                 }
             }

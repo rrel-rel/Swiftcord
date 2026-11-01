@@ -90,7 +90,9 @@ impl Painter {
             SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
             BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
             BufferCount: 2,
-            Scaling: DXGI_SCALING_NONE,
+            // Stretched to the window while a frame of the new size is on its way (a resize, a DPI change):
+            // unscaled, the part of the window it didn't reach showed what's behind the window.
+            Scaling: DXGI_SCALING_STRETCH,
             SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
             AlphaMode: DXGI_ALPHA_MODE_IGNORE,
             Flags: 0,
