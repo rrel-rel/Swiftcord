@@ -123,6 +123,9 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
             ui.add_space(12.0);
             ui.label(RichText::new("NOTIFICATIONS").font(theme::font_semibold(12.0)).color(theme::MUTED()));
             ui.checkbox(&mut draft.settings.notifications, "Desktop notifications for mentions and DMs");
+
+            ui.add_space(12.0);
+            ui.label(RichText::new("SOUNDS").font(theme::font_semibold(12.0)).color(theme::MUTED()));
             ui.checkbox(&mut draft.settings.message_sounds, "Message sounds");
             ui.checkbox(&mut draft.settings.call_sounds, "Call sounds (ringing, people joining and leaving)");
             egui::Grid::new("sound-volumes").num_columns(2).show(ui, |ui| {
@@ -137,8 +140,10 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                     }
                     ui.end_row();
                 };
-                slider(ui, "Notification sounds", &mut draft.settings.notification_volume, Sound::Message);
-                slider(ui, "Menu sounds", &mut draft.settings.menu_volume, Sound::ButtonPress);
+                slider(ui, "Messages", &mut draft.settings.message_volume, Sound::Message);
+                slider(ui, "Calls", &mut draft.settings.call_volume, Sound::Join);
+                slider(ui, "Clicks", &mut draft.settings.click_volume, Sound::ButtonPress);
+                slider(ui, "Hovering over lists", &mut draft.settings.rollover_volume, Sound::ButtonRollover);
             });
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Sounds can be replaced with your own WAV files.").small().color(theme::FAINT()));

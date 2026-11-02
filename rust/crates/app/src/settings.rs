@@ -30,11 +30,16 @@ pub struct Settings {
     pub muted_users: std::collections::HashSet<u64>,
     /// Launched at sign-in, open in the tray rather than with the window up.
     pub start_minimized: bool,
-    /// The volume of menu sounds (buttons, list rollovers), 0 to 1.
-    pub menu_volume: f32,
-    /// The volume of notification sounds (messages, calls), 0 to 1. (It was the one volume for every sound.)
-    #[serde(alias = "sound_volume")]
-    pub notification_volume: f32,
+    /// The volume of message sounds, 0 to 1. (It was the one volume for every sound, then for calls too.)
+    #[serde(alias = "sound_volume", alias = "notification_volume")]
+    pub message_volume: f32,
+    /// The volume of call sounds (ringing, people joining and leaving), 0 to 1.
+    pub call_volume: f32,
+    /// The volume of clicks on buttons and list items, 0 to 1. (It was for rollovers too.)
+    #[serde(alias = "menu_volume")]
+    pub click_volume: f32,
+    /// The volume of the sound as the pointer moves onto a list item, 0 to 1.
+    pub rollover_volume: f32,
     /// The colour palette, by name (see `theme::names`).
     pub theme: String,
 }
@@ -56,8 +61,10 @@ impl Default for Settings {
             user_volumes: Default::default(),
             muted_users: Default::default(),
             start_minimized: true,
-            menu_volume: 1.0,
-            notification_volume: 1.0,
+            message_volume: 1.0,
+            call_volume: 1.0,
+            click_volume: 1.0,
+            rollover_volume: 1.0,
             theme: "Steam".into(),
         }
     }
@@ -80,7 +87,20 @@ fn path() -> std::path::PathBuf {
 
 impl Settings {
     pub fn load() -> Settings {
-        std::fs::read_to_string(path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+        std::fs::read_to_string(path()).ok().and_then(|s| Settings::parse(&s)).unwrap_or_default()
+    }
+
+    /// Settings from before calls and rollovers had their own volumes keep the levels those sounds had.
+    fn parse(json: &str) -> Option<Settings> {
+        let mut settings: Settings = serde_json::from_str(json).ok()?;
+        let fields: serde_json::Value = serde_json::from_str(json).ok()?;
+        if fields.get("call_volume").is_none() {
+            settings.call_volume = settings.message_volume;
+        }
+        if fields.get("rollover_volume").is_none() {
+            settings.rollover_volume = settings.click_volume;
+        }
+        Some(settings)
     }
 
     pub fn save(&self) {
@@ -88,5 +108,25 @@ impl Settings {
         if let Ok(s) = serde_json::to_string_pretty(self) {
             let _ = std::fs::write(path(), s);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn older_volumes_carry_over() {
+        let s = Settings::parse(r#"{"menu_volume": 0.25, "notification_volume": 0.5}"#).unwrap();
+        assert_eq!((s.message_volume, s.call_volume, s.click_volume, s.rollover_volume), (0.5, 0.5, 0.25, 0.25));
+        let s = Settings::parse(r#"{"sound_volume": 0.5}"#).unwrap();
+        assert_eq!((s.message_volume, s.call_volume, s.click_volume, s.rollover_volume), (0.5, 0.5, 1.0, 1.0));
+    }
+
+    #[test]
+    fn saved_volumes_stay_separate() {
+        let saved = Settings { message_volume: 0.1, call_volume: 0.2, click_volume: 0.3, rollover_volume: 0.4, ..Settings::default() };
+        let s = Settings::parse(&serde_json::to_string(&saved).unwrap()).unwrap();
+        assert_eq!((s.message_volume, s.call_volume, s.click_volume, s.rollover_volume), (0.1, 0.2, 0.3, 0.4));
     }
 }

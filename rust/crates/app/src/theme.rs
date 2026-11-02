@@ -515,15 +515,18 @@ pub fn register_button(ctx: &egui::Context, rect: egui::Rect) {
     ctx.data_mut(|d| d.get_temp_mut_or_default::<HandDrawnButtons>(egui::Id::NULL).0.push(rect));
 }
 
-/// The list items (DMs, channels, servers) drawn this frame, for their sounds.
+/// The list items (DMs, channels, servers) drawn this frame, for their sounds: the visible part of each, and
+/// its place in its list.
 #[derive(Clone, Default)]
-struct ListItems(Vec<egui::Rect>);
+struct ListItems(Vec<(egui::Rect, egui::Pos2)>);
 
 /// Notes a list item (the visible part of it), so it sounds as the pointer rolls over and selects it.
 pub fn register_list_item(ui: &egui::Ui, rect: egui::Rect) {
+    // Measured from the top of its `ui`, which scrolls with it, so scrolling doesn't make it another item.
+    let place = egui::pos2(rect.left(), rect.top() - ui.max_rect().top());
     let rect = rect.intersect(ui.clip_rect());
     if rect.is_positive() {
-        ui.ctx().data_mut(|d| d.get_temp_mut_or_default::<ListItems>(egui::Id::NULL).0.push(rect));
+        ui.ctx().data_mut(|d| d.get_temp_mut_or_default::<ListItems>(egui::Id::NULL).0.push((rect, place)));
     }
 }
 

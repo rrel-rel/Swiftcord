@@ -441,8 +441,7 @@ impl App {
             away_checked: Instant::now(),
         };
         app.ui.hide_members = app.settings.hide_members;
-        app.sounds.set_volume(crate::sounds::Kind::Menu, app.settings.menu_volume);
-        app.sounds.set_volume(crate::sounds::Kind::Notification, app.settings.notification_volume);
+        app.sounds.set_volumes(&app.settings);
         crate::sounds::write_readme();
         app.ui.stream_audio = (app.settings.stream_volume, app.settings.stream_audio_when_deafened);
         app.ui.user_volumes = app.settings.user_volumes.iter().map(|(&u, &v)| (Snowflake(u), v)).collect();
@@ -1918,8 +1917,7 @@ impl App {
             }
             Action::SaveSettings(s) => {
                 let (vad, noise_suppression) = (s.vad_threshold_db, s.noise_suppression);
-                self.sounds.set_volume(crate::sounds::Kind::Menu, s.menu_volume);
-                self.sounds.set_volume(crate::sounds::Kind::Notification, s.notification_volume);
+                self.sounds.set_volumes(&s);
                 crate::theme::select(&s.theme, &self.ctx);
                 self.settings = s;
                 self.settings.save();

@@ -20,6 +20,10 @@ use parking_lot::Mutex;
 const RATE: f32 = 48_000.0;
 /// Rollovers overlap (sweeping over a list plays one per item) up to this many at once.
 const MAX_ROLLOVERS: usize = 5;
+/// The least time between rollovers, in seconds, as the pointer sweeps over a list.
+const ROLLOVER_GAP: f64 = 0.025;
+/// The same while a list scrolls under the pointer, which passes items far faster than a hand does.
+const ROLLOVER_GAP_SCROLLING: f64 = 0.08;
 /// The output stream closes after this long with nothing playing.
 const IDLE: Duration = Duration::from_secs(4);
 
@@ -40,20 +44,25 @@ pub enum Sound {
     ButtonRelease,
 }
 
-/// The two kinds of sound, each with its own volume.
+/// The kinds of sound, each with its own volume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    /// Buttons and list rollovers.
-    Menu,
-    /// Messages and calls.
-    Notification,
+enum Kind {
+    Message,
+    /// Ringing, and people joining or leaving.
+    Call,
+    /// Buttons and list items being pressed.
+    Click,
+    /// The pointer moving onto a list item.
+    Rollover,
 }
 
 impl Sound {
-    pub fn kind(self) -> Kind {
+    fn kind(self) -> Kind {
         match self {
-            Sound::ButtonRollover | Sound::ButtonPress | Sound::ButtonRelease => Kind::Menu,
-            Sound::Message | Sound::Join | Sound::Leave | Sound::Ring | Sound::Ringback => Kind::Notification,
+            Sound::Message => Kind::Message,
+            Sound::Join | Sound::Leave | Sound::Ring | Sound::Ringback => Kind::Call,
+            Sound::ButtonPress | Sound::ButtonRelease => Kind::Click,
+            Sound::ButtonRollover => Kind::Rollover,
         }
     }
 }
@@ -219,29 +228,50 @@ pub fn take_pending() -> Vec<Sound> {
     std::mem::take(&mut *PENDING.lock())
 }
 
-/// Where the pointer was last frame: the list item it was over, and whether it pressed something.
+/// Where the pointer was last frame: where it was, the list item it was over (by its place in the list), when
+/// a rollover last played, and whether it pressed something.
 #[derive(Clone, Copy, Default)]
 struct ButtonPointer {
-    item: Option<egui::Rect>,
+    pos: Option<egui::Pos2>,
+    item: Option<egui::Pos2>,
+    last_rollover: f64,
     pressed: bool,
 }
 
-/// Source's sounds for the frame's (enabled) `buttons` and list `items` (DMs, channels, servers): a rollover
-/// as the pointer moves onto a list item, a click when either is pressed, and the release when the mouse
-/// comes back up.
-pub fn button_feedback(ctx: &egui::Context, buttons: &[egui::Rect], items: &[egui::Rect]) {
-    let (hover, pressed, released) = ctx.input(|i| (i.pointer.hover_pos(), i.pointer.primary_pressed(), i.pointer.primary_released()));
+impl ButtonPointer {
+    /// Whether the pointer being over `item` at `now` (seconds) plays a rollover: it's a different item from
+    /// last frame's, and the last rollover was long enough ago. An item passed too soon stays silent.
+    fn rollover(&mut self, item: Option<egui::Pos2>, scrolling: bool, now: f64) -> bool {
+        // Rounding can move an item's place slightly as its list scrolls; items are much further apart.
+        let new = item.is_some_and(|i| !self.item.is_some_and(|l| (i - l).length() < 2.0));
+        self.item = item;
+        let gap = if scrolling { ROLLOVER_GAP_SCROLLING } else { ROLLOVER_GAP };
+        if new && now - self.last_rollover >= gap {
+            self.last_rollover = now;
+            return true;
+        }
+        false
+    }
+}
+
+/// Source's sounds for the frame's (enabled) `buttons` and list `items` (DMs, channels, servers; each with its
+/// place in its list): a rollover as the pointer moves onto a list item, a click when either is pressed, and
+/// the release when the mouse comes back up.
+pub fn button_feedback(ctx: &egui::Context, buttons: &[egui::Rect], items: &[(egui::Rect, egui::Pos2)]) {
+    let (hover, pressed, released, scrolled, now) = ctx.input(|i| {
+        (i.pointer.hover_pos(), i.pointer.primary_pressed(), i.pointer.primary_released(), i.events.iter().any(|e| matches!(e, egui::Event::MouseWheel { .. })), i.time)
+    });
     // The last one drawn there is the one on top.
-    let top = |rects: &[egui::Rect]| hover.and_then(|p| rects.iter().rev().find(|r| r.contains(p)).copied());
-    let (button, item) = (top(buttons), top(items));
+    let button = hover.and_then(|p| buttons.iter().rev().find(|r| r.contains(p)));
+    let item = hover.and_then(|p| items.iter().rev().find(|(r, _)| r.contains(p))).map(|(_, place)| *place);
     let key = egui::Id::unique("vgui-button-pointer");
     let mut last: ButtonPointer = ctx.data(|d| d.get_temp(key)).unwrap_or_default();
     let mut play = Vec::new();
-    let same = |a: egui::Rect, b: egui::Rect| (a.min - b.min).length() < 0.5 && (a.max - b.max).length() < 0.5;
-    if let Some(r) = item {
-        if !last.item.is_some_and(|l| same(l, r)) {
-            play.push(Sound::ButtonRollover);
-        }
+    // A pointer that's still can only reach another item by the list moving under it.
+    let scrolling = scrolled || hover == last.pos;
+    last.pos = hover;
+    if last.rollover(item, scrolling, now) {
+        play.push(Sound::ButtonRollover);
     }
     if pressed && (button.is_some() || item.is_some()) {
         play.push(Sound::ButtonPress);
@@ -251,7 +281,6 @@ pub fn button_feedback(ctx: &egui::Context, buttons: &[egui::Rect], items: &[egu
         play.push(Sound::ButtonRelease);
         last.pressed = false;
     }
-    last.item = item;
     ctx.data_mut(|d| d.insert_temp(key, last));
     if !play.is_empty() {
         PENDING.lock().extend(play);
@@ -292,23 +321,25 @@ pub struct Sounds {
     cache: HashMap<Sound, (Option<SystemTime>, Arc<Vec<f32>>)>,
     io: Option<(swiftcord_voice::AudioIo, Option<String>)>,
     idle_since: Option<Instant>,
-    /// The volumes set (0 to 1) for menu and notification sounds, as f32 bits: the mixer reads them, so a
-    /// change applies to what's playing too.
-    volumes: Arc<[AtomicU32; 2]>,
+    /// The volumes set (0 to 1) for each [`Kind`], as f32 bits: the mixer reads them, so a change applies to
+    /// what's playing too.
+    volumes: Arc<[AtomicU32; 4]>,
 }
 
 impl Default for Sounds {
     fn default() -> Self {
         let full = || AtomicU32::new(1f32.to_bits());
-        Self { voices: Default::default(), cache: HashMap::new(), io: None, idle_since: None, volumes: Arc::new([full(), full()]) }
+        Self { voices: Default::default(), cache: HashMap::new(), io: None, idle_since: None, volumes: Arc::new([full(), full(), full(), full()]) }
     }
 }
 
 /// Where a kind's volume is kept in [`Sounds::volumes`].
 fn slot(kind: Kind) -> usize {
     match kind {
-        Kind::Menu => 0,
-        Kind::Notification => 1,
+        Kind::Message => 0,
+        Kind::Call => 1,
+        Kind::Click => 2,
+        Kind::Rollover => 3,
     }
 }
 
@@ -326,9 +357,16 @@ impl Sounds {
         }
     }
 
-    /// The volume for one kind of sound, 0 to 1 (the settings).
-    pub fn set_volume(&self, kind: Kind, volume: f32) {
-        self.volumes[slot(kind)].store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    /// The volumes from the settings.
+    pub fn set_volumes(&self, settings: &crate::settings::Settings) {
+        for (kind, volume) in [
+            (Kind::Message, settings.message_volume),
+            (Kind::Call, settings.call_volume),
+            (Kind::Click, settings.click_volume),
+            (Kind::Rollover, settings.rollover_volume),
+        ] {
+            self.volumes[slot(kind)].store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+        }
     }
 
     /// Plays a sound once at `volume` rather than the one set: hearing a new setting before it's saved.
@@ -528,6 +566,40 @@ mod tests {
         queue(&mut voices, Sound::Message, pcm.clone());
         queue(&mut voices, Sound::Message, pcm.clone());
         assert_eq!(voices.iter().filter(|v| v.sound == Sound::Message).count(), 1);
+    }
+
+    #[test]
+    fn an_item_scrolling_under_the_pointer_plays_once() {
+        let mut p = ButtonPointer::default();
+        let place = egui::pos2(10.0, 100.0);
+        assert!(p.rollover(Some(place), false, 1.0));
+        // Its place in the list holds as it moves on screen, give or take rounding.
+        for frame in 1..60 {
+            assert!(!p.rollover(Some(place + egui::vec2(0.0, 0.5)), true, 1.0 + frame as f64 / 60.0));
+        }
+    }
+
+    #[test]
+    fn scrolling_limits_rollovers_more_than_sweeping() {
+        // A new item every 10 ms for a second.
+        let count = |scrolling: bool| {
+            let mut p = ButtonPointer::default();
+            (0..100).filter(|&i| p.rollover(Some(egui::pos2(10.0, i as f32 * 50.0)), scrolling, 1.0 + i as f64 / 100.0)).count()
+        };
+        assert!((12..=13).contains(&count(true)), "scrolling: {}", count(true));
+        assert!((33..=40).contains(&count(false)), "sweeping: {}", count(false));
+    }
+
+    #[test]
+    fn items_passed_too_soon_stay_silent_afterwards() {
+        let mut p = ButtonPointer::default();
+        assert!(p.rollover(Some(egui::pos2(10.0, 0.0)), true, 1.0));
+        assert!(!p.rollover(Some(egui::pos2(10.0, 50.0)), true, 1.01));
+        // Stopped on the skipped item: it doesn't play late.
+        assert!(!p.rollover(Some(egui::pos2(10.0, 50.0)), true, 2.0));
+        // Leaving the list and coming back does.
+        assert!(!p.rollover(None, false, 2.1));
+        assert!(p.rollover(Some(egui::pos2(10.0, 50.0)), false, 2.2));
     }
 
     #[test]
