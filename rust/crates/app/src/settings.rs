@@ -35,6 +35,8 @@ pub struct Settings {
     /// The volume of notification sounds (messages, calls), 0 to 1. (It was the one volume for every sound.)
     #[serde(alias = "sound_volume")]
     pub notification_volume: f32,
+    /// The colour palette, by name (see `theme::names`).
+    pub theme: String,
 }
 
 impl Default for Settings {
@@ -56,6 +58,7 @@ impl Default for Settings {
             start_minimized: true,
             menu_volume: 1.0,
             notification_volume: 1.0,
+            theme: "Steam".into(),
         }
     }
 }

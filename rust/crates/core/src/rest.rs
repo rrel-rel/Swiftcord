@@ -59,6 +59,11 @@ impl ApiError {
             _ => None,
         }
     }
+
+    /// AutoMod refused this: a message (200000) or a thread title (200001) broke one of the server's rules.
+    pub fn is_automod_block(&self) -> bool {
+        matches!(self, ApiError::Api { code: 200_000 | 200_001, .. })
+    }
 }
 
 pub type Result<T> = std::result::Result<T, ApiError>;

@@ -46,6 +46,17 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
     let max_height = ui.ctx().content_rect().height() - 130.0;
     egui::Window::new("Settings").open(&mut open).collapsible(false).resizable(false).default_width(420.0).show(ui.ctx(), |ui| {
         let scroll = egui::ScrollArea::vertical().max_height(max_height).show(ui, |ui| {
+            ui.label(RichText::new("APPEARANCE").font(theme::font_semibold(12.0)).color(theme::MUTED()));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label("Colour theme");
+                egui::ComboBox::from_id_salt("Colour theme").width(240.0).selected_text(draft.settings.theme.clone()).show_ui(ui, |ui| {
+                    for name in theme::names() {
+                        ui.selectable_value(&mut draft.settings.theme, name.to_owned(), name);
+                    }
+                });
+            });
+            ui.add_space(12.0);
             ui.label(RichText::new("VOICE & AUDIO").font(theme::font_semibold(12.0)).color(theme::MUTED()));
             ui.add_space(4.0);
             device_combo(ui, "Input device", &mut draft.settings.input_device, &draft.inputs, "System default");

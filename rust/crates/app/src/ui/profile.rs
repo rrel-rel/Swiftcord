@@ -129,6 +129,10 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
 
             egui::Frame::new().fill(Color32::from_black_alpha(70)).corner_radius(8).inner_margin(12).show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                if guild.and_then(|g| state.member(g, user_id)).is_some_and(|m| m.quarantined()) {
+                    ui.label(RichText::new("Quarantined by AutoMod: can't talk in this server until their profile changes.").size(12.5).color(theme::RED()));
+                    ui.add_space(8.0);
+                }
                 if !view.bio.is_empty() {
                     let blocks = crate::ui::message::parsed(user_id, &view.bio);
                     let mut mcx = Cx {

@@ -32,7 +32,8 @@ pub enum AppEvent {
     History { channel: Snowflake, result: Result<Vec<Message>, String> },
     Newer { channel: Snowflake, result: Result<Vec<Message>, String> },
     Around { channel: Snowflake, message: Snowflake, result: Result<Vec<Message>, String> },
-    Sent { channel: Snowflake, nonce: Snowflake, result: Result<Message, String> },
+    /// `automod`: the failure was AutoMod refusing the message.
+    Sent { channel: Snowflake, nonce: Snowflake, result: Result<Message, String>, automod: bool },
     Error(String),
     Token(String),
     TokenRejected(String),
@@ -404,6 +405,7 @@ impl App {
     pub fn new(ctx: &egui::Context, rt: tokio::runtime::Handle) -> App {
         let settings = crate::settings::Settings::load();
         crate::theme::install(&ctx);
+        crate::theme::select(&settings.theme, &ctx);
         ctx.add_image_loader(std::sync::Arc::new(crate::image_decode::WicLoader::new(rt.clone())));
         let images = crate::image_cache::install(&ctx);
         let cache = platform::data_dir().join("cache").join("media");
@@ -622,7 +624,7 @@ impl App {
                     Err(e) => self.banner(format!("Couldn't open that message: {e}")),
                 }
             }
-            AppEvent::Sent { channel, nonce, result } => {
+            AppEvent::Sent { channel, nonce, result, automod } => {
                 let Some(s) = &mut self.session else { return };
                 match result {
                     Ok(msg) => {
@@ -633,10 +635,10 @@ impl App {
                     }
                     Err(e) => {
                         if let Some(m) = s.state.message_mut(channel, nonce) {
-                            m.pending = Some(PendingState::Failed);
+                            m.pending = Some(if automod { PendingState::Blocked } else { PendingState::Failed });
                         }
                         tracing::warn!("send to {channel} failed: {e}");
-                        self.banner(format!("Message not sent: {e}"));
+                        self.banner(if automod { "AutoMod blocked your message: this server doesn't allow what it contains.".to_owned() } else { format!("Message not sent: {e}") });
                     }
                 }
             }
@@ -1291,8 +1293,9 @@ impl App {
         let keep_msg = NewMessage { content: msg.content.clone(), nonce: msg.nonce.clone(), message_reference: msg.message_reference.clone(), allowed_mentions: msg.allowed_mentions.clone(), attachments: None, sticker_ids: msg.sticker_ids.clone() };
         self.outgoing.insert(nonce, Outgoing { msg: keep_msg, files: keep_files });
         self.spawn(async move {
-            let result = rest.send_message(channel, msg, files).await.map_err(|e| e.to_string());
-            AppEvent::Sent { channel, nonce, result }
+            let result = rest.send_message(channel, msg, files).await;
+            let automod = result.as_ref().is_err_and(|e| e.is_automod_block());
+            AppEvent::Sent { channel, nonce, result: result.map_err(|e| e.to_string()), automod }
         });
     }
 
@@ -1917,6 +1920,7 @@ impl App {
                 let (vad, noise_suppression) = (s.vad_threshold_db, s.noise_suppression);
                 self.sounds.set_volume(crate::sounds::Kind::Menu, s.menu_volume);
                 self.sounds.set_volume(crate::sounds::Kind::Notification, s.notification_volume);
+                crate::theme::select(&s.theme, &self.ctx);
                 self.settings = s;
                 self.settings.save();
                 if let Some(v) = self.voice.as_ref().and_then(|c| c.voice()) {

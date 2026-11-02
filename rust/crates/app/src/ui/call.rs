@@ -137,7 +137,7 @@ fn participant(ui: &mut Ui, s: &Session, uis: &UiState, channel: &Channel, u: &U
                     ui.painter().rect_filled(r.rect, 0, theme::RAIL().gamma_multiply(0.6));
                 }
                 if uis.speaking.contains(&u.id) && joined {
-                    ui.painter().circle_stroke(r.rect.center(), 42.0, egui::Stroke::new(3.0, theme::GREEN()));
+                    widgets::speaking_ring(ui.painter(), r.rect, 3.0);
                 }
                 r
             };

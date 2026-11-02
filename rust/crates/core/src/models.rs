@@ -73,11 +73,21 @@ pub struct Member {
     pub roles: Vec<Snowflake>,
     pub joined_at: Option<DateTime<Utc>>,
     pub communication_disabled_until: Option<DateTime<Utc>>,
+    #[serde(deserialize_with = "null_as_default")]
+    pub flags: u64,
 }
+
+/// `Member::flags`: AutoMod has quarantined them over their username, or over their server tag.
+const MEMBER_QUARANTINED: u64 = 1 << 7 | 1 << 10;
 
 impl Member {
     pub fn user_id(&self) -> Option<Snowflake> {
         self.user.as_ref().map(|u| u.id).or(self.user_id)
+    }
+
+    /// AutoMod is keeping them from talking in this server until they change their profile.
+    pub fn quarantined(&self) -> bool {
+        self.flags & MEMBER_QUARANTINED != 0
     }
 }
 
@@ -698,6 +708,25 @@ pub mod message_type {
     /// First message of a thread started from a message: shows that message (`referenced_message`).
     pub const THREAD_STARTER_MESSAGE: u8 = 21;
     pub const CONTEXT_MENU_COMMAND: u8 = 23;
+    /// AutoMod's report in a server's alert channel: see [`Message::automod_alert`](super::Message::automod_alert).
+    pub const AUTO_MODERATION_ACTION: u8 = 24;
+}
+
+/// What AutoMod did about a message, from its report in the alert channel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutomodAlert<'a> {
+    pub rule: &'a str,
+    /// Where it happened.
+    pub channel: Option<Snowflake>,
+    /// What was caught.
+    pub content: &'a str,
+    pub keyword: Option<&'a str>,
+    /// The message went through and was only reported; otherwise it was blocked.
+    pub flagged: bool,
+    /// How long its author was timed out for, in seconds.
+    pub timeout_seconds: Option<u64>,
+    /// Its author's profile needs changing before they can talk here again.
+    pub quarantined: bool,
 }
 
 pub mod message_flags {
@@ -882,9 +911,29 @@ pub struct Message {
 pub enum PendingState {
     Sending,
     Failed,
+    /// AutoMod refused it; sending it again would only be refused again.
+    Blocked,
 }
 
 impl Message {
+    /// AutoMod's report, if this is one: an embed whose fields are name/value pairs.
+    pub fn automod_alert(&self) -> Option<AutomodAlert<'_>> {
+        if self.kind != message_type::AUTO_MODERATION_ACTION {
+            return None;
+        }
+        let embed = self.embeds.iter().find(|e| e.kind.as_deref() == Some("auto_moderation_message"))?;
+        let field = |name: &str| embed.fields.iter().find(|f| f.name == name).map(|f| f.value.as_str()).filter(|v| !v.is_empty());
+        Some(AutomodAlert {
+            rule: field("rule_name").unwrap_or("AutoMod rule"),
+            channel: field("channel_id").and_then(|c| c.parse().ok()).map(Snowflake),
+            content: embed.description.as_deref().unwrap_or(&self.content),
+            keyword: field("keyword"),
+            flagged: field("decision_outcome") == Some("flagged"),
+            timeout_seconds: field("timeout_duration").and_then(|t| t.parse().ok()),
+            quarantined: field("quarantine_user").is_some(),
+        })
+    }
+
     pub fn timestamp(&self) -> DateTime<Utc> {
         self.timestamp.unwrap_or_else(|| self.id.created_at())
     }
@@ -1014,6 +1063,33 @@ impl PresenceStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automod_reports_are_read_from_their_embed() {
+        let raw = r#"{"id":"9","channel_id":"1","type":24,"author":{"id":"2","username":"someone"},"content":"","embeds":[{
+            "type":"auto_moderation_message","description":"a bad word",
+            "fields":[{"name":"rule_name","value":"No bad words"},{"name":"channel_id","value":"77"},{"name":"keyword","value":"bad"},
+                      {"name":"decision_outcome","value":"blocked"},{"name":"timeout_duration","value":"600"},{"name":"quarantine_user","value":"username"}]}]}"#;
+        let m: Message = serde_json::from_str(raw).unwrap();
+        assert!(!m.is_regular());
+        assert_eq!(
+            m.automod_alert(),
+            Some(AutomodAlert { rule: "No bad words", channel: Some(Snowflake(77)), content: "a bad word", keyword: Some("bad"), flagged: false, timeout_seconds: Some(600), quarantined: true })
+        );
+        // An ordinary message, even with such an embed, isn't a report; nor is a report without its embed.
+        let m: Message = serde_json::from_str(&raw.replace(r#""type":24"#, r#""type":0"#)).unwrap();
+        assert_eq!(m.automod_alert(), None);
+        let m: Message = serde_json::from_str(r#"{"id":"9","channel_id":"1","type":24,"author":{"id":"2","username":"someone"}}"#).unwrap();
+        assert_eq!(m.automod_alert(), None);
+    }
+
+    #[test]
+    fn automod_quarantine_is_read_from_member_flags() {
+        let member = |flags: u64| Member { flags, ..Default::default() };
+        assert!(member(1 << 7).quarantined());
+        assert!(member(1 << 10).quarantined());
+        assert!(!member(1 | 2).quarantined());
+    }
 
     #[test]
     fn server_profile_overrides_the_main_one() {

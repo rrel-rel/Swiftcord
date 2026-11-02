@@ -923,6 +923,7 @@ impl State {
                 m.roles = e.roles;
                 m.joined_at = e.joined_at.or(m.joined_at);
                 m.communication_disabled_until = e.communication_disabled_until;
+                m.flags = e.flags.unwrap_or(m.flags);
                 if is_me {
                     self.revision += 1;
                 }
@@ -1233,6 +1234,7 @@ impl State {
                     roles: m.roles.clone(),
                     joined_at: m.joined_at,
                     communication_disabled_until: m.communication_disabled_until,
+                    flags: m.flags.unwrap_or(0),
                 },
             );
             if let Some(p) = &m.presence {

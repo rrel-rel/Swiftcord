@@ -122,6 +122,25 @@ fn corner_status(ui: &Ui, avatar: egui::Rect, status: PresenceStatus, mobile: bo
     status_dot(ui.painter(), c, dot * 0.5, status, mobile, bg);
 }
 
+/// The ring around a speaking person's square avatar, `width` points thick, hugging it on every side. Whole
+/// pixels, where egui's strokes are feathered and can sit a fraction off the picture.
+pub fn speaking_ring(painter: &egui::Painter, avatar: egui::Rect, width: f32) {
+    let ppp = painter.ctx().pixels_per_point();
+    let inner = egui::emath::GuiRounding::round_to_pixels(avatar, ppp);
+    let w = (width * ppp).round().max(1.0) / ppp;
+    let outer = inner.expand(w);
+    let mut mesh = egui::Mesh::default();
+    for side in [
+        egui::Rect::from_min_max(outer.min, egui::pos2(outer.max.x, inner.min.y)),
+        egui::Rect::from_min_max(egui::pos2(outer.min.x, inner.max.y), outer.max),
+        egui::Rect::from_min_max(egui::pos2(outer.min.x, inner.min.y), egui::pos2(inner.min.x, inner.max.y)),
+        egui::Rect::from_min_max(egui::pos2(inner.max.x, inner.min.y), egui::pos2(outer.max.x, inner.max.y)),
+    ] {
+        mesh.add_colored_rect(side, theme::GREEN());
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
 /// A red pill with a count, e.g. unread mentions.
 pub fn badge(ui: &Ui, center: egui::Pos2, count: u32, outline: Color32) {
     let text = if count > 99 { "99+".to_owned() } else { count.to_string() };
@@ -352,8 +371,9 @@ pub fn scrollbar<R>(ui: &Ui, out: &egui::scroll_area::ScrollAreaOutput<R>) -> Op
     moved.then_some(offset)
 }
 
+/// The scrollbar's and bevels' greys are Source's; each palette has its own version of them.
 fn rgb(c: u32) -> Color32 {
-    Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
+    theme::vgui(c)
 }
 
 /// Moves a scroll area to `y` from the next frame. egui's scroll state has no setter, but its serde form has

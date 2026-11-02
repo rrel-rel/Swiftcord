@@ -201,9 +201,13 @@ impl Running {
         self.stop(shared);
         let cipher = Arc::new(cipher);
         if let Some(share) = &info.share {
-            // Sharing sends video and nothing else: no microphone, no playback.
+            // Sharing sends video and the source's sound: no microphone, no playback.
             let (tx, rx) = std::sync::mpsc::sync_channel(4);
             self.threads.push(spawn_capture(share.clone(), tx, shared.clone(), cmd.clone(), events.clone()));
+            #[cfg(windows)]
+            if share.audio {
+                self.threads.push(spawn_share_audio(media, cipher.clone(), crate::loopback::target_for(&share.source), shared.clone(), events.clone()));
+            }
             self.threads.push(spawn_video_sender(media, cipher, rx, shared.clone(), true));
             return;
         }
@@ -845,18 +849,7 @@ fn spawn_sender(
                             let first_ts = ts.wrapping_sub(FRAME as u32 * (packets.len() as u32 - 1));
                             for (i, opus) in packets.iter().enumerate() {
                                 hear(opus);
-                                let mut dave = shared.dave.lock();
-                                let protected = if dave.active() {
-                                    match dave.session.as_mut().filter(|s| s.is_ready()).map(|s| s.encrypt_opus(opus)) {
-                                        Some(Ok(p)) => Some(p.into_owned()),
-                                        // Never fall back to sending unencrypted audio into an E2EE call.
-                                        _ => None,
-                                    }
-                                } else {
-                                    Some(opus.clone())
-                                };
-                                drop(dave);
-                                if let Some(p) = protected {
+                                if let Some(p) = protect_opus(&shared, opus) {
                                     send(&p, first_ts.wrapping_add(FRAME as u32 * i as u32));
                                     last_keepalive = Instant::now();
                                 }
@@ -873,6 +866,85 @@ fn spawn_sender(
             }
         })
         .expect("voice send thread")
+}
+
+/// An Opus packet as it may go out: end-to-end encrypted if the call is. Never falls back to sending
+/// unencrypted audio into an E2EE call.
+fn protect_opus(shared: &Shared, opus: &[u8]) -> Option<Vec<u8>> {
+    let mut dave = shared.dave.lock();
+    if dave.active() {
+        match dave.session.as_mut().filter(|s| s.is_ready()).map(|s| s.encrypt_opus(opus)) {
+            Some(Ok(p)) => Some(p.into_owned()),
+            _ => None,
+        }
+    } else {
+        Some(opus.to_vec())
+    }
+}
+
+/// Stream audio's bitrate: Discord's own for Go Live sound.
+#[cfg(windows)]
+const SHARE_AUDIO_BITRATE: i32 = 128_000;
+/// Silence frames sent when the sound stops, as after speech.
+#[cfg(windows)]
+const SHARE_SILENCE_FRAMES: u32 = 5;
+
+/// Captures what the shared source is playing, and encodes and sends it on the stream's audio SSRC. Failing
+/// only loses the sound: the video carries on.
+#[cfg(windows)]
+fn spawn_share_audio(media: &Media, cipher: Arc<Cipher>, target: crate::loopback::Target, shared: Arc<Shared>, events: Arc<dyn Fn(Event) + Send + Sync>) -> std::thread::JoinHandle<()> {
+    let (socket, ssrc) = (media.socket.clone(), media.ssrc);
+    std::thread::Builder::new()
+        .name("swiftcord-share-audio".into())
+        .spawn(move || {
+            let mut capture = match crate::loopback::Capture::start(target) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!("stream audio capture ({target:?}): {e}");
+                    events(Event::Error("Your stream has no sound: Windows wouldn't let us capture it. It needs Windows 11 or a recent Windows 10.".into()));
+                    return;
+                }
+            };
+            tracing::info!("capturing stream audio: {target:?}");
+            let Some(mut encoder) = codec::StereoEncoder::new(SHARE_AUDIO_BITRATE) else { return };
+            let (mut seq, mut ts) = (rand::random::<u16>(), rand::random::<u32>());
+            let (mut bytes, mut pcm) = (Vec::new(), Vec::with_capacity(FRAME * 4));
+            let mut packet = [0u8; 1500];
+            // Silent frames in a row: past a few, nothing is sent, and the timestamp still counts the time.
+            let mut silent = SHARE_SILENCE_FRAMES;
+            let mut last_sound = Instant::now();
+            let mut idle = false;
+            while !shared.stop.load(Ordering::Relaxed) {
+                bytes.clear();
+                if !capture.read(Duration::from_millis(100), &mut bytes) {
+                    events(Event::Error("Your stream's sound stopped: the audio capture failed.".into()));
+                    return;
+                }
+                if bytes.is_empty() {
+                    // Windows delivers nothing while nothing plays.
+                    idle = last_sound.elapsed() > Duration::from_millis(100);
+                    continue;
+                }
+                if idle {
+                    ts = ts.wrapping_add((last_sound.elapsed().as_millis() as u32).wrapping_mul(48));
+                    idle = false;
+                }
+                last_sound = Instant::now();
+                crate::loopback::to_float(&bytes, &mut pcm);
+                while pcm.len() >= FRAME * 2 {
+                    let frame: Vec<f32> = pcm.drain(..FRAME * 2).collect();
+                    ts = ts.wrapping_add(FRAME as u32);
+                    silent = if frame.iter().all(|s| *s == 0.0) { silent.saturating_add(1) } else { 0 };
+                    let Some(n) = (if silent <= SHARE_SILENCE_FRAMES { encoder.encode(&frame, &mut packet) } else { None }) else { continue };
+                    let Some(p) = protect_opus(&shared, &packet[..n]) else { continue };
+                    if let Some(sealed) = rtp::seal(&cipher, rtp::OPUS_PAYLOAD_TYPE, seq, ts, ssrc, shared.nonce.fetch_add(1, Ordering::Relaxed), &p) {
+                        let _ = socket.send(&sealed);
+                    }
+                    seq = seq.wrapping_add(1);
+                }
+            }
+        })
+        .expect("stream audio thread")
 }
 
 fn is_stream(info: &ConnectInfo) -> bool {

@@ -289,7 +289,7 @@ fn voice_members(ui: &mut Ui, state: &State, uis: &UiState, c: &Channel, actions
                 None => ui.allocate_exact_size(Vec2::splat(22.0), Sense::click()).1,
             };
             if speaking {
-                ui.painter().rect_stroke(r.rect, 0, egui::Stroke::new(2.0, theme::GREEN()), egui::StrokeKind::Outside);
+                widgets::speaking_ring(ui.painter(), r.rect, 2.0);
             }
             person_clicks(state, uis, c, vs.user_id, &r, actions);
             // The badges are laid out from the right first, so a long name is cut short instead of pushing

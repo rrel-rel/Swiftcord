@@ -297,6 +297,7 @@ pub struct GuildMemberUpdate {
     pub roles: Vec<Snowflake>,
     pub joined_at: Option<DateTime<Utc>>,
     pub communication_disabled_until: Option<DateTime<Utc>>,
+    pub flags: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -415,6 +416,7 @@ pub struct ListMember {
     pub roles: Vec<Snowflake>,
     pub joined_at: Option<DateTime<Utc>>,
     pub communication_disabled_until: Option<DateTime<Utc>>,
+    pub flags: Option<u64>,
     pub presence: Option<Presence>,
 }
 

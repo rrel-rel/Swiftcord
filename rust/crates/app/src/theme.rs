@@ -4,6 +4,7 @@
 //! and Source's orange only to mark what's selected.
 #![allow(non_snake_case)]
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
@@ -12,84 +13,156 @@ const fn rgb(c: u32) -> Color32 {
     Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
 }
 
+/// One colour scheme. VGUI's bevels aren't listed: they're worked out from `button` (see [`vgui`]).
+struct Palette {
+    name: &'static str,
+    rail: u32,
+    sidebar: u32,
+    chat: u32,
+    input: u32,
+    hover: u32,
+    message_hover: u32,
+    code_bg: u32,
+    border: u32,
+    text: u32,
+    muted: u32,
+    faint: u32,
+    header: u32,
+    accent: u32,
+    green: u32,
+    yellow: u32,
+    red: u32,
+    link: u32,
+    mention_bg: u32,
+    divider: u32,
+    button: u32,
+    button_hover: u32,
+}
+
+/// The first is the default, and is drawn with Source's exact colours.
+const PALETTES: &[Palette] = &[
+    Palette { name: "Steam", rail: 0x575757, sidebar: 0x636363, chat: 0x6e6e6e, input: 0x4c4c4c, hover: 0x7a7a7a, message_hover: 0x686868, code_bg: 0x5a5a5a, border: 0xa8a8a8, text: 0xdedede, muted: 0xb2b2b2, faint: 0x949494, header: 0xffffff, accent: 0xff9c00, green: 0x6fbf4a, yellow: 0xe0c040, red: 0xd04a3c, link: 0xffffff, mention_bg: 0x8a8a8a, divider: 0x9c9c9c, button: 0x656565, button_hover: 0x787878 },
+    Palette { name: "Steam Dark", rail: 0x434343, sidebar: 0x4f4f4f, chat: 0x5a5a5a, input: 0x3a3a3a, hover: 0x666666, message_hover: 0x545454, code_bg: 0x464646, border: 0x949494, text: 0xdedede, muted: 0xb2b2b2, faint: 0x969696, header: 0xffffff, accent: 0xff9c00, green: 0x6fbf4a, yellow: 0xe0c040, red: 0xd04a3c, link: 0xffffff, mention_bg: 0x767676, divider: 0x888888, button: 0x515151, button_hover: 0x646464 },
+    Palette { name: "Dracula", rail: 0x191a21, sidebar: 0x21222c, chat: 0x282a36, input: 0x191a21, hover: 0x44475a, message_hover: 0x303241, code_bg: 0x21222c, border: 0x6272a4, text: 0xf8f8f2, muted: 0xc8c9d6, faint: 0x8f93b5, header: 0xffffff, accent: 0xbd93f9, green: 0x50fa7b, yellow: 0xf1fa8c, red: 0xff5555, link: 0x8be9fd, mention_bg: 0x44475a, divider: 0x44475a, button: 0x343746, button_hover: 0x44475a },
+    Palette { name: "Nord", rail: 0x242933, sidebar: 0x292e39, chat: 0x2e3440, input: 0x272c36, hover: 0x434c5e, message_hover: 0x353b49, code_bg: 0x272c36, border: 0x4c566a, text: 0xd8dee9, muted: 0xb0b8c6, faint: 0x8791a3, header: 0xeceff4, accent: 0x88c0d0, green: 0xa3be8c, yellow: 0xebcb8b, red: 0xbf616a, link: 0x88c0d0, mention_bg: 0x4c566a, divider: 0x434c5e, button: 0x3b4252, button_hover: 0x434c5e },
+    Palette { name: "Gruvbox Dark", rail: 0x1d2021, sidebar: 0x242322, chat: 0x282828, input: 0x1d2021, hover: 0x3c3836, message_hover: 0x32302f, code_bg: 0x1d2021, border: 0x665c54, text: 0xebdbb2, muted: 0xd5c4a1, faint: 0xa89984, header: 0xfbf1c7, accent: 0xfe8019, green: 0xb8bb26, yellow: 0xfabd2f, red: 0xfb4934, link: 0x83a598, mention_bg: 0x504945, divider: 0x504945, button: 0x3c3836, button_hover: 0x504945 },
+    Palette { name: "Monokai", rail: 0x1e1f1c, sidebar: 0x23241f, chat: 0x272822, input: 0x1e1f1c, hover: 0x3e3d32, message_hover: 0x31322b, code_bg: 0x1e1f1c, border: 0x75715e, text: 0xf8f8f2, muted: 0xcfcfc2, faint: 0x9e9b8a, header: 0xffffff, accent: 0xfd971f, green: 0xa6e22e, yellow: 0xe6db74, red: 0xf92672, link: 0x66d9ef, mention_bg: 0x49483e, divider: 0x49483e, button: 0x3e3d32, button_hover: 0x49483e },
+    Palette { name: "One Dark", rail: 0x1e2127, sidebar: 0x21252b, chat: 0x282c34, input: 0x1e2127, hover: 0x3e4451, message_hover: 0x2f333d, code_bg: 0x21252b, border: 0x5c6370, text: 0xabb2bf, muted: 0x9da5b4, faint: 0x7f8694, header: 0xe6e6e6, accent: 0x61afef, green: 0x98c379, yellow: 0xe5c07b, red: 0xe06c75, link: 0x61afef, mention_bg: 0x3e4451, divider: 0x3e4451, button: 0x3a3f4b, button_hover: 0x4b5263 },
+    Palette { name: "Solarized Dark", rail: 0x00212b, sidebar: 0x00252f, chat: 0x002b36, input: 0x00212b, hover: 0x0a404e, message_hover: 0x03313d, code_bg: 0x073642, border: 0x586e75, text: 0x93a1a1, muted: 0x839496, faint: 0x6f8186, header: 0xeee8d5, accent: 0x268bd2, green: 0x859900, yellow: 0xb58900, red: 0xdc322f, link: 0x2aa198, mention_bg: 0x0b4a5a, divider: 0x0b3f4c, button: 0x073642, button_hover: 0x0a4a59 },
+    Palette { name: "Tokyo Night", rail: 0x13141c, sidebar: 0x16161e, chat: 0x1a1b26, input: 0x13141c, hover: 0x292e42, message_hover: 0x1f2030, code_bg: 0x16161e, border: 0x414868, text: 0xc0caf5, muted: 0xa9b1d6, faint: 0x7982a9, header: 0xe4e8ff, accent: 0x7aa2f7, green: 0x9ece6a, yellow: 0xe0af68, red: 0xf7768e, link: 0x7dcfff, mention_bg: 0x33467c, divider: 0x292e42, button: 0x24283b, button_hover: 0x2f3549 },
+    Palette { name: "Catppuccin Mocha", rail: 0x11111b, sidebar: 0x181825, chat: 0x1e1e2e, input: 0x11111b, hover: 0x313244, message_hover: 0x262637, code_bg: 0x181825, border: 0x585b70, text: 0xcdd6f4, muted: 0xbac2de, faint: 0x9399b2, header: 0xe6ecff, accent: 0xcba6f7, green: 0xa6e3a1, yellow: 0xf9e2af, red: 0xf38ba8, link: 0x89b4fa, mention_bg: 0x45475a, divider: 0x313244, button: 0x313244, button_hover: 0x45475a },
+];
+
+/// Which palette is showing, an index into [`PALETTES`].
+static CURRENT: AtomicUsize = AtomicUsize::new(0);
+
+fn palette() -> &'static Palette {
+    &PALETTES[CURRENT.load(Ordering::Relaxed)]
+}
+
+/// The palettes' names, for the settings window.
+pub fn names() -> impl Iterator<Item = &'static str> {
+    PALETTES.iter().map(|p| p.name)
+}
+
+/// Shows the named palette (an unknown name is the default) from the next frame.
+pub fn select(name: &str, ctx: &egui::Context) {
+    CURRENT.store(PALETTES.iter().position(|p| p.name == name).unwrap_or(0), Ordering::Relaxed);
+    apply_visuals(ctx);
+    ctx.request_repaint();
+}
+
+/// One of Source's greys (from its bevels and scrollbars), as it comes out in this palette: mid grey is the
+/// button face, darker greys go towards a deep shadow, lighter ones towards the brightest text.
+pub fn vgui(c: u32) -> Color32 {
+    const FACE: f32 = 0x7d as f32;
+    let p = palette();
+    if std::ptr::eq(p, &PALETTES[0]) {
+        return rgb(c);
+    }
+    let grey = ((c >> 8) & 0xff) as f32;
+    let (face, shadow) = (rgb(p.button), rgb(p.rail).lerp_to_gamma(Color32::BLACK, 0.6));
+    if grey < FACE { shadow.lerp_to_gamma(face, grey / FACE) } else { face.lerp_to_gamma(rgb(p.header), (grey - FACE) / (255.0 - FACE)) }
+}
+
 /// The darkest shade: the server rail, the user panel, dark dividers.
 pub fn RAIL() -> Color32 {
-    rgb(0x575757)
+    rgb(palette().rail)
 }
 pub fn SIDEBAR() -> Color32 {
-    rgb(0x636363)
+    rgb(palette().sidebar)
 }
 /// The main panel, like a VGUI frame.
 pub fn CHAT() -> Color32 {
-    rgb(0x6e6e6e)
+    rgb(palette().chat)
 }
 /// Text fields and drop-downs, a shade darker than the panel they sit in.
 pub fn INPUT() -> Color32 {
-    rgb(0x4c4c4c)
+    rgb(palette().input)
 }
 pub fn HOVER() -> Color32 {
-    rgb(0x7a7a7a)
+    rgb(palette().hover)
 }
 pub fn SELECTED() -> Color32 {
-    rgb(0x7a7a7a)
+    rgb(palette().hover)
 }
 pub fn MESSAGE_HOVER() -> Color32 {
-    rgb(0x686868)
+    rgb(palette().message_hover)
 }
 pub fn CODE_BG() -> Color32 {
-    rgb(0x5a5a5a)
+    rgb(palette().code_bg)
 }
 pub fn EMBED_BG() -> Color32 {
-    rgb(0x636363)
+    rgb(palette().sidebar)
 }
 /// The light edge VGUI draws around buttons and fields.
 pub fn BORDER() -> Color32 {
-    rgb(0xa8a8a8)
+    rgb(palette().border)
 }
 pub fn TEXT() -> Color32 {
-    rgb(0xdedede)
+    rgb(palette().text)
 }
 pub fn MUTED() -> Color32 {
-    rgb(0xb2b2b2)
+    rgb(palette().muted)
 }
 pub fn FAINT() -> Color32 {
-    rgb(0x949494)
+    rgb(palette().faint)
 }
 pub fn HEADER() -> Color32 {
-    rgb(0xffffff)
+    rgb(palette().header)
 }
-/// Source's orange: what's selected (the open channel's name, selected text), progress, focus.
+/// Source's orange, or the palette's accent: what's selected (the open channel's name, selected text), progress, focus.
 pub fn ACCENT() -> Color32 {
-    rgb(0xff9c00)
+    rgb(palette().accent)
 }
 /// Online.
 pub fn GREEN() -> Color32 {
-    rgb(0x6fbf4a)
+    rgb(palette().green)
 }
 pub fn YELLOW() -> Color32 {
-    rgb(0xe0c040)
+    rgb(palette().yellow)
 }
 pub fn RED() -> Color32 {
-    rgb(0xd04a3c)
+    rgb(palette().red)
 }
 /// The offline / invisible status.
 pub fn OFFLINE() -> Color32 {
-    rgb(0x949494)
+    rgb(palette().faint)
 }
-/// Links are white and underlined, as in VGUI.
+/// Links are white and underlined, as in VGUI (other palettes have their own colour).
 pub fn LINK() -> Color32 {
-    rgb(0xffffff)
+    rgb(palette().link)
 }
-/// Mentions: a lighter grey chip with white text.
+/// Mentions: a lighter chip with bright text.
 pub fn MENTION_BG() -> Color32 {
-    rgb(0x8a8a8a)
+    rgb(palette().mention_bg)
 }
 pub fn MENTION_TEXT() -> Color32 {
     HEADER()
 }
 /// The light lines VGUI separates sections with.
 pub fn DIVIDER() -> egui::Stroke {
-    egui::Stroke::new(1.0, rgb(0x9c9c9c))
+    egui::Stroke::new(1.0, rgb(palette().divider))
 }
 
 /// How wide scrollbars are; scroll areas keep this much room on their right for one.
@@ -283,17 +356,17 @@ fn apply_visuals(ctx: &egui::Context) {
         w.noninteractive.bg_fill = SIDEBAR();
         w.noninteractive.bg_stroke = DIVIDER();
         w.noninteractive.fg_stroke = egui::Stroke::new(1.0, TEXT());
-        w.inactive.bg_fill = rgb(0x656565);
-        w.inactive.weak_bg_fill = rgb(0x656565);
+        w.inactive.bg_fill = rgb(palette().button);
+        w.inactive.weak_bg_fill = rgb(palette().button);
         w.inactive.bg_stroke = field_stroke();
         w.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT());
-        w.hovered.bg_fill = rgb(0x787878);
-        w.hovered.weak_bg_fill = rgb(0x787878);
-        w.hovered.bg_stroke = egui::Stroke::new(1.0, rgb(0xd4d4d4));
+        w.hovered.bg_fill = rgb(palette().button_hover);
+        w.hovered.weak_bg_fill = rgb(palette().button_hover);
+        w.hovered.bg_stroke = egui::Stroke::new(1.0, vgui(0xd4d4d4));
         w.hovered.fg_stroke = egui::Stroke::new(1.0, HEADER());
         w.active.bg_fill = RAIL();
         w.active.weak_bg_fill = RAIL();
-        w.active.bg_stroke = egui::Stroke::new(1.0, rgb(0x2c2c2c));
+        w.active.bg_stroke = egui::Stroke::new(1.0, vgui(0x2c2c2c));
         w.active.fg_stroke = egui::Stroke::new(1.0, HEADER());
         w.open = w.active;
         for s in [&mut w.noninteractive, &mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
@@ -422,7 +495,7 @@ pub fn button_frame(rect: egui::Rect, look: ButtonLook, ppp: f32) -> egui::Shape
     }
     let mut mesh = egui::Mesh::default();
     let mut add = |a: f32, b: f32, c: f32, d: f32, color: u32| {
-        mesh.add_colored_rect(egui::Rect::from_min_max(egui::pos2(a / ppp, b / ppp), egui::pos2(c / ppp, d / ppp)), rgb(color));
+        mesh.add_colored_rect(egui::Rect::from_min_max(egui::pos2(a / ppp, b / ppp), egui::pos2(c / ppp, d / ppp)), vgui(color));
     };
     for (a, b, c, d, color) in spans {
         add(a, b, c, d, color);
@@ -499,7 +572,8 @@ pub fn post_process(ctx: &egui::Context, shapes: &mut [egui::epaint::ClippedShap
             match look {
                 ButtonLook::Pressed => text.pos += egui::vec2(2.0 * ppp.floor().max(1.0) / ppp, 0.0),
                 ButtonLook::Disabled => {
-                    text.override_text_color = Some(rgb(0x181818));
+                    // Source's near-black on its mid grey; dark palettes' faces need the opposite.
+                    text.override_text_color = Some(if std::ptr::eq(palette(), &PALETTES[0]) { rgb(0x181818) } else { FAINT() });
                     text.opacity_factor = 1.0;
                 }
                 _ => {}
@@ -533,5 +607,40 @@ mod tests {
         assert_eq!(marked(MARK_UP.gamma_multiply(0.5), false), Some(ButtonLook::Disabled));
         assert_eq!(marked(CHAT(), false), None);
         assert_eq!(marked(Color32::TRANSPARENT, false), None);
+    }
+
+    /// Relative luminance's contrast ratio, as WCAG defines it.
+    fn contrast(a: u32, b: u32) -> f32 {
+        let lum = |c: u32| {
+            let f = |v: u32| {
+                let s = (v & 0xff) as f32 / 255.0;
+                if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+            };
+            0.2126 * f(c >> 16) + 0.7152 * f(c >> 8) + 0.0722 * f(c)
+        };
+        let (a, b) = (lum(a), lum(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[test]
+    fn palettes_are_readable_and_never_look_like_a_button_marker() {
+        for p in &PALETTES[2..] {
+            assert!(contrast(p.text, p.chat) >= 4.5, "{}: text on chat", p.name);
+            assert!(contrast(p.header, p.sidebar) >= 4.5, "{}: header on sidebar", p.name);
+        }
+        for p in PALETTES {
+            for c in [p.rail, p.sidebar, p.chat, p.input, p.hover, p.message_hover, p.code_bg, p.mention_bg, p.button, p.button_hover, p.accent, p.green, p.yellow, p.red] {
+                assert_eq!(marked(rgb(c), false), None, "{}: {c:06x}", p.name);
+            }
+        }
+    }
+
+    #[test]
+    fn steam_dark_is_a_little_darker_than_steam() {
+        let (steam, dark) = (&PALETTES[0], &PALETTES[1]);
+        for (a, b) in [(steam.rail, dark.rail), (steam.sidebar, dark.sidebar), (steam.chat, dark.chat), (steam.input, dark.input), (steam.button, dark.button)] {
+            let (a, b) = (a & 0xff, b & 0xff);
+            assert!(b < a && a - b <= 0x14, "{a:x} to {b:x}");
+        }
     }
 }

@@ -2,7 +2,7 @@
 //!
 //! STREAM_CREATE (gateway op 18) asks for a stream in our voice channel; as when watching, Discord answers with
 //! STREAM_CREATE (which RTC server carries it) and STREAM_SERVER_UPDATE (endpoint and token) for our own stream
-//! key, and a second voice connection to that server carries the video. Stopping sends STREAM_DELETE.
+//! key, and a second voice connection to that server carries the video and sound. Stopping sends STREAM_DELETE.
 
 use egui::{self, ColorImage, TextureOptions};
 use swiftcord_core::Snowflake;
@@ -74,6 +74,8 @@ pub struct Picker {
     pub quality: Quality,
     /// Try the capture that can see fullscreen-exclusive games (screens only).
     pub fullscreen_games: bool,
+    /// Send the source's sound too.
+    pub audio: bool,
 }
 
 pub fn open_picker(app: &mut App) {
@@ -83,7 +85,7 @@ pub fn open_picker(app: &mut App) {
     }
     let sources = capture::sources();
     let selected = (!sources.is_empty()).then_some(0);
-    app.ui.share_picker = Some(Picker { sources, selected, quality: app.ui.share_quality, fullscreen_games: false });
+    app.ui.share_picker = Some(Picker { sources, selected, quality: app.ui.share_quality, fullscreen_games: false, audio: true });
 }
 
 fn in_call(app: &App) -> bool {
@@ -104,7 +106,7 @@ pub fn start(app: &mut App) {
     let key = stream_key(guild, channel, me);
     let (max_width, max_height) = picker.quality.max_size();
     let (w, h) = capture::output_size(&source.source, max_width, max_height).unwrap_or((max_width, max_height));
-    let share = Share { source: source.source, max_width, max_height, fps: picker.quality.fps, bitrate: picker.quality.bitrate(w, h), fullscreen_games: picker.fullscreen_games };
+    let share = Share { source: source.source, max_width, max_height, fps: picker.quality.fps, bitrate: picker.quality.bitrate(w, h), fullscreen_games: picker.fullscreen_games, audio: picker.audio };
     tracing::info!("going live as {key}: {w}x{h} at {} fps, {} kbps", share.fps, share.bitrate / 1000);
     if let Some(s) = &app.session {
         s.gateway.create_stream(guild, channel);

@@ -4694,6 +4694,7 @@ dependencies = [
  "tracing-subscriber",
  "unsafe-libopus",
  "windows",
+ "windows-core",
 ]
 
 [[package]]

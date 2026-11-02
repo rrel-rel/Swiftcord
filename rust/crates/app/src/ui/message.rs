@@ -133,7 +133,9 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
         reply_preview(ui, msg, cx);
     }
 
-    if !msg.is_regular() {
+    if let Some(alert) = msg.automod_alert() {
+        automod_alert(ui, msg, &alert, cx);
+    } else if !msg.is_regular() {
         system_line(ui, msg, cx);
     } else {
         let gap = std::mem::replace(&mut ui.spacing_mut().item_spacing.y, 0.0);
@@ -166,6 +168,15 @@ pub fn show(ui: &mut Ui, msg: &Message, compact: bool, cx: &mut Ctx) -> f32 {
             });
         });
         ui.spacing_mut().item_spacing.y = gap;
+    }
+    if msg.pending == Some(PendingState::Blocked) {
+        ui.horizontal(|ui| {
+            ui.add_space(GUTTER);
+            ui.colored_label(theme::RED(), "Blocked by AutoMod. Only you can see this.");
+            if ui.link("Delete").clicked() {
+                cx.actions.push(Action::Discard { channel: msg.channel_id, nonce: msg.id });
+            }
+        });
     }
     if msg.pending == Some(PendingState::Failed) {
         ui.horizontal(|ui| {
@@ -463,6 +474,7 @@ fn system_line(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         message_type::USER_JOIN => ("→", format!("{author} joined the server.")),
         message_type::GUILD_BOOST | 9..=11 => ("💎", format!("{author} just boosted the server!")),
         message_type::THREAD_CREATED => ("#", format!("{author} started a thread: {}", msg.content)),
+        message_type::AUTO_MODERATION_ACTION => ("!", format!("AutoMod took action on a message from {author}.")),
         _ => ("•", if msg.content.is_empty() { format!("{author} did something.") } else { msg.content.clone() }),
     };
     // "Started a thread" points at the thread; clicking opens it.
@@ -479,6 +491,58 @@ fn system_line(ui: &mut Ui, msg: &Message, cx: &mut Ctx) {
         }
         ui.label(RichText::new(time_label(msg.timestamp())).size(11.5).color(theme::FAINT()));
     });
+}
+
+/// AutoMod's report in a server's alert channel: who, where, what it caught and what it did.
+fn automod_alert(ui: &mut Ui, msg: &Message, alert: &swiftcord_core::models::AutomodAlert, cx: &mut Ctx) {
+    ui.horizontal_top(|ui| {
+        ui.add_space(16.0);
+        let width = (ui.available_width() - 24.0).max(120.0);
+        egui::Frame::new().fill(theme::EMBED_BG()).stroke(egui::Stroke::new(1.0, if alert.flagged { theme::YELLOW() } else { theme::RED() })).inner_margin(10).show(ui, |ui| {
+            ui.set_width(width);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("AutoMod").font(theme::font_bold(14.0)).color(theme::HEADER()));
+                ui.label(RichText::new(if alert.flagged { "flagged a message" } else { "blocked a message" }).color(theme::TEXT()));
+                if let Some(channel) = alert.channel {
+                    let name = cx.state.channel(channel).map_or_else(|| "a channel".to_owned(), |c| format!("#{}", c.label()));
+                    ui.label(RichText::new("in").color(theme::TEXT()));
+                    if ui.link(name).clicked() {
+                        cx.actions.push(Action::JumpTo { channel, message: None });
+                    }
+                }
+                ui.label(RichText::new(time_label(msg.timestamp())).size(11.5).color(theme::FAINT()));
+            });
+            ui.horizontal(|ui| {
+                let r = widgets::member_avatar(ui, cx.state, &msg.author, cx.guild, 20.0);
+                if r.clone().on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    cx.actions.push(crate::ui::profile::open(msg.author.id, cx.guild, &r));
+                }
+                ui.label(RichText::new(cx.state.display_name(msg.author.id, cx.guild)).font(theme::font_semibold(13.5)).color(theme::HEADER()));
+            });
+            if !alert.content.is_empty() {
+                egui::Frame::new().fill(theme::INPUT()).inner_margin(8).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.style_mut().interaction.selectable_labels = true;
+                    ui.label(RichText::new(alert.content).color(theme::TEXT()));
+                });
+            }
+            let mut details = vec![format!("Rule: {}", alert.rule)];
+            details.extend(alert.keyword.map(|k| format!("Keyword: {k}")));
+            details.extend(alert.timeout_seconds.map(|s| format!("Timed out for {}", timeout_label(s))));
+            if alert.quarantined {
+                details.push("Quarantined".to_owned());
+            }
+            ui.label(RichText::new(details.join("  ·  ")).size(12.0).color(theme::MUTED()));
+        });
+    });
+}
+
+fn timeout_label(seconds: u64) -> String {
+    match seconds {
+        s if s < 3600 => format!("{} min", s / 60),
+        s if s < 86_400 => format!("{} h", s / 3600),
+        s => format!("{} d", s / 86_400),
+    }
 }
 
 /// A media size limit narrowed to the space there is (a narrow window, or the pins panel).

@@ -44,6 +44,37 @@ impl Encoder {
     }
 }
 
+/// A stereo encoder for music and game sound, as a stream carries.
+pub struct StereoEncoder(*mut opus::OpusEncoder);
+
+// As with `Encoder`, used from one thread at a time.
+unsafe impl Send for StereoEncoder {}
+
+impl StereoEncoder {
+    pub fn new(bitrate: i32) -> Option<StereoEncoder> {
+        let mut err = 0;
+        let enc = unsafe { opus::opus_encoder_create(SAMPLE_RATE as i32, 2, opus::OPUS_APPLICATION_AUDIO, &mut err) };
+        if enc.is_null() || err != opus::OPUS_OK {
+            return None;
+        }
+        unsafe { opus::opus_encoder_ctl!(enc, opus::OPUS_SET_BITRATE_REQUEST, bitrate) };
+        Some(StereoEncoder(enc))
+    }
+
+    /// Encodes one frame of `FRAME` interleaved stereo pairs.
+    pub fn encode(&mut self, pcm: &[f32], out: &mut [u8]) -> Option<usize> {
+        debug_assert_eq!(pcm.len(), FRAME * 2);
+        let n = unsafe { opus::opus_encode_float(self.0, pcm.as_ptr(), FRAME as i32, out.as_mut_ptr(), out.len() as i32) };
+        (n > 0).then_some(n as usize)
+    }
+}
+
+impl Drop for StereoEncoder {
+    fn drop(&mut self) {
+        unsafe { opus::opus_encoder_destroy(self.0) }
+    }
+}
+
 impl Drop for Encoder {
     fn drop(&mut self) {
         unsafe { opus::opus_encoder_destroy(self.0) }

@@ -470,7 +470,7 @@ fn top_row(ui: &mut Ui, s: &Session, c: &Channel, reached_start: bool) {
                 }
                 _ => {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(68.0), Sense::hover());
-                    ui.painter().circle_filled(rect.center(), 34.0, theme::SELECTED());
+                    ui.painter().rect_filled(rect, 0, theme::SELECTED());
                     ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "#", theme::font(42.0), theme::HEADER());
                 }
             }

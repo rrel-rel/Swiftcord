@@ -62,8 +62,10 @@ pub fn picker(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
             if p.quality.height > 720 || p.quality.height == 0 || p.quality.fps > 30 {
                 ui.label(RichText::new("Discord limits streams above 720p / 30 fps to Nitro subscribers.").small().color(theme::FAINT()));
             }
-            ui.label(RichText::new("Only video is shared; your microphone carries on as normal.").small().color(theme::FAINT()));
             let screen = p.selected.and_then(|i| p.sources.get(i)).is_some_and(|s| matches!(s.source, swiftcord_voice::capture::Source::Monitor { .. }));
+            ui.checkbox(&mut p.audio, "Share sound");
+            let sound = if screen { "Everything playing on this PC, except this call." } else { "Only what this window's program plays." };
+            ui.label(RichText::new(format!("{sound} Your microphone carries on as normal.")).small().color(theme::FAINT()));
             if screen {
                 ui.add_space(4.0);
                 ui.checkbox(&mut p.fullscreen_games, "Capture fullscreen games (experimental)");

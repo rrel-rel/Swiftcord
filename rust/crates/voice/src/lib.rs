@@ -7,6 +7,7 @@ pub mod capture;
 pub mod codec;
 pub mod diag;
 mod connection;
+pub mod loopback;
 pub mod ogg;
 pub mod rtp;
 pub mod transmit;
@@ -41,7 +42,7 @@ pub struct ConnectInfo {
     /// For a Go Live stream connection: the streamer. Stream connections receive video and the stream's
     /// audio and never send.
     pub stream_owner: Option<u64>,
-    /// For our own Go Live stream connection: what to send. It sends video only and plays nothing.
+    /// For our own Go Live stream connection: what to send. It sends video and the source's sound and plays nothing.
     pub share: Option<Share>,
 }
 
@@ -56,6 +57,8 @@ pub struct Share {
     pub bitrate: u32,
     /// For a whole screen: try Desktop Duplication, which can see fullscreen-exclusive games (experimental).
     pub fullscreen_games: bool,
+    /// Send the source's sound too: everything playing for a screen, the program's own for a window.
+    pub audio: bool,
 }
 
 /// How a stream we're sending is going.
