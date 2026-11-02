@@ -34,6 +34,8 @@ rfd = "0.17"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 directories = "6"
 memmap2 = "0.9"
+# Animated WebP, frame by frame (platform::wic).
+image-webp = "0.2"
 # Finding version strings in Discord's executable (platform::discord_install).
 memchr = "2"
 wry = "0.57"

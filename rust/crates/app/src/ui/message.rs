@@ -654,8 +654,9 @@ pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
     if a.is_image() {
         let size = fit(a.width, a.height, within(ui, MAX_MEDIA));
         let gif = a.content_type.as_deref() == Some("image/gif");
-        let r = media_response(ui, &a.proxy_url, size, gif, a.is_video(), a.description.as_deref());
-        let view = viewed(&a.proxy_url, &a.url, (a.width, a.height), gif);
+        let animated = gif || a.is_animated();
+        let r = media_response(ui, &a.proxy_url, size, animated, a.is_video(), a.description.as_deref());
+        let view = viewed(&a.proxy_url, &a.url, (a.width, a.height), animated);
         if gif {
             let fav = FavoriteGif { url: a.url.clone(), src: a.url.clone(), format: 1, width: a.width.unwrap_or(0), height: a.height.unwrap_or(0), order: 0 };
             gif_media(ui, r, &a.url, fav, Some(view), cx);

@@ -431,6 +431,10 @@ impl State {
             let can_send = perms & perm::SEND_MESSAGES_IN_THREADS != 0 && (!locked || perms & perm::MANAGE_THREADS != 0);
             perms = if can_send { perms | perm::SEND_MESSAGES } else { perms & !perm::SEND_MESSAGES };
         }
+        // Timed out, only reading is left (administrators can't be timed out).
+        if perms & perm::ADMINISTRATOR == 0 && self.member(guild_id, me.id).is_some_and(|m| m.timed_out_until(chrono::Utc::now()).is_some()) {
+            perms &= perm::VIEW_CHANNEL | perm::READ_MESSAGE_HISTORY;
+        }
         perms
     }
 
@@ -1473,6 +1477,26 @@ mod tests {
                "read_state":[{"id":"300","last_message_id":"399"}]}"#,
         ));
         s
+    }
+
+    #[test]
+    fn being_timed_out_leaves_only_reading_until_it_ends() {
+        let mut s = ready_state();
+        let channel = Snowflake(200);
+        let update = |until: chrono::DateTime<chrono::Utc>| {
+            ev("GUILD_MEMBER_UPDATE", &format!(r#"{{"guild_id":"100","user":{{"id":"1","username":"me"}},"roles":[],"communication_disabled_until":"{}"}}"#, until.to_rfc3339()))
+        };
+        assert_ne!(s.permissions(channel) & perm::SEND_MESSAGES, 0);
+
+        let until = chrono::Utc::now() + chrono::Duration::minutes(10);
+        s.apply(update(until));
+        assert_eq!(s.permissions(channel), perm::VIEW_CHANNEL);
+        let member = s.member(Snowflake(100), Snowflake(1)).unwrap();
+        assert!(member.timed_out_until(chrono::Utc::now()).is_some_and(|u| (u - until).num_seconds().abs() < 1));
+        assert_eq!(member.timed_out_until(until + chrono::Duration::seconds(1)), None);
+
+        s.apply(update(chrono::Utc::now() - chrono::Duration::minutes(1)));
+        assert_ne!(s.permissions(channel) & perm::SEND_MESSAGES, 0);
     }
 
     fn list_member(id: u64, status: &str) -> String {

@@ -89,6 +89,11 @@ impl Member {
     pub fn quarantined(&self) -> bool {
         self.flags & MEMBER_QUARANTINED != 0
     }
+
+    /// When their timeout ends, if they're timed out at `now`.
+    pub fn timed_out_until(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        self.communication_disabled_until.filter(|until| *until > now)
+    }
 }
 
 // MARK: Profiles
@@ -528,9 +533,18 @@ pub struct Attachment {
     /// Voice messages: the length, and a loudness outline (base64, one byte per point).
     pub duration_secs: Option<f64>,
     pub waveform: Option<String>,
+    pub flags: u64,
 }
 
+/// `Attachment::flags`: an animated image.
+const ATTACHMENT_ANIMATED: u64 = 1 << 5;
+
 impl Attachment {
+    /// Discord says this image is animated (it's how to tell an APNG from a PNG without fetching it).
+    pub fn is_animated(&self) -> bool {
+        self.flags & ATTACHMENT_ANIMATED != 0
+    }
+
     /// A sound file (by type, or by extension when Discord didn't say).
     pub fn is_audio(&self) -> bool {
         const EXTENSIONS: [&str; 9] = [".mp3", ".wav", ".ogg", ".opus", ".m4a", ".aac", ".flac", ".wma", ".oga"];

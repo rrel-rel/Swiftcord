@@ -1,6 +1,6 @@
 //! Images through the Windows Imaging Component: decoding (PNG, JPEG, GIF, WebP, BMP…, with GIF and APNG
 //! animation composited into whole frames), resizing, and PNG/JPEG encoding. WIC ships with Windows, so
-//! none of these codecs need to be in the exe.
+//! none of these codecs need to be in the exe. Animated WebP is the exception, read with `image-webp`.
 
 use std::time::Duration;
 
@@ -96,6 +96,9 @@ pub fn decode(bytes: &[u8]) -> Result<Rgba> {
     if is_apng(bytes) {
         return decode_frames(bytes)?.into_iter().next().map(|(f, _)| f).ok_or_else(|| "empty animation".into());
     }
+    if is_animated_webp(bytes) {
+        return webp_frames(bytes, 1)?.into_iter().next().map(|(f, _)| f).ok_or_else(|| "empty animation".into());
+    }
     with_factory(|factory| unsafe {
         let decoder = decoder(factory, bytes)?;
         if decoder.GetContainerFormat().map_err(err)? == GUID_ContainerFormatGif {
@@ -110,6 +113,9 @@ pub fn decode_frames(bytes: &[u8]) -> Result<Vec<(Rgba, Duration)>> {
     if is_apng(bytes) {
         return apng_frames(bytes);
     }
+    if is_animated_webp(bytes) {
+        return webp_frames(bytes, usize::MAX);
+    }
     with_factory(|factory| unsafe {
         let decoder = decoder(factory, bytes)?;
         if decoder.GetContainerFormat().map_err(err)? == GUID_ContainerFormatGif {
@@ -118,6 +124,34 @@ pub fn decode_frames(bytes: &[u8]) -> Result<Vec<(Rgba, Duration)>> {
         let first = pixels(&decoder.GetFrame(0).map_err(err)?.cast().map_err(err)?)?;
         Ok(vec![(first, Duration::from_millis(100))])
     })
+}
+
+/// Whether [`decode`] can give the first frame of this animation well before [`decode_frames`] has them all.
+pub fn first_frame_is_quicker(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"GIF8") || is_animated_webp(bytes)
+}
+
+/// A WebP file whose extended header (`VP8X`) has the animation flag set.
+fn is_animated_webp(bytes: &[u8]) -> bool {
+    bytes.len() > 20 && bytes.starts_with(b"RIFF") && &bytes[8..16] == b"WEBPVP8X" && bytes[20] & 0x02 != 0
+}
+
+/// Up to `limit` of an animated WebP's frames, composited by the decoder.
+fn webp_frames(bytes: &[u8], limit: usize) -> Result<Vec<(Rgba, Duration)>> {
+    let mut decoder = image_webp::WebPDecoder::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    let (width, height) = decoder.dimensions();
+    let size = decoder.output_buffer_size().ok_or("animation too large")?;
+    let has_alpha = decoder.has_alpha();
+    let mut buffer = vec![0u8; size];
+    let mut frames = Vec::new();
+    for _ in 0..(decoder.num_frames() as usize).min(limit) {
+        let delay = decoder.read_frame(&mut buffer).map_err(|e| e.to_string())?;
+        let pixels = if has_alpha { buffer.clone() } else { buffer.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect() };
+        // As with GIFs, like browsers, treat (nearly) zero as 0.1 s.
+        let delay = if delay <= 10 { Duration::from_millis(100) } else { Duration::from_millis(delay as u64) };
+        frames.push((Rgba { width, height, pixels }, delay));
+    }
+    Ok(frames)
 }
 
 /// GIF frames are patches over the previous picture; this composites them into whole frames.
@@ -409,7 +443,7 @@ fn blend_over(dst: &mut [u8], src: &[u8]) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn solid(w: u32, h: u32, rgba: [u8; 4]) -> Rgba {
@@ -479,8 +513,7 @@ mod tests {
     }
 
     /// Two frames: a red 2×2 screen, then its top-left pixel painted blue.
-    #[test]
-    fn composites_gif_frames() {
+    pub(crate) fn two_frame_gif() -> Vec<u8> {
         let mut gif = b"GIF89a".to_vec();
         gif.extend_from_slice(&[2, 0, 2, 0, 0x80, 0, 0, 0xFF, 0, 0, 0, 0, 0xFF]); // 2×2, palette: red, blue
         gif.extend_from_slice(&[0x21, 0xF9, 4, 0, 10, 0, 0, 0]); // 0.1 s
@@ -490,7 +523,66 @@ mod tests {
         gif.extend_from_slice(&[0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0]);
         gif.extend_from_slice(&gif_image_data(&[1]));
         gif.push(0x3B);
+        gif
+    }
 
+    /// An animated WebP: each colour a whole 2×2 frame of `ms`, in lossless data from the encoder.
+    fn animated_webp(colours: &[[u8; 4]], ms: u32) -> Vec<u8> {
+        fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+            out.extend_from_slice(kind);
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(data);
+            if data.len() % 2 == 1 {
+                out.push(0);
+            }
+        }
+        let u24 = |v: u32| v.to_le_bytes()[..3].to_vec();
+        let mut body = b"WEBP".to_vec();
+        let mut vp8x = vec![0x12, 0, 0, 0]; // Alpha and animation.
+        vp8x.extend(u24(1));
+        vp8x.extend(u24(1));
+        chunk(&mut body, b"VP8X", &vp8x);
+        chunk(&mut body, b"ANIM", &[0, 0, 0, 0, 0, 0]);
+        for colour in colours {
+            let mut still = Vec::new();
+            image_webp::WebPEncoder::new(&mut still).encode(&colour.repeat(4), 2, 2, image_webp::ColorType::Rgba8).unwrap();
+            let mut frame = [u24(0), u24(0), u24(1), u24(1), u24(ms)].concat();
+            frame.push(0x02); // Replaces the canvas, rather than blending.
+            frame.extend_from_slice(&still[12..]); // After the file's own header: its VP8L chunk.
+            chunk(&mut body, b"ANMF", &frame);
+        }
+        let mut file = b"RIFF".to_vec();
+        file.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        file.extend(body);
+        file
+    }
+
+    #[test]
+    fn decodes_animated_webp_frames() {
+        let (red, blue) = ([255, 0, 0, 255], [0, 0, 255, 255]);
+        let webp = animated_webp(&[red, blue], 50);
+        assert!(first_frame_is_quicker(&webp));
+        let frames = decode_frames(&webp).unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!((frames[0].0.width, frames[0].0.height), (2, 2));
+        assert_eq!(&frames[0].0.pixels[0..4], &red);
+        assert_eq!(&frames[1].0.pixels[0..4], &blue);
+        assert_eq!(frames[1].1, Duration::from_millis(50));
+        assert_eq!(&decode(&webp).unwrap().pixels[0..4], &red);
+        // Nearly no delay is treated as 0.1 s.
+        assert_eq!(decode_frames(&animated_webp(&[red, blue], 0)).unwrap()[0].1, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn a_still_webp_is_not_taken_for_an_animation() {
+        let mut still = Vec::new();
+        image_webp::WebPEncoder::new(&mut still).encode(&[255; 16], 2, 2, image_webp::ColorType::Rgba8).unwrap();
+        assert!(!is_animated_webp(&still));
+    }
+
+    #[test]
+    fn composites_gif_frames() {
+        let gif = two_frame_gif();
         let frames = decode_frames(&gif).unwrap();
         assert_eq!(frames.len(), 2);
         assert_eq!(frames[1].1, Duration::from_millis(200));

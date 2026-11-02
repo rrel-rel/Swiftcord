@@ -1,5 +1,5 @@
-//! Egui's image decoding, through Windows Imaging Component (see `platform::wic`). Animated GIFs and APNGs
-//! keep all their frames; egui asks for one with a `#index` suffix and reads the timing from
+//! Egui's image decoding, through Windows Imaging Component (see `platform::wic`). Animated GIFs, WebPs and
+//! APNGs keep all their frames; one is asked for with a `#index` suffix (see `image_cache`), with the timing in
 //! `FrameDurations`, as with egui_extras' loaders.
 
 use std::collections::HashMap;
@@ -57,6 +57,21 @@ impl ImageLoader for WicLoader {
                     self.cache.lock().insert(uri.to_owned(), Poll::Pending);
                     let (cache, ctx, uri, limit) = (self.cache.clone(), ctx.clone(), uri.to_owned(), self.limit.clone());
                     let decode = move || {
+                        // Unless it was forgotten meanwhile.
+                        let publish = |result: Result<Frames, String>| {
+                            if let Some(entry) = cache.lock().get_mut(&uri) {
+                                *entry = Poll::Ready(result);
+                                ctx.request_repaint();
+                            }
+                        };
+                        // Loading again after being forgotten: the old timing would ask for frames not there yet.
+                        ctx.data_mut(|d| d.remove_temp::<FrameDurations>(Id::unique(&uri)));
+                        // A long animation takes a while: its first frame shows until the rest are ready.
+                        if crate::platform::wic::first_frame_is_quicker(&bytes) {
+                            if let Ok(first) = crate::platform::wic::decode(&bytes) {
+                                publish(Ok(Arc::new(vec![Arc::new(first.to_color_image())])));
+                            }
+                        }
                         let result = crate::platform::wic::decode_frames(&bytes).map(|frames| {
                             if frames.len() > 1 {
                                 let durations = FrameDurations::new(frames.iter().map(|(_, d)| *d).collect());
@@ -64,11 +79,7 @@ impl ImageLoader for WicLoader {
                             }
                             Arc::new(frames.into_iter().map(|(f, _)| Arc::new(f.to_color_image())).collect::<Vec<_>>())
                         });
-                        // Unless it was forgotten meanwhile.
-                        if let Some(entry) = cache.lock().get_mut(&uri) {
-                            *entry = Poll::Ready(result);
-                            ctx.request_repaint();
-                        }
+                        publish(result);
                     };
                     self.rt.spawn(async move {
                         let _permit = limit.acquire_owned().await;

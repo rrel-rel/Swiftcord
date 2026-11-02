@@ -38,6 +38,18 @@ fn meter(ui: &mut Ui, level_db: f32, threshold_db: f32, open: bool) {
     ui.painter().vline(tx, rect.y_range().expand(3.0), egui::Stroke::new(2.0, theme::HEADER()));
 }
 
+/// A volume (0 to 1) as a whole percentage.
+fn volume_slider(ui: &mut Ui, volume: &mut f32) -> egui::Response {
+    // Rounded first: the slider rounds what it's given and calls that a change, and many levels come back from
+    // a float just off a whole number (0.3 × 100), which would count as a change on every frame.
+    let mut percent = (*volume * 100.0).round();
+    let r = ui.add(egui::Slider::new(&mut percent, 0.0..=100.0).suffix("%").integer());
+    if r.changed() {
+        *volume = percent / 100.0;
+    }
+    r
+}
+
 pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
     let Some(draft) = &mut uis.settings_draft else { return };
     let mut open = true;
@@ -132,9 +144,7 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
                 // Each heard at its new level when let go (or changed with the keyboard).
                 let mut slider = |ui: &mut Ui, label: &str, volume: &mut f32, sample: Sound| {
                     ui.label(label);
-                    let mut percent = *volume * 100.0;
-                    let r = ui.add(egui::Slider::new(&mut percent, 0.0..=100.0).suffix("%").integer());
-                    *volume = percent / 100.0;
+                    let r = volume_slider(ui, volume);
                     if r.drag_stopped() || (r.changed() && !r.dragged()) {
                         actions.push(Action::PreviewSound(sample, *volume));
                     }
@@ -211,4 +221,25 @@ fn device_combo(ui: &mut Ui, label: &str, value: &mut Option<String>, devices: &
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A change plays a sample of the sound, so a slider left alone must never report one.
+    #[test]
+    fn a_volume_slider_left_alone_never_changes() {
+        let ctx = egui::Context::default();
+        let levels = (0..=100).map(|n| n as f32 / 100.0).chain([0.300_000_1, 0.149_999_9, 1.0 / 3.0]);
+        for start in levels {
+            let (mut volume, mut changed) = (start, false);
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                changed = volume_slider(ui, &mut volume).changed();
+            });
+            out.textures_delta.clear();
+            assert!(!changed, "{start} reported a change");
+            assert_eq!(volume, start);
+        }
+    }
 }

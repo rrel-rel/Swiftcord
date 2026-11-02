@@ -643,13 +643,56 @@ fn reply_bar(ui: &mut Ui, state: &swiftcord_core::state::State, c: &Channel, rid
     }
 }
 
+/// How long is left of a timeout, rounded up: it isn't over until it's over.
+fn time_left(seconds: i64) -> String {
+    let minutes = (seconds + 59) / 60;
+    match minutes {
+        ..=0 | 1 => "less than a minute".to_owned(),
+        m if m < 60 => format!("{m} min"),
+        m if m < 60 * 24 => format!("{} h {} min", m / 60, m % 60),
+        m => format!("{} d {} h", m / (60 * 24), m % (60 * 24) / 60),
+    }
+}
+
+/// In place of the message box when there's no sending here: why, and any more to say about it.
+fn composer_notice(ui: &mut Ui, title: Option<&str>, text: &str) {
+    egui::Frame::new().fill(theme::INPUT()).stroke(theme::field_stroke()).corner_radius(8).inner_margin(egui::Margin::symmetric(14, 12)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        if let Some(title) = title {
+            ui.label(RichText::new(title).font(theme::font_semibold(14.5)).color(theme::RED()));
+        }
+        ui.label(RichText::new(text).color(theme::FAINT()));
+    });
+}
+
 fn composer(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &Catalog, c: &Channel, perms: u64, actions: &mut Vec<Action>) {
     let state = &s.state;
+    // What moderators have done to us comes first: it's why we can't send, and it says for how long.
+    let me = c.guild_id.zip(state.me.as_ref()).and_then(|(guild, me)| state.member(guild, me.id)).filter(|_| perms & perm::ADMINISTRATOR == 0);
+    let now = chrono::Utc::now();
+    if let Some(until) = me.and_then(|m| m.timed_out_until(now)) {
+        let local = until.with_timezone(&chrono::Local);
+        let when = if local.date_naive() == chrono::Local::now().date_naive() {
+            local.format("%-I:%M %p").to_string()
+        } else {
+            local.format("%-I:%M %p on %B %-d").to_string()
+        };
+        let left = (until - now).num_seconds();
+        composer_notice(
+            ui,
+            Some("You are currently timed out in this server"),
+            &format!("You can read messages, but can't send them, react or join voice for {} (until {when}).", time_left(left)),
+        );
+        // The time left goes down, and when it runs out the message box comes back.
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs((left.max(0) as u64 + 1).min(30)));
+        return;
+    }
+    if me.is_some_and(|m| m.quarantined()) {
+        composer_notice(ui, Some("AutoMod has quarantined you in this server"), "You can't send messages here until you change the part of your profile it flagged.");
+        return;
+    }
     if perms & perm::SEND_MESSAGES == 0 {
-        egui::Frame::new().fill(theme::INPUT()).stroke(theme::field_stroke()).corner_radius(8).inner_margin(egui::Margin::symmetric(14, 12)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new("You do not have permission to send messages in this channel.").color(theme::FAINT()));
-        });
+        composer_notice(ui, None, "You do not have permission to send messages in this channel.");
         return;
     }
     let edit_id = egui::Id::unique(("composer", c.id));
@@ -1023,5 +1066,21 @@ fn pins_panel(ui: &mut Ui, s: &Session, uis: &mut UiState, c: &Channel, pins: Op
     crate::ui::widgets::scrollbar(ui, &scroll);
     if let Some(message) = jump {
         actions.push(Action::JumpTo { channel: c.id, message: Some(message) });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::time_left;
+
+    #[test]
+    fn time_left_rounds_up() {
+        assert_eq!(time_left(0), "less than a minute");
+        assert_eq!(time_left(45), "less than a minute");
+        assert_eq!(time_left(61), "2 min");
+        assert_eq!(time_left(600), "10 min");
+        assert_eq!(time_left(3600), "1 h 0 min");
+        assert_eq!(time_left(3601), "1 h 1 min");
+        assert_eq!(time_left(86_400 * 7), "7 d 0 h");
     }
 }

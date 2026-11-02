@@ -81,15 +81,36 @@ pub fn sticker_file(id: Snowflake, format_type: u8) -> Option<String> {
     }
 }
 
-/// A resized copy of an image from Discord's media proxy. Other hosts don't understand the parameters, so
-/// their URLs are left alone.
+/// A resized copy of an image from Discord's media proxy, as a WebP to save memory; GIFs and WebPs stay animated.
+/// Other hosts don't understand the parameters, so their URLs are left alone.
 pub fn media_proxy(proxy_url: &str, width: u32, height: u32) -> String {
     let host = proxy_url.split("://").nth(1).and_then(|r| r.split('/').next()).unwrap_or("");
     if !(host == "media.discordapp.net" || host.ends_with(".discordapp.net") || host == "cdn.discordapp.com") {
         return proxy_url.to_owned();
     }
     let sep = if proxy_url.contains('?') { '&' } else { '?' };
-    format!("{proxy_url}{sep}width={width}&height={height}&format=webp")
+    let path = proxy_url.split(['?', '#']).next().unwrap_or("").to_ascii_lowercase();
+    if path.ends_with(".gif") {
+        format!("{proxy_url}{sep}width={width}&height={height}")
+    } else if path.ends_with(".webp") && !proxy_url.contains("animated=") {
+        format!("{proxy_url}{sep}width={width}&height={height}&format=webp&animated=true")
+    } else {
+        format!("{proxy_url}{sep}width={width}&height={height}&format=webp")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_media_proxy_keeps_animations_animated() {
+        let proxy = "https://media.discordapp.net/attachments/1/2";
+        assert_eq!(media_proxy(&format!("{proxy}/a.png?ex=1"), 10, 20), format!("{proxy}/a.png?ex=1&width=10&height=20&format=webp"));
+        assert_eq!(media_proxy(&format!("{proxy}/a.GIF?ex=1"), 10, 20), format!("{proxy}/a.GIF?ex=1&width=10&height=20"));
+        assert_eq!(media_proxy(&format!("{proxy}/a.webp"), 10, 20), format!("{proxy}/a.webp?width=10&height=20&format=webp&animated=true"));
+        assert_eq!(media_proxy("https://example.com/a.gif", 10, 20), "https://example.com/a.gif");
+    }
 }
 
 pub fn twemoji(emoji: &str) -> String {
