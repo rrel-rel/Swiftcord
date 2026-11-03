@@ -24,6 +24,8 @@ pub struct Settings {
     pub message_sounds: bool,
     /// Sounds for calls: ringing, and people joining or leaving yours.
     pub call_sounds: bool,
+    /// Play the custom join sounds people set in Discord.
+    pub join_sounds: bool,
     /// How loud people are in calls, by user (1.0 as sent; 0–2), as set from their voice menu.
     pub user_volumes: std::collections::HashMap<u64, f32>,
     /// People muted for us alone in calls.
@@ -58,6 +60,7 @@ impl Default for Settings {
             noise_suppression: true,
             message_sounds: true,
             call_sounds: true,
+            join_sounds: true,
             user_volumes: Default::default(),
             muted_users: Default::default(),
             start_minimized: true,

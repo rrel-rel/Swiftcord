@@ -253,6 +253,12 @@ fn send_preview(app: &mut App, p: &swiftcord_voice::video::Picture) {
     });
 }
 
+impl Sharing {
+    pub fn voice(&self) -> Option<&Voice> {
+        self.voice.as_ref()
+    }
+}
+
 pub fn tick(app: &mut App) {
     let stats = app.sharing.as_ref().and_then(|s| s.voice.as_ref()).and_then(|v| v.share_stats());
     if let Some(view) = &mut app.ui.share {

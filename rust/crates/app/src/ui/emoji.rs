@@ -380,8 +380,9 @@ fn skin_tone_button(ui: &mut Ui, catalog: &mut Catalog) -> bool {
 pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog, actions: &mut Vec<Action>) {
     let Some(target) = uis.emoji_picker else { return };
     let ctx = ui.ctx().clone();
-    let size = Vec2::new(COLUMNS as f32 * CELL + 24.0, 420.0);
     let screen = ctx.content_rect();
+    // Exactly the emoji, the scrollbar beside them and the frame's margins.
+    let size = Vec2::new(COLUMNS as f32 * CELL + ui.spacing().scroll.content_margin.right as f32 + 20.0, 420.0_f32.min(screen.height() - 16.0));
     let mut pos = target.at() - Vec2::new(size.x, size.y + 8.0);
     pos.x = pos.x.clamp(screen.left() + 8.0, screen.right() - size.x - 8.0);
     pos.y = pos.y.clamp(screen.top() + 8.0, screen.bottom() - size.y - 8.0);
@@ -395,7 +396,7 @@ pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog
             ui.set_width(size.x - 20.0);
             ui.set_height(size.y - 20.0);
             ui.horizontal(|ui| {
-                let r = ui.add(egui::TextEdit::singleline(&mut uis.emoji_search).hint_text("Find the perfect emoji").desired_width(ui.available_width() - 40.0));
+                let r = ui.add(egui::TextEdit::singleline(&mut uis.emoji_search).hint_text("Find the perfect emoji").desired_width(ui.available_width() - 48.0));
                 if !r.has_focus() && uis.emoji_search.is_empty() {
                     r.request_focus();
                 }
@@ -417,6 +418,9 @@ pub fn show(ui: &mut Ui, state: &State, uis: &mut UiState, catalog: &mut Catalog
                     ui.horizontal(|ui| {
                         ui.set_height(CELL);
                         ui.spacing_mut().item_spacing.x = 0.0;
+                        // The theme's padding would make each button wider than its cell, and the rows wider
+                        // than the picker.
+                        ui.spacing_mut().button_padding = Vec2::ZERO;
                         for item in row {
                             match item {
                                 Item::Header(t) => {

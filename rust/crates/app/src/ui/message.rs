@@ -684,38 +684,39 @@ pub(crate) fn attachment(ui: &mut Ui, a: &Attachment, cx: &mut Ctx) {
     });
 }
 
+/// A line of embed text that opens `url` when clicked, if it has one.
+fn embed_link_line(ui: &mut Ui, text: &str, format: bool, url: Option<&String>, id: (&str, Snowflake), mcx: &mut Cx) {
+    ui.scope(|ui| {
+        ui.style_mut().interaction.selectable_labels = false;
+        let rect = md::embed_line(ui, text, format, true, mcx);
+        if let Some(u) = url {
+            if ui.interact(rect, ui.scope_id().with(id), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                mcx.actions.push(Action::OpenLink(u.clone()));
+            }
+        }
+    });
+}
+
 fn embed_text(ui: &mut Ui, e: &Embed, msg_id: Snowflake, cx: &mut Ctx) {
+    let mut mcx = Cx { state: cx.state, guild: cx.guild, message: msg_id, revealed: &mut cx.uis.revealed, actions: cx.actions, size: 14.0, color: theme::TEXT(), jumbo: false };
     if let Some(p) = e.provider.as_ref().filter(|p| !p.name.is_empty()) {
-        ui.label(RichText::new(&p.name).size(12.0).color(theme::MUTED()));
+        (mcx.size, mcx.color) = (12.0, theme::MUTED());
+        md::embed_line(ui, &p.name, false, false, &mut mcx);
     }
     if let Some(a) = e.author.as_ref().filter(|a| !a.name.is_empty()) {
+        (mcx.size, mcx.color) = (13.5, theme::HEADER());
         ui.horizontal(|ui| {
             if let Some(icon) = &a.icon_url {
                 widgets::avatar(ui, icon, 20.0);
             }
-            // Wrapped: a long author line in a narrow column mustn't widen it.
-            let r = ui.add(egui::Label::new(RichText::new(&a.name).font(theme::font_semibold(13.5)).color(theme::HEADER())).wrap().selectable(false).sense(Sense::click()));
-            if let Some(u) = &a.url {
-                if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                    cx.actions.push(Action::OpenLink(u.clone()));
-                }
-            }
+            ui.vertical(|ui| embed_link_line(ui, &a.name, false, a.url.as_ref(), ("embed-author", msg_id), &mut mcx));
         });
     }
     if let Some(t) = &e.title {
-        let rt = RichText::new(t).font(theme::font_semibold(15.5));
-        match &e.url {
-            Some(u) => {
-                if ui.add(egui::Label::new(rt.color(theme::LINK())).selectable(false).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                    cx.actions.push(Action::OpenLink(u.clone()));
-                }
-            }
-            None => {
-                ui.label(rt.color(theme::HEADER()));
-            }
-        }
+        (mcx.size, mcx.color) = (15.5, if e.url.is_some() { theme::LINK() } else { theme::HEADER() });
+        embed_link_line(ui, t, true, e.url.as_ref(), ("embed-title", msg_id), &mut mcx);
     }
-    let mut mcx = Cx { state: cx.state, guild: cx.guild, message: msg_id, revealed: &mut cx.uis.revealed, actions: cx.actions, size: 14.0, color: theme::TEXT(), jumbo: false };
+    (mcx.size, mcx.color) = (14.0, theme::TEXT());
     if let Some(d) = e.description.as_deref().filter(|d| !d.is_empty()) {
         md::blocks(ui, &parsed(msg_id, d), &mut mcx);
     }
@@ -1014,7 +1015,8 @@ fn embed(ui: &mut Ui, e: &Embed, extra_images: &[&EmbedMedia], msg_id: Snowflake
                 if let Some(ts) = e.timestamp {
                     text = format!("{text} • {}", time_label(ts));
                 }
-                ui.label(RichText::new(text).size(11.5).color(theme::MUTED()));
+                let mut mcx = Cx { state: cx.state, guild: cx.guild, message: msg_id, revealed: &mut cx.uis.revealed, actions: cx.actions, size: 11.5, color: theme::MUTED(), jumbo: false };
+                ui.vertical(|ui| md::embed_line(ui, &text, false, false, &mut mcx));
             });
         }
     });

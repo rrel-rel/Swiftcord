@@ -10,6 +10,8 @@ pub mod members;
 pub mod message;
 pub mod rail;
 pub mod search;
+pub mod server_menu;
+pub mod stats;
 pub mod shell;
 pub mod stream;
 pub mod suggest;

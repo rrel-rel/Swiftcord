@@ -68,6 +68,38 @@ pub struct ShareStats {
     pub height: u32,
     /// Frames captured and encoded per second (lower than asked when the machine can't keep up).
     pub fps: f32,
+    /// The frame rate asked for.
+    pub target_fps: u32,
+    /// The video bitrate asked for, in bits per second.
+    pub target_bitrate: u32,
+    /// Average time per frame on each step, in milliseconds.
+    pub capture_ms: f32,
+    pub convert_ms: f32,
+    pub encode_ms: f32,
+    /// Which way the screen is being captured.
+    pub method: &'static str,
+}
+
+/// Running totals for a connection, read by [`Voice::counters`]; rates come from comparing two readings.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Counters {
+    pub audio_sent_packets: u64,
+    pub audio_sent_bytes: u64,
+    pub audio_received_packets: u64,
+    pub audio_received_bytes: u64,
+    /// Gaps in sequence numbers of incoming audio.
+    pub audio_lost_packets: u64,
+    pub audio_undecryptable: u64,
+    pub video_sent_frames: u64,
+    pub video_sent_bytes: u64,
+    pub video_received_frames: u64,
+    pub video_received_bytes: u64,
+    pub video_lost_frames: u64,
+    pub video_decoded_frames: u64,
+    /// Total time spent decoding video, in microseconds.
+    pub video_decode_micros: u64,
+    pub video_width: u32,
+    pub video_height: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -168,6 +200,10 @@ impl Voice {
 
     pub fn self_speaking(&self) -> bool {
         self.shared.self_speaking.load(Ordering::Relaxed)
+    }
+
+    pub fn counters(&self) -> Counters {
+        self.shared.counters.read()
     }
 
     pub fn ping_ms(&self) -> u32 {

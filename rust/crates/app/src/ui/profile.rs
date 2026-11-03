@@ -17,6 +17,8 @@ use crate::ui::widgets;
 
 const WIDTH: f32 = 300.0;
 const AVATAR: f32 = 80.0;
+/// How far the avatar reaches up over the banner; the names beside it stay clear of the banner.
+const AVATAR_OVERLAP: f32 = 8.0;
 /// Banners are 5:2.
 const BANNER: f32 = WIDTH * 2.0 / 5.0;
 const NO_BANNER: f32 = 60.0;
@@ -89,43 +91,43 @@ pub fn show(ui: &egui::Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Act
             }
         }
 
-        // Avatar, overlapping the banner, ringed with the card colour, with its decoration over it.
-        let center = egui::pos2(banner.left() + 16.0 + AVATAR / 2.0, banner.bottom());
+        // Avatar, overlapping the banner a little, ringed with the card colour, with its decoration over it.
+        let center = egui::pos2(banner.left() + 16.0 + AVATAR / 2.0, banner.bottom() + AVATAR / 2.0 - AVATAR_OVERLAP);
         let avatar = Rect::from_center_size(center, Vec2::splat(AVATAR));
         ui.painter().rect_filled(avatar.expand(6.0), 0, bg);
         widgets::paint_avatar_with_status(ui, state.avatar_url(&user, guild, 128), avatar, state.presence(user_id), state.on_mobile(user_id), bg);
         if let Some(asset) = &view.decoration {
             egui::Image::from_uri(cdn::avatar_decoration(asset)).show_loading_spinner(false).paint_at(ui, avatar.expand(AVATAR * 0.1));
         }
-        // Badges sit to the right of the avatar, below the banner.
-        if !badges.is_empty() {
-            let row = Rect::from_min_size(egui::pos2(avatar.right() + 16.0, banner.bottom() + 8.0), Vec2::new(WIDTH - AVATAR - 48.0, 24.0));
-            ui.scope_builder(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
-                egui::Frame::new().fill(Color32::from_black_alpha(80)).corner_radius(6).inner_margin(Margin::symmetric(4, 2)).show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    for b in badges.iter().rev() {
-                        ui.add(egui::Image::from_uri(cdn::badge_icon(&b.icon)).fit_to_exact_size(Vec2::splat(20.0)).show_loading_spinner(false).sense(Sense::hover()))
-                            .on_hover_text(&b.description);
-                    }
-                });
-            });
+        // Names to the right of the avatar, centred on it, cut short if they don't fit.
+        let nick = guild.map(|g| state.display_name(user_id, Some(g))).filter(|n| n != user.display_name());
+        let mut tag = user.tag();
+        if !view.pronouns.is_empty() {
+            tag.push_str(&format!(" • {}", view.pronouns));
         }
-        ui.add_space(AVATAR / 2.0 + 10.0);
+        let mut lines = vec![(user.display_name().to_owned(), theme::font_bold(18.0), theme::HEADER()), (tag, theme::font(13.5), theme::TEXT())];
+        lines.extend(nick.map(|n| (format!("Known here as {n}"), theme::font(12.0), theme::MUTED())));
+        let names = Rect::from_min_max(egui::pos2(avatar.right() + 12.0, avatar.top()), egui::pos2(banner.right() - 16.0, avatar.bottom()));
+        let mut names = ui.new_child(egui::UiBuilder::new().max_rect(names).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        widgets::centered_lines(&mut names, 0.0, &lines);
+        ui.add_space(AVATAR - AVATAR_OVERLAP + 8.0);
 
         egui::Frame::new().inner_margin(Margin { left: 16, right: 16, top: 0, bottom: 16 }).show(ui, |ui| {
             ui.style_mut().interaction.selectable_labels = true;
             ui.set_width(WIDTH - 32.0);
-            ui.label(RichText::new(user.display_name()).font(theme::font_bold(20.0)).color(theme::HEADER()));
-            let nick = guild.map(|g| state.display_name(user_id, Some(g))).filter(|n| n != user.display_name());
-            let mut line = user.tag();
-            if !view.pronouns.is_empty() {
-                line.push_str(&format!(" • {}", view.pronouns));
+            // Badges under the avatar, wrapping onto more rows if there are many.
+            if !badges.is_empty() {
+                egui::Frame::new().fill(Color32::from_black_alpha(80)).corner_radius(6).inner_margin(Margin::symmetric(4, 2)).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::splat(2.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for b in &badges {
+                            ui.add(egui::Image::from_uri(cdn::badge_icon(&b.icon)).fit_to_exact_size(Vec2::splat(20.0)).show_loading_spinner(false).sense(Sense::hover()))
+                                .on_hover_text(&b.description);
+                        }
+                    });
+                });
+                ui.add_space(8.0);
             }
-            ui.label(RichText::new(line).size(13.5).color(theme::TEXT()));
-            if let Some(n) = nick {
-                ui.label(RichText::new(format!("Known here as {n}")).size(12.0).color(theme::MUTED()));
-            }
-            ui.add_space(8.0);
 
             egui::Frame::new().fill(Color32::from_black_alpha(70)).corner_radius(8).inner_margin(12).show(ui, |ui| {
                 ui.set_width(ui.available_width());

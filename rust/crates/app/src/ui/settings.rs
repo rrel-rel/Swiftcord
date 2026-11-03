@@ -83,8 +83,8 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
             ui.add(egui::Slider::new(&mut draft.settings.vad_threshold_db, -80.0..=-10.0).suffix(" dB").text("transmit above"));
             ui.label(RichText::new("Lower values pick up quieter speech, and more background noise.").small().color(theme::FAINT()));
             ui.add_space(4.0);
-            ui.checkbox(&mut draft.settings.noise_suppression, "Noise suppression");
-            ui.label(RichText::new("Removes background noise like fans, hum and typing from your microphone.").small().color(theme::FAINT()));
+            ui.checkbox(&mut draft.settings.noise_suppression, "Noise suppression (RNNoise)");
+            ui.label(RichText::new("Removes background noise like fans, hum and typing from your microphone, on this PC.").small().color(theme::FAINT()));
 
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -140,6 +140,7 @@ pub fn show(ui: &Ui, uis: &mut UiState, actions: &mut Vec<Action>) {
             ui.label(RichText::new("SOUNDS").font(theme::font_semibold(12.0)).color(theme::MUTED()));
             ui.checkbox(&mut draft.settings.message_sounds, "Message sounds");
             ui.checkbox(&mut draft.settings.call_sounds, "Call sounds (ringing, people joining and leaving)");
+            ui.checkbox(&mut draft.settings.join_sounds, "Custom join sounds people have set in Discord");
             egui::Grid::new("sound-volumes").num_columns(2).show(ui, |ui| {
                 // Each heard at its new level when let go (or changed with the keyboard).
                 let mut slider = |ui: &mut Ui, label: &str, volume: &mut f32, sample: Sound| {

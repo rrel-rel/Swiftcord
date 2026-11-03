@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::UdpSocket;
 use std::num::NonZeroU16;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -52,7 +52,51 @@ mod op {
 }
 
 /// State shared between the gateway task, the media threads and the handle.
+/// What [`crate::Counters`] reads, updated from the threads doing the work.
+#[derive(Default)]
+pub(crate) struct AtomicCounters {
+    pub audio_sent_packets: AtomicU64,
+    pub audio_sent_bytes: AtomicU64,
+    pub audio_received_packets: AtomicU64,
+    pub audio_received_bytes: AtomicU64,
+    pub audio_lost_packets: AtomicU64,
+    pub audio_undecryptable: AtomicU64,
+    pub video_sent_frames: AtomicU64,
+    pub video_sent_bytes: AtomicU64,
+    pub video_received_frames: AtomicU64,
+    pub video_received_bytes: AtomicU64,
+    pub video_lost_frames: AtomicU64,
+    pub video_decoded_frames: AtomicU64,
+    pub video_decode_micros: AtomicU64,
+    pub video_width: AtomicU32,
+    pub video_height: AtomicU32,
+}
+
+impl AtomicCounters {
+    pub fn read(&self) -> crate::Counters {
+        let r = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        crate::Counters {
+            audio_sent_packets: r(&self.audio_sent_packets),
+            audio_sent_bytes: r(&self.audio_sent_bytes),
+            audio_received_packets: r(&self.audio_received_packets),
+            audio_received_bytes: r(&self.audio_received_bytes),
+            audio_lost_packets: r(&self.audio_lost_packets),
+            audio_undecryptable: r(&self.audio_undecryptable),
+            video_sent_frames: r(&self.video_sent_frames),
+            video_sent_bytes: r(&self.video_sent_bytes),
+            video_received_frames: r(&self.video_received_frames),
+            video_received_bytes: r(&self.video_received_bytes),
+            video_lost_frames: r(&self.video_lost_frames),
+            video_decoded_frames: r(&self.video_decoded_frames),
+            video_decode_micros: r(&self.video_decode_micros),
+            video_width: self.video_width.load(Ordering::Relaxed),
+            video_height: self.video_height.load(Ordering::Relaxed),
+        }
+    }
+}
+
 pub(crate) struct Shared {
+    pub(crate) counters: AtomicCounters,
     pub muted: AtomicBool,
     pub deafened: Arc<AtomicBool>,
     pub stop: AtomicBool,
@@ -103,6 +147,7 @@ impl Shared {
             deafened: Arc::new(AtomicBool::new(settings.deafened)),
             stop: AtomicBool::new(false),
             mixer: Arc::new(Mixer::default()),
+            counters: AtomicCounters::default(),
             ping_ms: AtomicU32::new(0),
             self_speaking: AtomicBool::new(false),
             input_db: AtomicU32::new((-100f32).to_bits()),
@@ -808,6 +853,8 @@ fn spawn_sender(
             let mut send = |payload: &[u8], ts: u32| {
                 if let Some(p) = rtp::seal(&cipher, rtp::OPUS_PAYLOAD_TYPE, seq, ts, ssrc, nonce.fetch_add(1, Ordering::Relaxed), payload) {
                     let _ = socket.send(&p);
+                    shared.counters.audio_sent_packets.fetch_add(1, Ordering::Relaxed);
+                    shared.counters.audio_sent_bytes.fetch_add(p.len() as u64, Ordering::Relaxed);
                 }
                 seq = seq.wrapping_add(1);
             };
@@ -939,6 +986,8 @@ fn spawn_share_audio(media: &Media, cipher: Arc<Cipher>, target: crate::loopback
                     let Some(p) = protect_opus(&shared, &packet[..n]) else { continue };
                     if let Some(sealed) = rtp::seal(&cipher, rtp::OPUS_PAYLOAD_TYPE, seq, ts, ssrc, shared.nonce.fetch_add(1, Ordering::Relaxed), &p) {
                         let _ = socket.send(&sealed);
+                        shared.counters.audio_sent_packets.fetch_add(1, Ordering::Relaxed);
+                        shared.counters.audio_sent_bytes.fetch_add(sealed.len() as u64, Ordering::Relaxed);
                     }
                     seq = seq.wrapping_add(1);
                 }
@@ -1006,9 +1055,15 @@ fn spawn_video_decoder(
                 batch.extend(frames.try_iter());
                 let last = batch.len() - 1;
                 for (i, frame) in batch.iter().enumerate() {
-                    match decoder.decode(&frame.data, i == last) {
+                    let began = Instant::now();
+                    let decoded = decoder.decode(&frame.data, i == last);
+                    shared.counters.video_decode_micros.fetch_add(began.elapsed().as_micros() as u64, Ordering::Relaxed);
+                    shared.counters.video_decoded_frames.fetch_add(1, Ordering::Relaxed);
+                    match decoded {
                         Ok(pictures) => {
                             if let Some(p) = pictures.into_iter().last() {
+                                shared.counters.video_width.store(p.width as u32, Ordering::Relaxed);
+                                shared.counters.video_height.store(p.height as u32, Ordering::Relaxed);
                                 if (p.width, p.height) != size {
                                     size = (p.width, p.height);
                                     tracing::info!("stream video is {}x{}", p.width, p.height);
@@ -1058,6 +1113,7 @@ fn spawn_capture(
             let ts_base = rand::random::<u32>();
             let mut next = start;
             let (mut frames, mut window_start, mut last_preview) = (0u32, Instant::now(), Instant::now() - Duration::from_secs(1));
+            let (mut capture_time, mut convert_time, mut encode_time) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
             while !shared.stop.load(Ordering::Relaxed) {
                 let now = Instant::now();
                 if now < next {
@@ -1067,25 +1123,34 @@ fn spawn_capture(
                 if next < Instant::now() {
                     next = Instant::now();
                 }
+                let began = Instant::now();
                 let Some(frame) = capturer.grab() else {
                     let _ = cmd.send(Cmd::End("The shared window was closed.".into()));
                     return;
                 };
+                capture_time += began.elapsed();
                 if last_preview.elapsed() > Duration::from_millis(500) {
                     last_preview = Instant::now();
                     *shared.video.lock() = Some(preview(&frame));
                     events(Event::VideoFrame);
                 }
+                let began = Instant::now();
                 let nv12 = video::bgra_to_nv12(frame.bgra, w, h);
+                convert_time += began.elapsed();
                 if shared.keyframe.swap(false, Ordering::Relaxed) {
                     encoder.force_keyframe();
                 }
                 // RTP video runs on a 90 kHz clock.
                 let timestamp = ts_base.wrapping_add((start.elapsed().as_secs_f64() * 90_000.0) as u32);
-                match encoder.encode(&nv12) {
+                let began = Instant::now();
+                let encoded = encoder.encode(&nv12);
+                encode_time += began.elapsed();
+                match encoded {
                     Ok(units) => {
                         for data in units {
                             let keyframe = video::nal_units(&data).iter().any(|n| n[0] & 0x1f == 5);
+                            shared.counters.video_sent_frames.fetch_add(1, Ordering::Relaxed);
+                            shared.counters.video_sent_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
                             if out.try_send(video::EncodedFrame { data, timestamp, keyframe }).is_err() {
                                 // The sender is behind; the next frames would reference this one.
                                 shared.keyframe.store(true, Ordering::Relaxed);
@@ -1097,8 +1162,20 @@ fn spawn_capture(
                 frames += 1;
                 if window_start.elapsed() >= Duration::from_secs(2) {
                     let fps = frames as f32 / window_start.elapsed().as_secs_f32();
-                    *shared.share_stats.lock() = Some(crate::ShareStats { width: w as u32, height: h as u32, fps });
+                    let per_frame = |t: Duration| t.as_secs_f32() * 1000.0 / frames.max(1) as f32;
+                    *shared.share_stats.lock() = Some(crate::ShareStats {
+                        width: w as u32,
+                        height: h as u32,
+                        fps,
+                        target_fps: share.fps,
+                        target_bitrate: share.bitrate,
+                        capture_ms: per_frame(capture_time),
+                        convert_ms: per_frame(convert_time),
+                        encode_ms: per_frame(encode_time),
+                        method: capturer.method(),
+                    });
                     (frames, window_start) = (0, Instant::now());
+                    (capture_time, convert_time, encode_time) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
                 }
             }
         })
@@ -1161,6 +1238,8 @@ fn spawn_camera(
                         Ok(units) => {
                             for data in units {
                                 let keyframe = video::nal_units(&data).iter().any(|n| n[0] & 0x1f == 5);
+                                shared.counters.video_sent_frames.fetch_add(1, Ordering::Relaxed);
+                                shared.counters.video_sent_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
                                 if out.try_send(video::EncodedFrame { data, timestamp, keyframe }).is_err() {
                                     shared.keyframe.store(true, Ordering::Relaxed);
                                 }
@@ -1384,6 +1463,7 @@ fn spawn_receiver(
             let mut decrypt_failures = 0u64;
             // Audio packets that couldn't be decrypted (end-to-end), logged now and then for bug reports.
             let (mut audio_packets, mut audio_undecryptable, mut last_audio_log) = (0u64, 0u64, Instant::now());
+            let mut audio_seqs: HashMap<u32, u16> = HashMap::new();
             let mut dropped_frames = 0u64;
             let mut unknown: HashMap<u8, u64> = HashMap::new();
             // RTCP shares the key; start its nonce counter far from the (unused) RTP one.
@@ -1429,8 +1509,18 @@ fn spawn_receiver(
                                 continue;
                             }
                             audio_packets += 1;
+                            shared.counters.audio_received_packets.fetch_add(1, Ordering::Relaxed);
+                            shared.counters.audio_received_bytes.fetch_add(p.payload.len() as u64, Ordering::Relaxed);
+                            if let Some(last) = audio_seqs.insert(p.ssrc, p.seq) {
+                                // A small jump forward is loss; anything else is a late packet or a restart.
+                                let gap = p.seq.wrapping_sub(last).wrapping_sub(1);
+                                if gap < 1000 {
+                                    shared.counters.audio_lost_packets.fetch_add(gap as u64, Ordering::Relaxed);
+                                }
+                            }
                             let Some(opus) = e2ee_decrypt(&shared, user, MediaType::AUDIO, p.payload) else {
                                 audio_undecryptable += 1;
+                                shared.counters.audio_undecryptable.fetch_add(1, Ordering::Relaxed);
                                 if last_audio_log.elapsed() > Duration::from_secs(10) {
                                     last_audio_log = Instant::now();
                                     tracing::info!("audio: {audio_undecryptable} of {audio_packets} packets couldn't be decrypted (dropped)");
@@ -1492,6 +1582,8 @@ fn spawn_receiver(
                     // Whose video this is: the streamer's, or in a call the person whose camera this SSRC carries.
                     let sender = stream_owner.or_else(|| shared.video_users.lock().get(&ssrc).copied());
                     for mut frame in rx.poll() {
+                        shared.counters.video_received_frames.fetch_add(1, Ordering::Relaxed);
+                        shared.counters.video_received_bytes.fetch_add(frame.data.len() as u64, Ordering::Relaxed);
                         // DAVE encrypts whole frames, so decryption happens after reassembly.
                         match e2ee_decrypt(&shared, sender, MediaType::VIDEO, std::mem::take(&mut frame.data)) {
                             Some(data) => {
@@ -1534,6 +1626,9 @@ fn spawn_receiver(
                     }
                 }
 
+                if !receivers.is_empty() {
+                    shared.counters.video_lost_frames.store(receivers.values().map(|r| r.stats.lost_frames).sum(), Ordering::Relaxed);
+                }
                 if !receivers.is_empty() && last_stats.elapsed() > Duration::from_secs(10) {
                     last_stats = Instant::now();
                     // Cameras that were turned off: drop their decoders and reassembly state.

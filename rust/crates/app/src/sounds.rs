@@ -38,6 +38,8 @@ pub enum Sound {
     Ring,
     /// A DM call we started, ringing the others (loops).
     Ringback,
+    /// Someone's custom join sound (from Discord, so no file or built-in one).
+    CustomJoin,
     /// The pointer moved onto a list item (a DM, channel or server).
     ButtonRollover,
     ButtonPress,
@@ -60,7 +62,7 @@ impl Sound {
     fn kind(self) -> Kind {
         match self {
             Sound::Message => Kind::Message,
-            Sound::Join | Sound::Leave | Sound::Ring | Sound::Ringback => Kind::Call,
+            Sound::Join | Sound::Leave | Sound::Ring | Sound::Ringback | Sound::CustomJoin => Kind::Call,
             Sound::ButtonPress | Sound::ButtonRelease => Kind::Click,
             Sound::ButtonRollover => Kind::Rollover,
         }
@@ -97,7 +99,7 @@ fn synth(sound: Sound) -> Vec<f32> {
         // Softer and lower: two long tones, then a pause.
         Sound::Ringback => notes(&[(0.0, 523.25, 0.6), (0.6, 659.25, 0.8)], 3.0, 0.12),
         // Source's: silent unless installed.
-        Sound::ButtonRollover | Sound::ButtonPress | Sound::ButtonRelease => Vec::new(),
+        Sound::ButtonRollover | Sound::ButtonPress | Sound::ButtonRelease | Sound::CustomJoin => Vec::new(),
     }
 }
 
@@ -324,12 +326,14 @@ pub struct Sounds {
     /// The volumes set (0 to 1) for each [`Kind`], as f32 bits: the mixer reads them, so a change applies to
     /// what's playing too.
     volumes: Arc<[AtomicU32; 4]>,
+    /// Custom join sounds fetched so far, by ID.
+    clips: HashMap<String, Arc<Vec<f32>>>,
 }
 
 impl Default for Sounds {
     fn default() -> Self {
         let full = || AtomicU32::new(1f32.to_bits());
-        Self { voices: Default::default(), cache: HashMap::new(), io: None, idle_since: None, volumes: Arc::new([full(), full(), full(), full()]) }
+        Self { voices: Default::default(), cache: HashMap::new(), io: None, idle_since: None, volumes: Arc::new([full(), full(), full(), full()]), clips: HashMap::new() }
     }
 }
 
@@ -422,6 +426,26 @@ impl Sounds {
             Ok(io) => self.io = Some((io, output.clone())),
             Err(e) => tracing::warn!("notification sounds unavailable: {e}"),
         }
+    }
+
+    pub fn clip(&self, id: &str) -> Option<Arc<Vec<f32>>> {
+        self.clips.get(id).cloned()
+    }
+
+    pub fn keep_clip(&mut self, id: String, pcm: Arc<Vec<f32>>) {
+        self.clips.insert(id, pcm);
+    }
+
+    /// Plays a custom join sound (48 kHz stereo) at `volume` (0 to 1) of the call sounds' volume, alongside
+    /// whatever else is playing.
+    pub fn play_clip(&mut self, pcm: Arc<Vec<f32>>, volume: f32, output: &Option<String>) {
+        if pcm.is_empty() {
+            return;
+        }
+        self.ensure_output(output);
+        let set = f32::from_bits(self.volumes[slot(Kind::Call)].load(Ordering::Relaxed));
+        // The mixer squares volumes, for how loudness is heard; Discord's is already plain gain.
+        self.voices.lock().push(Voice { sound: Sound::CustomJoin, pcm, pos: 0, looping: false, volume: Some(set * volume.sqrt()) });
     }
 
     /// Plays a sound once.

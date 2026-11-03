@@ -213,6 +213,29 @@ fn find_close(s: &str, delim: &str) -> Option<usize> {
     None
 }
 
+/// Text with no markdown but its emoji, custom and Unicode, picked out: for the embed parts Discord doesn't
+/// format, such as authors and footers.
+pub fn emoji_spans(text: &str) -> Vec<Span> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('<') {
+        let emoji = rest[at + 1..].find('>').and_then(|end| Some((angle_span(&rest[at + 1..at + 1 + end]).filter(|s| matches!(s, Span::Emoji { .. }))?, at + end + 2)));
+        match emoji {
+            Some((span, after)) => {
+                push_text(&mut out, &rest[..at], Style::default());
+                out.push(span);
+                rest = &rest[after..];
+            }
+            None => {
+                push_text(&mut out, &rest[..=at], Style::default());
+                rest = &rest[at + 1..];
+            }
+        }
+    }
+    push_text(&mut out, rest, Style::default());
+    merge_text(out)
+}
+
 fn push_text(out: &mut Vec<Span>, text: &str, style: Style) {
     if text.is_empty() {
         return;
@@ -556,6 +579,16 @@ mod tests {
         assert_eq!(spans("2 * 3 * 4"), vec![t("2 * 3 * 4", |_| {})]);
         assert_eq!(spans("my_var_name"), vec![t("my_var_name", |_| {})]);
         assert_eq!(spans(r"\*not italic\*"), vec![t("*not italic*", |_| {})]);
+    }
+
+    #[test]
+    fn emoji_spans_finds_only_emoji() {
+        let s = emoji_spans("**a** <:blob:77> 1 < 2 <@5> 👍 <a:spin:8>");
+        assert_eq!(s[0], t("**a** ", |_| {}));
+        assert_eq!(s[1], Span::Emoji { id: Snowflake(77), name: "blob".into(), animated: false });
+        assert_eq!(s[2], t(" 1 < 2 <@5> ", |_| {}));
+        assert_eq!(s[3], Span::UnicodeEmoji("👍".into()));
+        assert_eq!(s[5], Span::Emoji { id: Snowflake(8), name: "spin".into(), animated: true });
     }
 
     #[test]

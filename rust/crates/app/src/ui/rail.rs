@@ -136,6 +136,8 @@ fn guild(ui: &mut Ui, state: &State, uis: &UiState, badges: &HashMap<Snowflake, 
         actions.push(Action::SelectGuild(Some(id)));
     }
     r.context_menu(|ui| {
+        crate::ui::server_menu::items(ui, state, id, actions);
+        ui.separator();
         if ui.button("Edit Server Profile").clicked() {
             actions.push(Action::EditProfile { guild: Some(id), server: true });
             ui.close();

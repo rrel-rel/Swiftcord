@@ -110,6 +110,12 @@ pub struct StreamEvent {
 }
 
 /// Handles STREAM_* gateway events.
+impl Watch {
+    pub fn voice(&self) -> Option<&Voice> {
+        self.voice.as_ref()
+    }
+}
+
 pub fn on_gateway(app: &mut App, name: &str, data: &RawValue) {
     if !name.starts_with("STREAM_") {
         return;

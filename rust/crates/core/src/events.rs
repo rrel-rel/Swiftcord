@@ -77,6 +77,21 @@ pub struct Ready {
     pub user_guild_settings: Vec<UserGuildSettings>,
     pub user_settings_proto: Option<String>,
     pub user_settings: Option<LegacyUserSettings>,
+    #[serde(deserialize_with = "lenient_vec")]
+    pub relationships: Vec<Relationship>,
+}
+
+/// Someone we have a relationship with. READY names the user by ID (they're in its `users`); later events
+/// carry them whole.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct Relationship {
+    pub id: Snowflake,
+    /// 1 friend, 2 blocked, 3 incoming request, 4 outgoing request.
+    #[serde(rename = "type")]
+    pub kind: u8,
+    pub nickname: Option<String>,
+    pub user: Option<User>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -503,6 +518,8 @@ pub enum Event {
     ThreadMembersUpdate(Box<ThreadMembersUpdate>),
     SessionsReplace(Vec<SessionInfo>),
     CallDelete(Snowflake),
+    RelationshipUpsert(Box<Relationship>),
+    RelationshipRemove(Box<Relationship>),
     /// Anything else, kept raw for subsystems (e.g. Go Live streams) that parse it themselves.
     Other(String, Box<RawValue>),
 }
@@ -516,6 +533,8 @@ impl Event {
         Ok(match name {
             "READY" => Event::Ready(p(d)?),
             "READY_SUPPLEMENTAL" => Event::ReadySupplemental(p(d)?),
+            "RELATIONSHIP_ADD" | "RELATIONSHIP_UPDATE" => Event::RelationshipUpsert(p(d)?),
+            "RELATIONSHIP_REMOVE" => Event::RelationshipRemove(p(d)?),
             "RESUMED" => Event::Resumed,
             "GUILD_CREATE" => Event::GuildCreate(p(d)?),
             "GUILD_UPDATE" => Event::GuildUpdate(p(d)?),

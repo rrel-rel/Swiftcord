@@ -71,6 +71,8 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, catalog: &mut emoji::Ca
     delete_prompt(ui, s, uis, actions);
     crate::ui::viewer::show(ui, uis);
     crate::ui::forward::show(ui, s, uis, actions);
+    crate::ui::server_menu::show(ui, s, uis, actions);
+    crate::ui::stats::show(ui, uis, actions);
     banner(ui, uis);
 }
 

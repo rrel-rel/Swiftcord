@@ -58,6 +58,13 @@ pub fn camera_picture() -> egui::ColorImage {
 }
 
 const SAMPLES: &str = r##"[
+{"id":"1399999999999999999","channel_id":"{CH}","author":{"id":"2","username":"Demo Bot","bot":true},
+ "timestamp":"2026-10-25T09:59:00+00:00","content":"Emoji in every part of an embed:",
+ "embeds":[{"type":"rich","title":"🎉 Title <:blobcat:1431500686029361233> **bold**","url":"https://example.com","color":5793266,
+   "description":"Description 😀 <:blobcat:1431500686029361233> <:blobwave:1431500686029361233>",
+   "author":{"name":"Author ⭐ <:blobcat:1431500686029361233>"},
+   "fields":[{"name":"Name 🔥 <:blobcat:1431500686029361233>","value":"Value 🟢 <:blobcat:1431500686029361233>","inline":true},{"name":"Plain","value":"No emoji","inline":true}],
+   "footer":{"text":"Footer 💬 <:blobcat:1431500686029361233>"},"timestamp":"2026-10-25T09:59:00+00:00"}]},
 {"id":"1400000000000000001","channel_id":"{CH}","author":{"id":"2","username":"Demo Bot","bot":true},
  "timestamp":"2026-10-25T10:00:00+00:00","content":"A rich embed:",
  "embeds":[{"type":"rich","title":"Server status","url":"https://example.com/status","color":5793266,

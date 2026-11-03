@@ -1015,6 +1015,10 @@ pub struct UserGuildSettings {
     pub message_notifications: u8,
     pub suppress_everyone: bool,
     pub suppress_roles: bool,
+    pub mute_scheduled_events: bool,
+    /// 0 default, 1 off, 2 on.
+    pub notify_highlights: u8,
+    pub mobile_push: bool,
     #[serde(deserialize_with = "null_as_default")]
     pub channel_overrides: Vec<ChannelOverride>,
 }

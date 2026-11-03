@@ -190,6 +190,11 @@ impl Rest {
     }
 
     async fn send(&self, method: Method, path: &str, body: Body<'_>) -> Result<reqwest::Response> {
+        self.send_with_reason(method, path, body, None).await
+    }
+
+    /// As `send`, recording `reason` in the server's audit log.
+    async fn send_with_reason(&self, method: Method, path: &str, body: Body<'_>, reason: Option<&str>) -> Result<reqwest::Response> {
         if crate::offline::is_on() {
             return Err(ApiError::Offline);
         }
@@ -208,6 +213,9 @@ impl Rest {
             }
 
             let mut req = self.http.request(method.clone(), format!("{API_BASE}{path}"));
+            if let Some(r) = reason.filter(|r| !r.is_empty()) {
+                req = req.header("X-Audit-Log-Reason", percent_encode(r));
+            }
             req = match &body {
                 Body::None => req,
                 Body::Json(v) => req.json(v),
@@ -298,6 +306,68 @@ impl Rest {
 
     pub async fn current_user(&self) -> Result<User> {
         self.json(Method::GET, "users/@me", Body::None).await
+    }
+
+    // MARK: Server options
+
+    /// An invite to a channel. `max_age` is in seconds and `max_uses` a count; 0 means no limit on either.
+    pub async fn create_invite(&self, channel: Snowflake, max_age: u32, max_uses: u32, temporary: bool) -> Result<String> {
+        #[derive(Deserialize)]
+        struct Invite {
+            code: String,
+        }
+        let body = json!({ "max_age": max_age, "max_uses": max_uses, "temporary": temporary });
+        Ok(self.json::<Invite>(Method::POST, &format!("channels/{channel}/invites"), Body::Json(body)).await?.code)
+    }
+
+    pub async fn guild_info(&self, guild: Snowflake) -> Result<serde_json::Value> {
+        self.json(Method::GET, &format!("guilds/{guild}"), Body::None).await
+    }
+
+    pub async fn modify_guild(&self, guild: Snowflake, change: serde_json::Value) -> Result<()> {
+        self.empty(Method::PATCH, &format!("guilds/{guild}"), Body::Json(change)).await
+    }
+
+    /// Our notification settings for a server.
+    pub async fn modify_guild_settings(&self, guild: Snowflake, change: serde_json::Value) -> Result<()> {
+        self.empty(Method::PATCH, &format!("users/@me/guilds/{guild}/settings"), Body::Json(change)).await
+    }
+
+    /// The account's settings as JSON, which is where the per-server privacy lists can be read and written
+    /// on their own (`restricted_guilds` and so on).
+    pub async fn user_settings(&self) -> Result<serde_json::Value> {
+        self.json(Method::GET, "users/@me/settings", Body::None).await
+    }
+
+    pub async fn modify_user_settings(&self, change: serde_json::Value) -> Result<()> {
+        self.empty(Method::PATCH, "users/@me/settings", Body::Json(change)).await
+    }
+
+    pub async fn kick(&self, guild: Snowflake, user: Snowflake, reason: &str) -> Result<()> {
+        self.send_with_reason(Method::DELETE, &format!("guilds/{guild}/members/{user}"), Body::None, Some(reason)).await.map(drop)
+    }
+
+    pub async fn ban(&self, guild: Snowflake, user: Snowflake, delete_message_seconds: u32, reason: &str) -> Result<()> {
+        let body = Body::Json(json!({ "delete_message_seconds": delete_message_seconds }));
+        self.send_with_reason(Method::PUT, &format!("guilds/{guild}/bans/{user}"), body, Some(reason)).await.map(drop)
+    }
+
+    pub async fn unban(&self, guild: Snowflake, user: Snowflake) -> Result<()> {
+        self.empty(Method::DELETE, &format!("guilds/{guild}/bans/{user}"), Body::None).await
+    }
+
+    /// Times someone out until `until`, or ends their timeout.
+    pub async fn timeout(&self, guild: Snowflake, user: Snowflake, until: Option<chrono::DateTime<chrono::Utc>>, reason: &str) -> Result<()> {
+        let body = Body::Json(json!({ "communication_disabled_until": until.map(|t| t.to_rfc3339()) }));
+        self.send_with_reason(Method::PATCH, &format!("guilds/{guild}/members/{user}"), body, Some(reason)).await.map(drop)
+    }
+
+    pub async fn bans(&self, guild: Snowflake) -> Result<Vec<Ban>> {
+        self.json(Method::GET, &format!("guilds/{guild}/bans?limit=200"), Body::None).await
+    }
+
+    pub async fn audit_log(&self, guild: Snowflake) -> Result<AuditLog> {
+        self.json(Method::GET, &format!("guilds/{guild}/audit-logs?limit=50"), Body::None).await
     }
 
     /// A moderator's change to someone's voice state: `{"mute": true}`, `{"deaf": false}`, `{"channel_id": id}` to
@@ -706,6 +776,30 @@ pub struct Gif {
     pub preview: String,
     pub width: u32,
     pub height: u32,
+}
+
+/// Someone banned from a server.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Ban {
+    pub user: User,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct AuditLog {
+    pub audit_log_entries: Vec<AuditEntry>,
+    pub users: Vec<User>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct AuditEntry {
+    pub id: Snowflake,
+    pub user_id: Option<Snowflake>,
+    pub target_id: Option<String>,
+    pub action_type: u32,
+    pub reason: Option<String>,
 }
 
 enum Body<'a> {

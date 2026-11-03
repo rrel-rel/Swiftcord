@@ -43,6 +43,9 @@ pub enum AppEvent {
     IncomingTestWav(Vec<u8>),
     Pins { channel: Snowflake, result: Result<Vec<Message>, String> },
     DmOpened(swiftcord_core::models::Channel),
+    Server(crate::server_glue::ServerEvent),
+    /// A join sound was fetched (`None`: it couldn't be), to be played at this volume.
+    JoinSound { id: String, volume: f32, pcm: Option<std::sync::Arc<Vec<f32>>> },
     Folders(Option<Vec<swiftcord_core::models::GuildFolder>>),
     Voice { generation: u64, event: swiftcord_voice::Event },
     /// GIF results for a search (an empty query is trending).
@@ -114,6 +117,9 @@ pub enum Action {
     CloseGifPicker,
     ToggleFavoriteGif(swiftcord_core::proto::FavoriteGif),
     OpenDm(Snowflake),
+    /// Something from the server menu or its dialogs.
+    Server(crate::server_glue::ServerAction),
+    ToggleStats,
     /// Show someone's profile card (as they appear in `guild`) at `at`.
     OpenProfile { user: Snowflake, guild: Option<Snowflake>, at: egui::Pos2 },
     CloseProfile,
@@ -274,6 +280,13 @@ pub struct UiState {
     pub voice_room_chat: bool,
     /// The "Forward To" picker, while open.
     pub forward: Option<ui::forward::Forward>,
+    /// What's typed in the DM list's search box.
+    pub friend_search: String,
+    /// The server dialog (invites, settings, moderation…), while open.
+    pub server_dialog: Option<ui::server_menu::Dialog>,
+    /// The connection stats window.
+    pub stats_open: bool,
+    pub stats: ui::stats::Stats,
     /// The web player (YouTube) playing inline: its embed URL and channel.
     pub web_player: Option<(String, Snowflake)>,
     /// Where that player's embed was drawn this frame, and the visible part of the list around it.
@@ -642,6 +655,13 @@ impl App {
                 }
             }
             AppEvent::Error(e) => self.banner(e),
+            AppEvent::Server(e) => crate::server_glue::on_event(self, e),
+            AppEvent::JoinSound { id, volume, pcm } => {
+                if let Some(pcm) = pcm {
+                    self.sounds.keep_clip(id, pcm.clone());
+                    self.sounds.play_clip(pcm, volume, &self.settings.output_device);
+                }
+            }
             AppEvent::Token(token) => {
                 self.ui.login = Default::default();
                 if let Err(e) = credentials::save_token(&token) {
@@ -1572,6 +1592,8 @@ impl App {
                     AppEvent::FilesPicked { channel, files }
                 });
             }
+            Action::Server(a) => crate::server_glue::apply(self, a),
+            Action::ToggleStats => self.ui.stats_open = !self.ui.stats_open,
             Action::OpenDm(user) => {
                 let Some(s) = &self.session else { return };
                 if let Some(c) = s.state.private_channels().iter().find(|c| c.kind == swiftcord_core::models::ChannelType::Dm && c.recipients.iter().any(|r| r.id == user)) {
@@ -2040,6 +2062,7 @@ impl crate::window::App for App {
         self.ring_sounds();
         crate::interactions_glue::tick(self);
         crate::share_glue::tick(self);
+        ui::stats::tick(self);
         self.ui.clips.tick();
         self.ui.videos.tick();
         let (output, volume) = (self.ui.videos.output.clone(), self.ui.videos.volume.unwrap_or(1.0));

@@ -146,6 +146,8 @@ pub struct State {
     member_lists: HashMap<Snowflake, MemberList>,
     /// Notification settings by guild; DM settings are under `Snowflake::NONE`.
     guild_settings: HashMap<Snowflake, UserGuildSettings>,
+    /// Friends, with the nickname we gave them if any.
+    friends: HashMap<Snowflake, Option<String>>,
     typing: HashMap<Snowflake, HashMap<Snowflake, Instant>>,
     /// By guild (`Snowflake::NONE` for DM calls), then user.
     voice_states: HashMap<Snowflake, HashMap<Snowflake, VoiceState>>,
@@ -179,6 +181,8 @@ pub struct Snapshot {
     own_status: Option<String>,
     own_show_activity: Option<bool>,
     guild_settings: Vec<(Snowflake, UserGuildSettings)>,
+    #[serde(default)]
+    friends: Vec<(Snowflake, Option<String>)>,
 }
 
 impl Snapshot {
@@ -218,6 +222,7 @@ impl State {
             own_status: self.own_settings.status.clone(),
             own_show_activity: self.own_settings.show_activity,
             guild_settings: self.guild_settings.iter().map(|(g, s)| (*g, s.clone())).collect(),
+            friends: self.friends.iter().map(|(u, n)| (*u, n.clone())).collect(),
         }
     }
 
@@ -238,6 +243,7 @@ impl State {
             own_custom_status: s.own_custom_status,
             own_settings: crate::proto::StatusSettings { status: s.own_status, show_activity: s.own_show_activity },
             guild_settings: s.guild_settings.into_iter().collect(),
+            friends: s.friends.into_iter().collect(),
             ..State::default()
         };
         for (channel, list, reached_start) in s.messages {
@@ -275,6 +281,45 @@ impl State {
 
     pub fn user(&self, id: Snowflake) -> Option<&User> {
         self.users.get(&id)
+    }
+
+    /// Our notification settings for a server, if we've changed any.
+    pub fn guild_settings(&self, guild: Snowflake) -> Option<&UserGuildSettings> {
+        self.guild_settings.get(&guild)
+    }
+
+    /// Friends whose display name, username or our nickname for them contains `query` (ignoring case), by name.
+    pub fn search_friends(&self, query: &str) -> Vec<&User> {
+        let q = query.trim().to_lowercase();
+        let mut found: Vec<&User> = self
+            .friends
+            .iter()
+            .filter_map(|(id, nick)| {
+                let u = self.users.get(id)?;
+                [Some(u.display_name()), Some(u.username.as_str()), nick.as_deref()].into_iter().flatten().any(|n| n.to_lowercase().contains(&q)).then_some(u)
+            })
+            .collect();
+        found.sort_by_key(|u| u.display_name().to_lowercase());
+        found
+    }
+
+    /// Members known so far whose nickname, display name or username contains `query` (ignoring case).
+    pub fn search_guild_members(&self, guild: Snowflake, query: &str, limit: usize) -> Vec<Snowflake> {
+        let q = query.trim().to_lowercase();
+        let Some(members) = self.members.get(&guild) else { return Vec::new() };
+        let mut found: Vec<(String, Snowflake)> = members
+            .iter()
+            .filter_map(|(id, m)| {
+                let u = self.users.get(id)?;
+                [m.nick.as_deref(), Some(u.display_name()), Some(u.username.as_str())]
+                    .into_iter()
+                    .flatten()
+                    .any(|n| n.to_lowercase().contains(&q))
+                    .then(|| (self.display_name(*id, Some(guild)).to_lowercase(), *id))
+            })
+            .collect();
+        found.sort();
+        found.into_iter().take(limit).map(|(_, id)| id).collect()
     }
 
     pub fn member(&self, guild: Snowflake, user: Snowflake) -> Option<&Member> {
@@ -1051,6 +1096,10 @@ impl State {
                     notices.push(Notice::FrecencyChanged);
                 }
             }
+            Event::RelationshipUpsert(r) => self.on_relationship(*r),
+            Event::RelationshipRemove(r) => {
+                self.friends.remove(&r.id);
+            }
             Event::UserGuildSettingsUpdate(s) => {
                 self.guild_settings.insert(s.guild_id.unwrap_or_default(), *s);
             }
@@ -1115,12 +1164,26 @@ impl State {
         notices
     }
 
+    fn on_relationship(&mut self, rel: crate::events::Relationship) {
+        if let Some(u) = rel.user {
+            self.users.insert(u.id, u);
+        }
+        if rel.kind == 1 {
+            self.friends.insert(rel.id, rel.nickname);
+        } else {
+            self.friends.remove(&rel.id);
+        }
+    }
+
     fn on_ready(&mut self, r: Ready) {
         *self = State { revision: self.revision + 1, session_id: r.session_id.clone(), ..State::default() };
         self.users.insert(r.user.id, r.user.clone());
         self.me = Some(r.user);
         for u in r.users {
             self.users.insert(u.id, u);
+        }
+        for rel in r.relationships {
+            self.on_relationship(rel);
         }
         for (i, mut g) in r.guilds.into_iter().enumerate() {
             if let Some(members) = r.merged_members.get(i) {

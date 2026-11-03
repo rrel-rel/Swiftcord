@@ -4,6 +4,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
+/// How video is sent, for showing.
+pub const ENCODER: &str = "H.264 Baseline, CBR, no B-frames (Windows' software encoder)";
 pub const H264_PAYLOAD_TYPE: u8 = 101;
 pub const H264_RTX_PAYLOAD_TYPE: u8 = 102;
 

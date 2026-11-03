@@ -24,10 +24,23 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Actio
     // Header.
     let header = egui::Frame::new().inner_margin(egui::Margin::symmetric(INSET as i8, 0)).show(ui, |ui| {
         ui.set_height(48.0);
-        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-            ui.add(egui::Label::new(RichText::new(title).font(theme::font_bold(14.0)).color(theme::HEADER())).truncate());
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if uis.guild.is_some() {
+                ui.label(RichText::new(icon::CHEVRON_DOWN).font(theme::icon_font(9.0)).color(theme::MUTED()));
+            }
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                ui.add(egui::Label::new(RichText::new(title).font(theme::font_bold(14.0)).color(theme::HEADER())).truncate().selectable(false));
+            });
         });
     });
+    // A server's header opens its menu.
+    if let Some(g) = uis.guild {
+        let r = ui.interact(header.response.rect, ui.scope_id().with("server-header"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+        if r.contains_pointer() {
+            ui.painter().rect_filled(header.response.rect, 0, theme::HOVER().gamma_multiply(0.4));
+        }
+        egui::Popup::menu(&r).show(|ui| crate::ui::server_menu::items(ui, state, g, actions));
+    }
     // On the header's last pixel row, level with the chat header's divider.
     widgets::pixel_hline(ui.painter(), ui.max_rect().x_range(), header.response.rect.bottom() - 1.0 / ui.ctx().pixels_per_point(), theme::DIVIDER().color);
 
@@ -38,11 +51,21 @@ pub fn show(ui: &mut Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Actio
         user_panel(ui, state, uis, actions);
     });
 
+    if uis.guild.is_none() {
+        egui::Frame::new().inner_margin(egui::Margin { left: ROW_MARGIN as i8, right: ROW_MARGIN as i8, top: 8, bottom: 0 }).show(ui, |ui| {
+            let r = ui.add(egui::TextEdit::singleline(&mut uis.friend_search).hint_text("Find or start a conversation").desired_width(f32::INFINITY));
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                open_first_conversation(state, uis, actions);
+            }
+        });
+    }
+
     let scroll = egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = spacing;
         ui.add_space(8.0);
         match uis.guild {
             Some(g) => guild_channels(ui, state, uis, g, actions),
+            None if !uis.friend_search.trim().is_empty() => conversation_results(ui, state, uis, actions),
             None => dm_list(ui, state, uis, actions),
         }
         ui.add_space(8.0);
@@ -328,6 +351,67 @@ fn person_clicks(state: &State, uis: &UiState, c: &Channel, user: swiftcord_core
         actions.push(crate::ui::profile::open(user, c.guild_id, &r));
     }
     r.context_menu(|ui| crate::ui::user_menu::voice_user(ui, state, uis, c, user, &r, actions));
+}
+
+/// Group DMs whose name or members match a search.
+fn matching_groups<'a>(state: &'a State, query: &str) -> Vec<&'a Channel> {
+    let q = query.trim().to_lowercase();
+    state.private_channels().into_iter().filter(|c| c.kind == ChannelType::GroupDm && c.label().to_lowercase().contains(&q)).collect()
+}
+
+/// Enter in the search box: the first thing it found.
+fn open_first_conversation(state: &State, uis: &mut UiState, actions: &mut Vec<Action>) {
+    if uis.friend_search.trim().is_empty() {
+        return;
+    }
+    if let Some(u) = state.search_friends(&uis.friend_search).first() {
+        actions.push(Action::OpenDm(u.id));
+    } else if let Some(c) = matching_groups(state, &uis.friend_search).first() {
+        actions.push(Action::SelectChannel(c.id));
+    } else {
+        return;
+    }
+    uis.friend_search.clear();
+}
+
+/// What the DM search box found: friends, whether or not there's a DM with them yet, then group DMs.
+fn conversation_results(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Action>) {
+    let friends = state.search_friends(&uis.friend_search);
+    let groups = matching_groups(state, &uis.friend_search);
+    let mut picked = false;
+    for u in &friends {
+        let r = row(ui, false, 42.0, |ui, hovered| {
+            widgets::avatar_with_status(ui, u, 32.0, state.presence(u.id), state.on_mobile(u.id), if hovered { theme::HOVER() } else { theme::SIDEBAR() });
+            let color = if hovered { theme::TEXT() } else { theme::MUTED() };
+            widgets::centered_lines(ui, 0.0, &[(u.display_name().to_owned(), theme::font(15.0), color), (u.tag(), theme::font(12.0), theme::FAINT())]);
+        });
+        if r.clicked() {
+            actions.push(Action::OpenDm(u.id));
+            picked = true;
+        }
+    }
+    for c in &groups {
+        let r = row(ui, false, 42.0, |ui, hovered| {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
+            ui.painter().rect_filled(rect, 0, theme::SELECTED());
+            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::PEOPLE, theme::icon_font(15.0), Color32::WHITE);
+            let color = if hovered { theme::TEXT() } else { theme::MUTED() };
+            widgets::centered_lines(ui, 0.0, &[(c.label().to_string(), theme::font(15.0), color), (format!("{} Members", c.recipients.len() + 1), theme::font(12.0), theme::FAINT())]);
+        });
+        if r.clicked() {
+            actions.push(Action::SelectChannel(c.id));
+            picked = true;
+        }
+    }
+    if friends.is_empty() && groups.is_empty() {
+        ui.horizontal(|ui| {
+            ui.add_space(INSET);
+            ui.label(RichText::new("No friends or group DMs found.").size(13.0).color(theme::MUTED()));
+        });
+    }
+    if picked {
+        uis.friend_search.clear();
+    }
 }
 
 fn dm_list(ui: &mut Ui, state: &State, uis: &mut UiState, actions: &mut Vec<Action>) {

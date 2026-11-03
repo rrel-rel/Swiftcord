@@ -5,7 +5,13 @@ use crate::models::{Channel, Guild};
 use crate::Snowflake;
 
 pub mod perm {
+    pub const CREATE_INSTANT_INVITE: u64 = 1 << 0;
+    pub const KICK_MEMBERS: u64 = 1 << 1;
+    pub const BAN_MEMBERS: u64 = 1 << 2;
     pub const ADMINISTRATOR: u64 = 1 << 3;
+    pub const MANAGE_GUILD: u64 = 1 << 5;
+    pub const VIEW_AUDIT_LOG: u64 = 1 << 7;
+    pub const MODERATE_MEMBERS: u64 = 1 << 40;
     pub const ADD_REACTIONS: u64 = 1 << 6;
     pub const STREAM: u64 = 1 << 9;
     pub const VIEW_CHANNEL: u64 = 1 << 10;

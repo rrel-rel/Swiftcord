@@ -8,6 +8,8 @@ mod emoji_sheet;
 mod image_decode;
 mod inbox_glue;
 mod interactions_glue;
+mod join_sounds;
+mod server_glue;
 mod lottie;
 mod stickers;
 mod media;

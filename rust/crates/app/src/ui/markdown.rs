@@ -75,6 +75,21 @@ fn block(ui: &mut Ui, b: &Block, cx: &mut Cx) {
     }
 }
 
+/// One line of embed text with its emoji drawn as pictures, returning where it went. `format` also applies
+/// markdown (titles have it; authors and footers don't), and `bold` makes it all bold.
+pub fn embed_line(ui: &mut Ui, text: &str, format: bool, bold: bool, cx: &mut Cx) -> egui::Rect {
+    let mut spans = if format { swiftcord_core::markdown::parse_inline(text, &mut 0) } else { swiftcord_core::markdown::emoji_spans(text) };
+    if bold {
+        for s in &mut spans {
+            if let Span::Text(_, st) = s {
+                st.bold = true;
+            }
+        }
+    }
+    let size = cx.size;
+    ui.scope(|ui| spans_ui(ui, &spans, cx, size)).response.rect
+}
+
 fn spans_ui(ui: &mut Ui, spans: &[Span], cx: &mut Cx, size: f32) {
     ui.scope(|ui| {
         // Pieces of a line are centred on a row as tall as the text: with egui's default (a button's height,

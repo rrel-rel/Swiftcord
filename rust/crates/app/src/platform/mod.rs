@@ -17,6 +17,28 @@ pub mod wic;
 use std::path::PathBuf;
 
 /// `%LOCALAPPDATA%\Swiftcord`.
+/// This process's CPU time so far (in 100 ns units, added up across processors) and memory in use (bytes).
+#[cfg(windows)]
+pub fn process_usage() -> (u64, u64) {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    let ticks = |t: FILETIME| ((t.dwHighDateTime as u64) << 32) | t.dwLowDateTime as u64;
+    unsafe {
+        let process = GetCurrentProcess();
+        let (mut created, mut exited, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        let cpu = if GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user).is_ok() { ticks(kernel) + ticks(user) } else { 0 };
+        let mut memory = PROCESS_MEMORY_COUNTERS { cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32, ..Default::default() };
+        let used = if GetProcessMemoryInfo(process, &mut memory, memory.cb).is_ok() { memory.WorkingSetSize as u64 } else { 0 };
+        (cpu, used)
+    }
+}
+
+#[cfg(not(windows))]
+pub fn process_usage() -> (u64, u64) {
+    (0, 0)
+}
+
 pub fn data_dir() -> PathBuf {
     directories::ProjectDirs::from("", "", "Swiftcord")
         .map(|d| d.data_local_dir().to_path_buf())
