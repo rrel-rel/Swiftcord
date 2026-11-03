@@ -91,7 +91,8 @@ pub fn show(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) 
         ui.add_space(8.0);
         ui.add(egui::TextEdit::singleline(&mut fwd.note).hint_text("Add an optional message…").desired_width(f32::INFINITY));
         ui.add_space(10.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        // A fixed height: centring in all the height left would hold the dialog at its tallest as the list changes.
+        ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 32.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let label = if fwd.picked.len() > 1 { format!("Send ({})", fwd.picked.len()) } else { "Send".to_owned() };
             let send = egui::Button::new(RichText::new(label).color(Color32::WHITE)).min_size(Vec2::new(90.0, 32.0));
             if ui.add_enabled(!fwd.picked.is_empty(), send).clicked() {

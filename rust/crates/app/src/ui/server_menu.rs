@@ -148,11 +148,17 @@ fn note(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).size(12.0).color(theme::FAINT()));
 }
 
+/// A row of buttons from the right. Its height is fixed: a layout centring in all the height left would hold the
+/// dialog at its tallest, and grow it whenever its contents do.
+fn button_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 32.0), egui::Layout::right_to_left(egui::Align::Center), add);
+}
+
 /// The usual bottom row: a primary button, and one that closes the dialog. Returns (primary clicked, close clicked).
 fn buttons(ui: &mut Ui, primary: &str, enabled: bool) -> (bool, bool) {
     let mut out = (false, false);
     ui.add_space(10.0);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    button_row(ui, |ui| {
         let b = egui::Button::new(RichText::new(primary).color(Color32::WHITE)).min_size(Vec2::new(90.0, 32.0));
         out.0 = ui.add_enabled(enabled, b).clicked();
         out.1 = ui.add(egui::Button::new("Close").min_size(Vec2::new(80.0, 32.0))).clicked();
@@ -280,13 +286,18 @@ pub fn show(ui: &Ui, s: &Session, uis: &mut UiState, actions: &mut Vec<Action>) 
             Kind::Moderation(m) => {
                 title(ui, "Moderation", &name);
                 moderation(ui, state, guild, m, busy, actions);
-                ui.add_space(8.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    close = ui.add(egui::Button::new("Close").min_size(Vec2::new(80.0, 32.0))).clicked();
-                });
+                // A confirmation has its own Cancel.
+                if m.confirm.is_none() {
+                    ui.add_space(8.0);
+                    button_row(ui, |ui| {
+                        close = ui.add(egui::Button::new("Close").min_size(Vec2::new(80.0, 32.0))).clicked();
+                    });
+                }
             }
         }
-        if let Some((ok, text)) = &status {
+        // What happened last says nothing about what's being confirmed now.
+        let confirming = matches!(&d.kind, Kind::Moderation(m) if m.confirm.is_some());
+        if let Some((ok, text)) = status.as_ref().filter(|_| !confirming) {
             ui.add_space(6.0);
             ui.label(RichText::new(text).size(13.0).color(if *ok { theme::GREEN() } else { theme::RED() }));
         }
@@ -384,7 +395,9 @@ fn moderation(ui: &mut Ui, state: &State, guild: Snowflake, m: &mut Moderation, 
         }
     });
     ui.separator();
-    let scroll = egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]);
+    // Short enough to leave the rest of the dialog on screen in a small window.
+    let height = 360.0_f32.min(ui.ctx().content_rect().height() - 300.0).max(80.0);
+    let scroll = egui::ScrollArea::vertical().max_height(height).auto_shrink([false, true]);
     match m.tab {
         ModTab::Members => {
             let r = ui.add(egui::TextEdit::singleline(&mut m.query).hint_text("Search members").desired_width(f32::INFINITY));
